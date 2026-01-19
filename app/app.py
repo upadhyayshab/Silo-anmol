@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager
 from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
 from config import get_settings, get_engine
-from routers import admin_router, v1_router
+from routers import admin_router, v1_router, auth_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -22,7 +22,17 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    title="Silo ERP Backend",
+    description="Multi-outlet ERP system with inventory, orders, and invoicing",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Public routes (no authentication required)
+app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
+
+# Protected routes
 app.include_router(admin_router, prefix="/admin")
 app.include_router(v1_router, prefix="/api/v1")
 
