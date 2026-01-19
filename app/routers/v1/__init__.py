@@ -16,6 +16,7 @@ from .dashboard import router as dashboard_router
 from .config import router as config_router
 from .notifications import router as notifications_router
 from .activity_logs import router as activity_logs_router
+from .transactions import router as transactions_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -35,6 +36,7 @@ router.include_router(dashboard_router)
 router.include_router(config_router)
 router.include_router(notifications_router)
 router.include_router(activity_logs_router)
+router.include_router(transactions_router)
 
 # Example router (can be removed later)
 router.include_router(example_router)

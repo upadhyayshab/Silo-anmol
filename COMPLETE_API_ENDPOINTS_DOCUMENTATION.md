@@ -4,7 +4,6 @@
 
 This document provides comprehensive API documentation for the Silo ERP Backend system. It includes detailed request/response structures, authentication requirements, and usage examples for frontend integration.
 
-**Base URL**: `http://localhost:8080` (Development)  
 **API Version**: v1  
 **Authentication**: JWT Bearer Token (except public endpoints)
 
@@ -1263,9 +1262,203 @@ Authorization: Bearer <access_token>
   "status": "ok",
   "message": "Order cancelled successfully"
 }
-```---
+```
 
-#
+---
+
+### PUT /api/v1/orders/{id}/payment-status
+**Description**: Update payment status of an order  
+**Authentication**: Required (Super Admin, Admin, Outlet Manager)
+
+**Path Parameters**:
+- `id`: Order UUID
+
+**Request Body**:
+```json
+{
+  "payment_status": "paid",
+  "notes": "Payment received in cash on delivery"
+}
+```
+
+**Response (200)**:
+```json
+{
+  "status": "ok",
+  "message": "Order payment status updated to paid"
+}
+```
+
+---
+
+## PAYMENT TRANSACTION ENDPOINTS
+
+### POST /api/v1/transactions
+**Description**: Record payment transaction for an order  
+**Authentication**: Required (Super Admin, Admin, Outlet Manager)
+
+**Request Body**:
+```json
+{
+  "order_id": "order-uuid",
+  "payment_method": "cash",
+  "amount_paid": 1500.00,
+  "transaction_reference": "CASH-001",
+  "notes": "Payment received on delivery"
+}
+```
+
+**Response (201)**:
+```json
+{
+  "uid": "transaction-uuid",
+  "order_id": "order-uuid",
+  "payment_status": "paid",
+  "payment_method": "cash",
+  "amount_paid": 1500.00,
+  "transaction_reference": "CASH-001",
+  "payment_date": "2024-01-15T14:30:00Z",
+  "received_by": "current-user-uuid",
+  "notes": "Payment received on delivery",
+  "created_at": "2024-01-15T14:30:00Z"
+}
+```
+
+---
+
+### GET /api/v1/transactions
+**Description**: List payment transactions with filters  
+**Authentication**: Required (Super Admin, Admin, Outlet Manager, Accountant)
+
+**Query Parameters**:
+- `order_id` (optional): Filter by order ID
+- `payment_status` (optional): Filter by payment status (pending, paid, partially_paid, refunded)
+- `payment_method` (optional): Filter by payment method (cash, card, upi, online)
+- `received_by` (optional): Filter by user who received payment
+- `from_date` (optional): Filter from date (YYYY-MM-DD)
+- `to_date` (optional): Filter to date (YYYY-MM-DD)
+- `limit` (optional): Number of records to return (default: 50)
+- `offset` (optional): Number of records to skip (default: 0)
+
+**Response (200)**:
+```json
+{
+  "items": [
+    {
+      "uid": "transaction-uuid",
+      "order_id": "order-uuid",
+      "payment_status": "paid",
+      "payment_method": "cash",
+      "amount_paid": 1500.00,
+      "transaction_reference": "CASH-001",
+      "payment_date": "2024-01-15T14:30:00Z",
+      "received_by": "outlet-manager-uuid",
+      "notes": "Payment received on delivery",
+      "created_at": "2024-01-15T14:30:00Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+### GET /api/v1/transactions/{id}
+**Description**: Get transaction details by ID  
+**Authentication**: Required (Super Admin, Admin, Outlet Manager, Accountant)
+
+**Path Parameters**:
+- `id`: Transaction UUID
+
+**Response (200)**:
+```json
+{
+  "uid": "transaction-uuid",
+  "order_id": "order-uuid",
+  "payment_status": "paid",
+  "payment_method": "cash",
+  "amount_paid": 1500.00,
+  "transaction_reference": "CASH-001",
+  "payment_date": "2024-01-15T14:30:00Z",
+  "received_by": "outlet-manager-uuid",
+  "notes": "Payment received on delivery",
+  "created_at": "2024-01-15T14:30:00Z"
+}
+```
+
+---
+
+### GET /api/v1/transactions/order/{orderId}
+**Description**: Get all transactions for a specific order  
+**Authentication**: Required (Super Admin, Admin, Outlet Manager, Telecaller, Accountant)
+
+**Path Parameters**:
+- `orderId`: Order UUID
+
+**Response (200)**:
+```json
+[
+  {
+    "uid": "transaction-uuid-1",
+    "order_id": "order-uuid",
+    "payment_status": "paid",
+    "payment_method": "cash",
+    "amount_paid": 1500.00,
+    "transaction_reference": "CASH-001",
+    "payment_date": "2024-01-15T14:30:00Z",
+    "received_by": "outlet-manager-uuid",
+    "notes": "Payment received on delivery",
+    "created_at": "2024-01-15T14:30:00Z"
+  }
+]
+```
+
+---
+
+### GET /api/v1/transactions/daily-collection/{date}
+**Description**: Get daily payment collection summary  
+**Authentication**: Required (Super Admin, Admin, Outlet Manager, Accountant)
+
+**Path Parameters**:
+- `date`: Collection date (YYYY-MM-DD)
+
+**Query Parameters**:
+- `outlet_id` (optional): Filter by outlet ID
+
+**Response (200)**:
+```json
+{
+  "date": "2024-01-15",
+  "outlet_id": "outlet-uuid",
+  "summary": {
+    "total_amount": 15000.00,
+    "transaction_count": 10,
+    "average_transaction": 1500.00
+  },
+  "payment_methods": {
+    "cash": 8000.00,
+    "card": 4000.00,
+    "upi": 2500.00,
+    "online": 500.00
+  },
+  "payment_status": {
+    "paid": 14000.00,
+    "partially_paid": 1000.00
+  },
+  "transactions": [
+    {
+      "transaction_id": "transaction-uuid",
+      "order_id": "order-uuid",
+      "amount_paid": 1500.00,
+      "payment_method": "cash",
+      "payment_status": "paid",
+      "payment_time": "2024-01-15T14:30:00Z"
+    }
+  ]
+}
+```
+
+---
 # INVOICE MANAGEMENT ENDPOINTS
 
 ### GET /api/v1/invoices
@@ -2580,13 +2773,14 @@ POST /api/auth/refresh-token
 
 ## ENDPOINT STATISTICS
 
-- **Total Endpoints**: 89
+- **Total Endpoints**: 95
 - **Authentication Endpoints**: 6
 - **User Management**: 6
 - **Outlet Management**: 5
 - **Product Management**: 8
 - **Inventory Management**: 5
-- **Order Management**: 9
+- **Order Management**: 10 (added payment status update)
+- **Payment Transactions**: 5 (NEW)
 - **Invoice Management**: 9
 - **Stock Transfer**: 6
 - **Dashboard**: 5

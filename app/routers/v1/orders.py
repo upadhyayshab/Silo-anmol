@@ -11,7 +11,7 @@ from managers import (
 )
 from models import (
     OrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
-    OrderAssignRequest, OrderTransactionCreateRequest,
+    OrderAssignRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
     OrderResponse, OrderTransactionResponse,
     ListResponse, StatusResponse
 )
@@ -772,4 +772,63 @@ async def get_order_transactions(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch transactions: {str(e)}"
+        )
+
+
+@router.put("/{order_id}/payment-status", response_model=StatusResponse)
+async def update_order_payment_status(
+    order_id: str,
+    payload: PaymentStatusUpdateRequest,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
+    ))
+):
+    """
+    Update payment status of an order
+    Used to mark orders as paid, partially paid, etc.
+    """
+    try:
+        # Verify order exists and check access
+        order = await order_manager.fetch(order_id)
+        
+        current_user = await user_manager.fetch(current_user_id)
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if order.assigned_outlet_id != current_user.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to this order"
+                )
+        
+        # Create a status update transaction record
+        transaction = OrderTransactionSchema(
+            order_id=order_id,
+            payment_status=payload.payment_status,
+            payment_method=order.payment_method,  # Use order's payment method
+            amount_paid=0.00,  # Status update, not actual payment
+            transaction_reference=f"STATUS_UPDATE_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            payment_date=datetime.now(),
+            received_by=current_user_id,
+            notes=f"Payment status updated to {payload.payment_status.value}. {payload.notes or ''}"
+        )
+        
+        await transaction_manager.create(transaction)
+        
+        # If marked as delivered and paid, update order status
+        if payload.payment_status == PaymentStatus.PAID:
+            await order_manager.update(order_id, {
+                "order_status": "delivered",
+                "actual_delivery_date": datetime.now()
+            })
+        
+        return StatusResponse(
+            status="ok",
+            message=f"Order payment status updated to {payload.payment_status.value}"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update payment status: {str(e)}"
         )
