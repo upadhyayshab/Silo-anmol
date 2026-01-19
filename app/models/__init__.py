@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 from .generateApiKeyModels import *
 from .healthCheckModels import *
@@ -14,6 +15,3 @@ class ListResponse[ModelType: BaseModel](BaseModel):
 class StatusResponse(BaseModel):
     status: str = "ok"
     message: Optional[str] = None
-
-
-from typing import Optional

@@ -88,8 +88,9 @@ async def get_dashboard_overview(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch dashboard overview: {str(e)}"
         )
-@r
-outer.get("/dashboard/outlet/{outlet_id}")
+
+
+@router.get("/dashboard/outlet/{outlet_id}")
 async def get_outlet_dashboard(
     outlet_id: str,
     current_user_id: str = Depends(require_roles(
@@ -251,8 +252,10 @@ async def get_sales_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate sales summary: {str(e)}"
-        )@router.ge
-t("/inventory/analysis")
+        )
+
+
+@router.get("/inventory/analysis")
 async def get_inventory_analysis(
     outlet_id: Optional[str] = None,
     current_user_id: str = Depends(require_roles(
@@ -407,8 +410,10 @@ async def get_order_performance(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate order performance report: {str(e)}"
-        )@router.ge
-t("/financial/summary")
+        )
+
+
+@router.get("/financial/summary")
 async def get_financial_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
@@ -586,8 +591,10 @@ async def get_product_performance(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate product performance report: {str(e)}"
-        )@ro
-uter.get("/activity-logs")
+        )
+
+
+@router.get("/activity-logs")
 async def get_activity_logs(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,

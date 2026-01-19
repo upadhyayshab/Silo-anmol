@@ -3,7 +3,6 @@ from fastapi import APIRouter
 from config import get_settings, get_engine
 from models import *
 
-from .example import router as example_router
 from .users import router as users_router
 from .outlets import router as outlets_router
 from .products import router as products_router
@@ -37,9 +36,6 @@ router.include_router(config_router)
 router.include_router(notifications_router)
 router.include_router(activity_logs_router)
 router.include_router(transactions_router)
-
-# Example router (can be removed later)
-router.include_router(example_router)
 
 
 @router.get("/health-check", response_model=HealthCheckResponse)

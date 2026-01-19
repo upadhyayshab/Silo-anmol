@@ -11,23 +11,118 @@ load_dotenv(basedir / ".env")
 
 
 class Settings(BaseSettings):
-    name: str = os.getenv("SERVICE_NAME", "template-backend-service")
-    version: str = "0.1.0"
-    commit: str = os.getenv("COMMIT", "unknown")
-    branch: str = os.getenv("BRANCH", "unknown")
-    build_time: str = os.getenv("BUILD_TIME", "unknown")
-    build_number: str = os.getenv("BUILD_NUMBER", "unknown")
-    build_tags: tuple = tuple(os.getenv("BUILD_TAGS", "").split())
-
-    env: str = os.getenv("ENV", "dev")
-    debug: bool = bool(int(os.getenv("DEBUG", "1")))
-    allowed_origins: tuple[str] = tuple(os.getenv("CORS_ORIGINS", "*").split(","))
-
-    engine_url = f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-    engine_str: str = f"{os.getenv('DB_DIALECT')}+{os.getenv('DB_DRIVER')}://{engine_url}" \
-        if os.getenv("DB_HOST") else "sqlite+aiosqlite:///:memory:"
-    supports_schema = bool(int(os.getenv("DB_SUPPORTS_SCHEMA", "0")))
-    master_api_key: str = os.getenv("MASTER_API_KEY", "12345678-unsafe-master-key")
+    # =============================================================================
+    # HARDCODED NON-SENSITIVE CONFIGURATION
+    # =============================================================================
+    
+    # Application Configuration (hardcoded)
+    version: str = "1.0.0"
+    commit: str = "production"
+    branch: str = "main"
+    build_time: str = "2024-01-20"
+    build_number: str = "1"
+    build_tags: tuple = ("production", "erp", "backend")
+    
+    # CORS Configuration (hardcoded)
+    allowed_origins: tuple[str] = (
+        "https://erp.gausampurna.com",
+        "https://admin.gausampurna.com", 
+        "http://localhost:3000",
+        "http://localhost:3001"
+    )
+    
+    # JWT Configuration (hardcoded non-sensitive parts)
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 7
+    
+    # Password Security (hardcoded)
+    bcrypt_rounds: int = 12
+    
+    # File Upload Configuration (hardcoded)
+    upload_dir: str = "/app/uploads"
+    max_file_size: int = 5242880  # 5MB
+    allowed_file_types: tuple[str] = ("image/png", "image/jpeg", "image/jpg")
+    
+    # Logging Configuration (hardcoded)
+    log_level: str = "INFO"
+    log_format: str = "json"
+    log_file: str = "/app/logs/silo-erp.log"
+    
+    # Health Check Configuration (hardcoded)
+    health_check_timeout: int = 30
+    db_health_check_timeout: int = 10
+    
+    # Rate Limiting Configuration (hardcoded)
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 100
+    rate_limit_window: int = 60
+    
+    # Database Pool Configuration (hardcoded)
+    db_pool_size: int = 20
+    db_max_overflow: int = 30
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 3600
+    
+    # =============================================================================
+    # ENVIRONMENT VARIABLES (FROM AWS SSM PARAMETER STORE)
+    # =============================================================================
+    
+    # Service Configuration (from environment)
+    name: str = os.getenv("SERVICE_NAME", "silo-erp-backend")
+    env: str = os.getenv("ENV", "production")
+    debug: bool = bool(int(os.getenv("DEBUG", "0")))
+    
+    # Database Configuration (from environment)
+    db_dialect: str = os.getenv("DB_DIALECT", "postgresql")
+    db_driver: str = os.getenv("DB_DRIVER", "asyncpg")
+    db_host: str = os.getenv("DB_HOST", "")
+    db_port: str = os.getenv("DB_PORT", "5432")
+    db_name: str = os.getenv("DB_NAME", "")
+    db_user: str = os.getenv("DB_USER", "")
+    db_password: str = os.getenv("DB_PASSWORD", "")
+    supports_schema: bool = bool(int(os.getenv("DB_SUPPORTS_SCHEMA", "1")))
+    
+    # Security Configuration (from environment)
+    master_api_key: str = os.getenv("MASTER_API_KEY", "")
+    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "")
+    
+    # =============================================================================
+    # COMPUTED PROPERTIES
+    # =============================================================================
+    
+    @property
+    def engine_url(self) -> str:
+        """Construct database URL from components"""
+        return f"{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+    
+    @property
+    def engine_str(self) -> str:
+        """Construct full database connection string"""
+        if self.db_host:
+            return f"{self.db_dialect}+{self.db_driver}://{self.engine_url}"
+        else:
+            return "sqlite+aiosqlite:///:memory:"
+    
+    @property
+    def database_config(self) -> dict:
+        """Get database configuration for SQLAlchemy"""
+        # Only apply pool settings for PostgreSQL, not SQLite
+        if self.db_host and self.db_dialect == "postgresql":
+            config = {
+                "pool_size": self.db_pool_size,
+                "max_overflow": self.db_max_overflow,
+                "pool_timeout": self.db_pool_timeout,
+                "pool_recycle": self.db_pool_recycle,
+                "pool_pre_ping": True,
+                "echo": self.debug
+            }
+        else:
+            # For SQLite or when no DB host is configured
+            config = {
+                "echo": self.debug
+            }
+        return config
 
     class subservices:  # noqa
         pass
@@ -41,11 +136,17 @@ def get_settings():
 @lru_cache()
 def get_engine(schema: str):
     settings = get_settings()
+    
+    # Create engine with proper configuration
     if settings.supports_schema:
         engine = create_async_engine(
             settings.engine_str,
-            execution_options={"schema_translate_map": {None: schema}}
+            execution_options={"schema_translate_map": {None: schema}},
+            **settings.database_config
         )
     else:
-        engine = create_async_engine(settings.engine_str)
+        engine = create_async_engine(
+            settings.engine_str,
+            **settings.database_config
+        )
     return engine

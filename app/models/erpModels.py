@@ -1,7 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
+import re
 
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
@@ -14,12 +15,19 @@ from utils.constants import (
 # ============================================================================
 
 class UserCreateRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(..., description="User email address")
     password: str = Field(..., min_length=8)
     full_name: str
     role: UserRole
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
+
+    @validator('email')
+    def validate_email(cls, v):
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, v):
+            raise ValueError('Invalid email format')
+        return v.lower()
 
 
 class UserUpdateRequest(BaseModel):

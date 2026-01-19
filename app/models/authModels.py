@@ -1,9 +1,17 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, Field, validator
+import re
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(..., description="User email address")
     password: str
+
+    @validator('email')
+    def validate_email(cls, v):
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, v):
+            raise ValueError('Invalid email format')
+        return v.lower()
 
 
 class LoginResponse(BaseModel):
@@ -26,7 +34,14 @@ class RefreshTokenResponse(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: EmailStr
+    email: str = Field(..., description="User email address")
+
+    @validator('email')
+    def validate_email(cls, v):
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, v):
+            raise ValueError('Invalid email format')
+        return v.lower()
 
 
 class ResetPasswordRequest(BaseModel):

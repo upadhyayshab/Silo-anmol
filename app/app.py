@@ -1,4 +1,13 @@
+import sys
+import os
+from pathlib import Path
 from contextlib import asynccontextmanager
+
+# Add SharedBackend to Python path
+current_dir = Path(__file__).parent
+shared_backend_path = current_dir.parent / "SharedBackend" / "src"
+if str(shared_backend_path) not in sys.path:
+    sys.path.insert(0, str(shared_backend_path))
 
 import sqlalchemy as db
 from fastapi import FastAPI
