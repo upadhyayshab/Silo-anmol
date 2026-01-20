@@ -106,10 +106,10 @@ def require_roles(*allowed_roles: UserRole):
                 detail="Could not validate credentials",
             )
         
-        if user_role not in [role.value for role in allowed_roles]:
+        if user_role not in [role for role in allowed_roles]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {[r.value for r in allowed_roles]}",
+                detail=f"Access denied. Required roles: {[r for r in allowed_roles]}",
             )
         
         return user_id

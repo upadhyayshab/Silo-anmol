@@ -2,12 +2,12 @@ from enum import Enum
 
 
 class UserRole(str, Enum):
-    SUPER_ADMIN = "super_admin"
-    ADMIN = "admin"
-    WAREHOUSE_MANAGER = "warehouse_manager"
-    OUTLET_MANAGER = "outlet_manager"
-    TELECALLER = "telecaller"
-    ACCOUNTANT = "accountant"
+    SUPER_ADMIN = "SUPER_ADMIN"
+    ADMIN = "ADMIN"
+    WAREHOUSE_MANAGER = "WAREHOUSE_MANAGER"
+    OUTLET_MANAGER = "OUTLET_MANAGER"
+    TELECALLER = "TELECALLER"
+    ACCOUNTANT = "ACCOUNTANT"
 
 
 class OrderStatus(str, Enum):

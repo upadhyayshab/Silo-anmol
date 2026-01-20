@@ -7,7 +7,7 @@ from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id, get_password_hash
+from utils.auth import require_roles, get_current_user_id, get_password_hash, verify_password
 from utils.constants import UserRole
 
 settings = get_settings()
@@ -105,7 +105,7 @@ async def get_user(
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     payload: UserCreateRequest,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
 ):
     """
     Create new user
@@ -237,17 +237,17 @@ async def change_user_password(
                 detail="You can only change your own password"
             )
         
-        # Verify old password
+        # Verify old password using bcrypt
         user = await user_manager.fetch(user_id)
-        if not user.__password_eq__(payload.old_password):
+        if not verify_password(payload.old_password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Incorrect old password"
             )
         
-        # Update password
-        user.password = payload.new_password  # This will hash the password
-        await user_manager.update(user_id, {"password_hash": user.password_hash})
+        # Update password using bcrypt
+        new_password_hash = get_password_hash(payload.new_password)
+        await user_manager.update(user_id, {"password_hash": new_password_hash})
         
         return StatusResponse(status="ok", message="Password changed successfully")
     
