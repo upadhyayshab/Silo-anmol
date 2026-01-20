@@ -1,0 +1,151 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'ap-south-1'
+        ECR_REPOSITORY = '400115659362.dkr.ecr.ap-south-1.amazonaws.com/erp-backend-dev'
+        ECS_CLUSTER = 'SiloFortune-dev'
+        ECS_TASK_DEFINITION_FAMILY = 'erp-backend-dev'
+        ECS_SERVICE = 'erp-backend-dev'
+        IMAGE_TAG = UUID.randomUUID().toString().replace('-', '')
+        CPU = "256"
+        MEMORY = "512"
+    }
+
+    stages {
+        stage('Update Git Submodule URLs') {
+            steps {
+                sshagent(['GitHub-Rohit-SiloFortune-Secret']) {
+                    script {
+                        sh '''#!/bin/bash
+                            # Check if .gitmodules exists
+                            if [ ! -f .gitmodules ]; then
+                                echo "No .gitmodules file found. Exiting."
+                                exit 1
+                            fi
+
+                            # Update submodule URLs to use SSH
+                            sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+
+                            # Sync and initialize submodules
+                            git submodule sync
+                            git submodule update --init --recursive
+
+                            echo "Submodule URLs converted to SSH successfully!"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("${ECR_REPOSITORY}:${IMAGE_TAG}")
+                }
+            }
+        }
+
+        stage('Login to ECR') {
+            steps {
+                script {
+                    sh '''#!/bin/bash
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REPOSITORY}
+                    '''
+                }
+            }
+        }
+
+        stage('Push Docker Image to ECR') {
+            steps {
+                script {
+                    sh '''
+                        docker push ${ECR_REPOSITORY}:${IMAGE_TAG}
+                    '''
+                }
+            }
+        }
+
+        stage('Prepare ECS Task Definition') {
+            steps {
+                script {
+                    sh '''
+                        # Replace dynamic placeholders in the JSON file
+                        sed -i "s|<IMAGE_TAG>|${IMAGE_TAG}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                        sed -i "s|<ECR_REPOSITORY>|${ECR_REPOSITORY}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                        sed -i "s|<CPU>|${CPU}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                        sed -i "s|<MEMORY>|${MEMORY}|g" ${ECS_TASK_DEFINITION_FAMILY}.json
+                    '''
+                }
+            }
+        }
+
+        stage('Register New ECS Task Definition') {
+            steps {
+                script {
+                    def output = sh(script: '''
+                        aws ecs register-task-definition --cli-input-json "$(cat ${ECS_TASK_DEFINITION_FAMILY}.json)" --query "taskDefinition.taskDefinitionArn" --output text
+                    ''', returnStdout: true).trim()
+                    env.NEW_TASK_DEFINITION_ARN = output
+                }
+            }
+        }
+
+        stage('Update ECS Service') {
+            steps {
+                script {
+                    sh '''
+                        aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --task-definition ${NEW_TASK_DEFINITION_ARN} --force-new-deployment
+                    '''
+                }
+            }
+        }
+
+        stage('Deploying to ECS') {
+            steps {
+                script {
+                    timeout(time: 10, unit: 'MINUTES') {
+                        def deploymentSucceeded = false
+                        while (!deploymentSucceeded) {
+                            def deploymentInfo = sh(script: '''
+                                aws ecs describe-services --cluster ${ECS_CLUSTER} --services ${ECS_SERVICE} --query "services[0].deployments[?status=='PRIMARY']" --output json
+                            ''', returnStdout: true).trim()
+
+                            def deployment = readJSON text: deploymentInfo
+                            def failedTasks = deployment[0]?.failedTasks ?: 0
+                            def rolloutState = deployment[0]?.rolloutState ?: ""
+
+                            if (failedTasks >= 1) {
+                                error("Deployment failed")
+                            } else if (rolloutState == 'COMPLETED') {
+                                deploymentSucceeded = true
+                                echo "Deployment completed successfully."
+                            } else if (rolloutState == 'FAILED' || rolloutState == 'ROLLED_BACK') {
+                                error("Deployment failed or was rolled back.")
+                            } else {
+                                echo "Deployment in progress... Status: ${rolloutState}"
+                                echo "Deployment Information ${deployment}"
+                                sleep(10)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "Running cleanup stage."
+
+                def imageExists = sh(script: "docker images -q ${ECR_REPOSITORY}:${IMAGE_TAG}", returnStdout: true).trim()
+                if (imageExists) {
+                    sh "docker rmi ${ECR_REPOSITORY}:${IMAGE_TAG} || true"
+                } else {
+                    echo "Docker image ${ECR_REPOSITORY}:${IMAGE_TAG} not found, skipping removal."
+                }
+            }
+        }
+    }
+}
