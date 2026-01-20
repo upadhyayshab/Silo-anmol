@@ -122,17 +122,17 @@ async def create_user(
         
         # Create user with hashed password using bcrypt
         from managers import UserSchema
-        user_data = {
-            "email": payload.email,
-            "password_hash": get_password_hash(payload.password),  # Use bcrypt hashing
-            "full_name": payload.full_name,
-            "role": payload.role,
-            "phone": payload.phone,
-            "outlet_id": payload.outlet_id,
-            "is_active": True
-        }
+        user = UserSchema(
+            email=payload.email,
+            password_hash=get_password_hash(payload.password),  # Use bcrypt hashing
+            full_name=payload.full_name,
+            role=payload.role,
+            phone=payload.phone,
+            outlet_id=payload.outlet_id,
+            is_active=True
+        )
         
-        created_user = await user_manager.create(user_data)
+        created_user = await user_manager.create(user)
         
         return UserResponse(
             uid=created_user.uid,
