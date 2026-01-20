@@ -23,6 +23,7 @@ aiosqlite==0.20.0
 # Utilities
 python-dotenv==1.0.1
 python-multipart==0.0.6
+python-multipart==0.0.6
 
 # FastAPI Extensions
 fastapi-decorators==1.0.6
