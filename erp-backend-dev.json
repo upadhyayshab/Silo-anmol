@@ -1,0 +1,102 @@
+{
+    "family": "erp-backend-dev",
+    "containerDefinitions": [
+        {
+            "name": "erp-backend",
+            "image": "<ECR_REPOSITORY>:<IMAGE_TAG>",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "name": "erp-backend-dev-8000-tcp",
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "secrets": [
+                {
+                    "name": "SERVICE_NAME",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/SERVICE_NAME"
+                },
+                {
+                    "name": "DB_NAME",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_NAME"
+                },
+                {
+                    "name": "DB_PORT",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_PORT"
+                },
+                {
+                    "name": "DB_HOST",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_HOST"
+                },
+                {
+                    "name": "DB_PASSWORD",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_PASSWORD"
+                },
+                {
+                    "name": "DB_USER",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_USER"
+                },
+                {
+                    "name": "DB_DIALECT",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_DIALECT"
+                },
+                {
+                    "name": "DB_DRIVER",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_DRIVER"
+                },
+                {
+                    "name": "DB_SUPPORTS_SCHEMA",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_SUPPORTS_SCHEMA"
+                },
+                {
+                    "name": "DEBUG",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DEBUG"
+                },
+                {
+                    "name": "ENV",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/ENV"
+                },
+                {
+                    "name": "MASTER_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/MASTER_API_KEY"
+                },
+                {
+                    "name": "JWT_SECRET_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/JWT_SECRET_KEY"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/erp-backend-dev",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "ap-south-1",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            },
+            "systemControls": []
+        }
+    ],
+    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-erp-backend-dev",
+    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-erp-backend-dev",
+    "networkMode": "awsvpc",
+    "volumes": [],
+    "placementConstraints": [],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "<CPU>",
+    "memory": "<MEMORY>",
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    }
+}
