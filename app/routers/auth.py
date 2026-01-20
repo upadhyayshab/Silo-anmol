@@ -45,7 +45,7 @@ async def login(payload: LoginRequest):
             )
         
         # Verify password
-        if not user.__password_eq__(payload.password):
+        if not verify_password(payload.password, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password"
@@ -61,7 +61,7 @@ async def login(payload: LoginRequest):
         token_data = {
             "sub": user.uid,
             "email": user.email,
-            "role": user.role.value
+            "role": user.role  # Remove .value since role is already a string in the database
         }
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
@@ -72,7 +72,7 @@ async def login(payload: LoginRequest):
             user_id=user.uid,
             email=user.email,
             full_name=user.full_name,
-            role=user.role.value
+            role=user.role  # Remove .value since role is already a string
         )
     
     except HTTPException:
