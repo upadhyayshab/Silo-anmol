@@ -47,10 +47,11 @@ app.include_router(v1_router, prefix="/api/v1")
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore
-    allow_origins=settings.allowed_origins,
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 api_key_manager = ApiKeyManager(engine)
