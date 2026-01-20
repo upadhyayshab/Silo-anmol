@@ -1,3 +1,4 @@
+
 # Production Dependencies for Silo ERP Backend
 # Core Framework
 fastapi==0.104.1
@@ -10,12 +11,14 @@ alembic==1.14.1
 sqlalchemy==2.0.23
 
 # Authentication & Security
-python-jose[cryptography]==3.3.0
+pyjwt==2.10.1
 passlib[bcrypt]==1.7.4
 cryptography==41.0.8
 
 # Data Validation
-pydantic[email]==2.5.0
+pydantic~=2.5.0
+pydantic-settings==2.0.3
+aiosqlite==0.20.0
 
 # Utilities
 python-dotenv==1.0.1

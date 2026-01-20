@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
 from functools import lru_cache
+from typing import List
 
 from dotenv import load_dotenv
-from pydantic.v1 import BaseSettings
+from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import create_async_engine
 
 basedir = Path(__file__).parents[1]
@@ -21,15 +22,15 @@ class Settings(BaseSettings):
     branch: str = "main"
     build_time: str = "2024-01-20"
     build_number: str = "1"
-    build_tags: tuple = ("production", "erp", "backend")
+    build_tags: List[str] = ["production", "erp", "backend"]
     
     # CORS Configuration (hardcoded)
-    allowed_origins: tuple[str] = (
+    allowed_origins: List[str] = [
         "https://erp.gausampurna.com",
         "https://admin.gausampurna.com", 
         "http://localhost:3000",
         "http://localhost:3001"
-    )
+    ]
     
     # JWT Configuration (hardcoded non-sensitive parts)
     jwt_algorithm: str = "HS256"
@@ -42,7 +43,7 @@ class Settings(BaseSettings):
     # File Upload Configuration (hardcoded)
     upload_dir: str = "/app/uploads"
     max_file_size: int = 5242880  # 5MB
-    allowed_file_types: tuple[str] = ("image/png", "image/jpeg", "image/jpg")
+    allowed_file_types: List[str] = ["image/png", "image/jpeg", "image/jpg"]
     
     # Logging Configuration (hardcoded)
     log_level: str = "INFO"
@@ -74,14 +75,14 @@ class Settings(BaseSettings):
     debug: bool = bool(int(os.getenv("DEBUG", "0")))
     
     # Database Configuration (from environment)
-    db_dialect: str = os.getenv("DB_DIALECT", "postgresql")
-    db_driver: str = os.getenv("DB_DRIVER", "asyncpg")
+    db_dialect: str = os.getenv("DB_DIALECT", "sqlite")
+    db_driver: str = os.getenv("DB_DRIVER", "aiosqlite")
     db_host: str = os.getenv("DB_HOST", "")
     db_port: str = os.getenv("DB_PORT", "5432")
     db_name: str = os.getenv("DB_NAME", "")
     db_user: str = os.getenv("DB_USER", "")
     db_password: str = os.getenv("DB_PASSWORD", "")
-    supports_schema: bool = bool(int(os.getenv("DB_SUPPORTS_SCHEMA", "1")))
+    supports_schema: bool = bool(int(os.getenv("DB_SUPPORTS_SCHEMA", "0")))  # Default to False for SQLite
     
     # Security Configuration (from environment)
     master_api_key: str = os.getenv("MASTER_API_KEY", "")
@@ -102,7 +103,8 @@ class Settings(BaseSettings):
         if self.db_host:
             return f"{self.db_dialect}+{self.db_driver}://{self.engine_url}"
         else:
-            return "sqlite+aiosqlite:///:memory:"
+            # Use a proper SQLite file for development
+            return "sqlite+aiosqlite:///./silo_erp.db"
     
     @property
     def database_config(self) -> dict:
