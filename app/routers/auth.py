@@ -44,8 +44,9 @@ async def login(payload: LoginRequest):
                 detail="User account is deactivated"
             )
         
-        # Verify password
-        if not verify_password(payload.password, user.password_hash):
+        # Verify password (truncate to 72 bytes for bcrypt compatibility)
+        password_to_verify = payload.password[:72] if len(payload.password.encode('utf-8')) > 72 else payload.password
+        if not verify_password(password_to_verify, user.password_hash):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password"
