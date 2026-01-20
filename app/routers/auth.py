@@ -52,9 +52,10 @@ async def login(payload: LoginRequest):
             )
         
         # Update last login
+        from datetime import datetime
         await user_manager.update(
             user.uid,
-            {"last_login": "now()"}
+            {"last_login": datetime.now()}
         )
         
         # Create tokens
