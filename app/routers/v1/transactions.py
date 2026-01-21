@@ -49,7 +49,7 @@ async def record_order_payment(
                 )
         
         # Check if order can receive payment
-        if order.order_status not in ["delivery_allotted", "delivered"]:
+        if order.order_status not in [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.DELIVERED]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Order must be assigned or delivered to record payment"
@@ -71,7 +71,7 @@ async def record_order_payment(
         
         # Update order status to delivered if payment received
         await order_manager.update(payload.order_id, {
-            "order_status": "delivered",
+            "order_status": OrderStatus.DELIVERED,
             "actual_delivery_date": datetime.now()
         })
         

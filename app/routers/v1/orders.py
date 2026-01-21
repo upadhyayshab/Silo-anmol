@@ -515,9 +515,8 @@ async def update_order_status(
 def is_valid_status_transition(current_status: OrderStatus, new_status: OrderStatus) -> bool:
     """Validate order status transitions"""
     valid_transitions = {
-        OrderStatus.PENDING: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
-        OrderStatus.CONFIRMED: [OrderStatus.SHIPPED, OrderStatus.CANCELLED],
-        OrderStatus.SHIPPED: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
+        OrderStatus.PENDING: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED],
+        OrderStatus.DELIVERY_ALLOTTED: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
         OrderStatus.DELIVERED: [],  # Final state
         OrderStatus.CANCELLED: []   # Final state
     }
@@ -832,7 +831,7 @@ async def update_order_payment_status(
         # If marked as delivered and paid, update order status
         if payload.payment_status == PaymentStatus.PAID:
             await order_manager.update(order_id, {
-                "order_status": "delivered",
+                "order_status": OrderStatus.DELIVERED,
                 "actual_delivery_date": datetime.now()
             })
         

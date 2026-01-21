@@ -332,8 +332,8 @@ async def update_transfer_status(
     """
     Update transfer status with approval workflow
     - PENDING → APPROVED (warehouse manager/admin)
-    - APPROVED → SHIPPED (warehouse manager/admin)
-    - SHIPPED → DELIVERED (delivery person/admin)
+    - APPROVED → IN_TRANSIT (warehouse manager/admin)
+    - IN_TRANSIT → DELIVERED (delivery person/admin)
     - Any status → CANCELLED (admin only)
     """
     try:
@@ -374,7 +374,7 @@ async def update_transfer_status(
             # Reserve stock at source location
             await reserve_transfer_stock(transfer_id)
         
-        elif payload.status == TransferStatus.SHIPPED:
+        elif payload.status == TransferStatus.IN_TRANSIT:
             if not transfer.approved_by:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -415,8 +415,8 @@ def is_valid_transfer_status_transition(current_status: TransferStatus, new_stat
     """Validate transfer status transitions"""
     valid_transitions = {
         TransferStatus.PENDING: [TransferStatus.APPROVED, TransferStatus.CANCELLED],
-        TransferStatus.APPROVED: [TransferStatus.SHIPPED, TransferStatus.CANCELLED],
-        TransferStatus.SHIPPED: [TransferStatus.DELIVERED, TransferStatus.CANCELLED],
+        TransferStatus.APPROVED: [TransferStatus.IN_TRANSIT, TransferStatus.CANCELLED],
+        TransferStatus.IN_TRANSIT: [TransferStatus.DELIVERED, TransferStatus.CANCELLED],
         TransferStatus.DELIVERED: [],  # Final state
         TransferStatus.CANCELLED: []   # Final state
     }
@@ -527,7 +527,7 @@ async def release_transfer_stock(transfer_id: str):
     transfer = await transfer_manager.fetch(transfer_id)
     
     # Only release if transfer was approved (stock was reserved)
-    if transfer.status not in [TransferStatus.APPROVED, TransferStatus.SHIPPED]:
+    if transfer.status not in [TransferStatus.APPROVED, TransferStatus.IN_TRANSIT]:
         return
     
     transfer_items = await transfer_item_manager.fetch_all(

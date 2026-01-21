@@ -1149,10 +1149,22 @@ Authorization: Bearer <access_token>
 **Request Body**:
 ```json
 {
-  "order_status": "delivered",
-  "status_remarks": "Delivered successfully to customer"
+  "order_status": "delivery_allotted",
+  "status_remarks": "Order assigned to delivery team"
 }
 ```
+
+**Valid Status Transitions**:
+- `pending` → `delivery_allotted` or `cancelled`
+- `delivery_allotted` → `delivered` or `cancelled`
+- `delivered` → (final state)
+- `cancelled` → (final state)
+
+**Available Status Values**:
+- `pending` - Order created, awaiting assignment
+- `delivery_allotted` - Order assigned to outlet for delivery
+- `delivered` - Order completed successfully
+- `cancelled` - Order cancelled
 
 **Response (200)**:
 ```json
@@ -2037,10 +2049,24 @@ const printInvoice = (invoiceId) => {
 **Request Body**:
 ```json
 {
-  "status": "delivered",
-  "notes": "Delivered successfully to outlet"
+  "status": "in_transit",
+  "notes": "Transfer shipped to outlet"
 }
 ```
+
+**Valid Status Transitions**:
+- `pending` → `approved` or `cancelled`
+- `approved` → `in_transit` or `cancelled`
+- `in_transit` → `delivered` or `cancelled`
+- `delivered` → (final state)
+- `cancelled` → (final state)
+
+**Available Status Values**:
+- `pending` - Transfer requested, awaiting approval
+- `approved` - Transfer approved, stock reserved
+- `in_transit` - Transfer shipped/in transit
+- `delivered` - Transfer completed successfully
+- `cancelled` - Transfer cancelled
 
 **Response (200)**:
 ```json
