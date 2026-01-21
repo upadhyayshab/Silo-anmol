@@ -1017,7 +1017,7 @@ Authorization: Bearer <access_token>
 
 ### POST /api/v1/orders
 **Description**: Create new order  
-**Authentication**: Required (Telecaller, Admin, Super Admin)
+**Authentication**: Required (Telecaller, Outlet Manager, Admin, Super Admin)
 
 **Request Body**:
 ```json
@@ -1044,6 +1044,11 @@ Authorization: Bearer <access_token>
   ]
 }
 ```
+
+**Behavior by Role**:
+- **Telecaller**: Creates order for phone/online customers, auto-assigns outlet based on delivery area
+- **Outlet Manager**: Creates order for walk-in customers, automatically assigns to their own outlet
+- **Admin/Super Admin**: Can create orders with full flexibility
 
 **Response (201)**:
 ```json

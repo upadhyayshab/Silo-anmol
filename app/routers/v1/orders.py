@@ -42,10 +42,14 @@ def generate_order_number() -> str:
 @router.post("", response_model=OrderResponse)
 async def create_order(
     payload: OrderCreateRequest,
-    current_user_id: str = Depends(require_roles(UserRole.TELECALLER, UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    current_user_id: str = Depends(require_roles(
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
 ):
     """
-    Create new customer order (Telecaller function)
+    Create new customer order
+    - Telecallers: Create orders for phone/online customers
+    - Outlet Managers: Create orders for walk-in customers at their outlet
     Automatically reserves stock at assigned outlet
     """
     try:
@@ -82,6 +86,14 @@ async def create_order(
         # Create order
         order_number = generate_order_number()
         
+        # Get current user to determine order assignment
+        current_user = await user_manager.fetch(current_user_id)
+        
+        # For outlet managers, auto-assign to their outlet
+        assigned_outlet_id = None
+        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id:
+            assigned_outlet_id = current_user.outlet_id
+        
         new_order = CustomerOrderSchema(
             order_number=order_number,
             customer_name=payload.customer_name,
@@ -95,7 +107,7 @@ async def create_order(
             state=payload.state,
             pincode=payload.pincode,
             telecaller_id=current_user_id,
-            assigned_outlet_id=None,  # Will be assigned later
+            assigned_outlet_id=assigned_outlet_id,
             order_status=OrderStatus.PENDING,
             collection_type=payload.collection_type,
             payment_method=payload.payment_method,
@@ -119,19 +131,23 @@ async def create_order(
             created_item = await order_item_manager.create(order_item)
             order_items.append(created_item)
         
-        # Auto-assign outlet based on delivery area (simple logic)
-        assigned_outlet = await auto_assign_outlet(payload.district, payload.state)
-        if assigned_outlet:
-            # Update order with assigned outlet
-            await order_manager.update(
-                created_order.uid,
-                {"assigned_outlet_id": assigned_outlet.uid}
-            )
-            created_order.assigned_outlet_id = assigned_outlet.uid
-            
-            # Reserve stock at assigned outlet
+        # Auto-assign outlet based on delivery area (for telecaller orders)
+        # Outlet manager orders are already assigned to their outlet
+        if not assigned_outlet_id:
+            assigned_outlet = await auto_assign_outlet(payload.district, payload.state)
+            if assigned_outlet:
+                # Update order with assigned outlet
+                await order_manager.update(
+                    created_order.uid,
+                    {"assigned_outlet_id": assigned_outlet.uid}
+                )
+                created_order.assigned_outlet_id = assigned_outlet.uid
+                assigned_outlet_id = assigned_outlet.uid
+        
+        # Reserve stock at assigned outlet
+        if assigned_outlet_id:
             try:
-                await reserve_order_stock(created_order.uid, assigned_outlet.uid, validated_items)
+                await reserve_order_stock(created_order.uid, assigned_outlet_id, validated_items)
             except Exception as e:
                 # If stock reservation fails, keep order as pending
                 await order_manager.update(
