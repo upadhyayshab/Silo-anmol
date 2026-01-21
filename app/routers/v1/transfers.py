@@ -219,29 +219,41 @@ async def get_transfers(
         elif status:
             filters["status"] = status
         
+        # Fetch transfers with eager loading to prevent session issues
         transfers = await transfer_manager.fetch_all(
             filters=filters,
             limit=limit,
-            offset=offset
+            offset=offset,
+            joins=["items", "to_outlet", "from_outlet", "requester"]
         )
         
         transfer_responses = []
         for transfer in transfers.items:
-            # Filter by date range if specified
-            if from_date and transfer.created_at.date() < from_date:
+            try:
+                # Filter by date range if specified
+                if from_date and transfer.created_at.date() < from_date:
+                    continue
+                if to_date and transfer.created_at.date() > to_date:
+                    continue
+                
+                transfer_response = await get_transfer_response(transfer.uid)
+                transfer_responses.append(transfer_response)
+            except Exception as e:
+                # Log error but continue with other transfers
+                print(f"Error processing transfer {transfer.uid}: {str(e)}")
                 continue
-            if to_date and transfer.created_at.date() > to_date:
-                continue
-            
-            transfer_response = await get_transfer_response(transfer.uid)
-            transfer_responses.append(transfer_response)
         
         return ListResponse(items=transfer_responses, count=len(transfer_responses))
     
     except Exception as e:
+        # Handle "record not found" errors gracefully
+        error_msg = str(e)
+        if "record not found" in error_msg.lower():
+            return ListResponse(items=[], count=0)
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch transfers: {str(e)}"
+            detail=f"Failed to fetch transfers: {error_msg}"
         )
 
 
@@ -288,37 +300,90 @@ async def get_transfer(
 
 async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
     """Helper to build complete transfer response with items"""
-    transfer = await transfer_manager.fetch(transfer_id)
-    
-    # Get transfer items
-    transfer_items = await transfer_item_manager.fetch_all(
-        filters={"transfer_id": transfer_id}
-    )
-    
-    items = [
-        TransferItemResponse(
-            uid=item.uid,
-            product_id=item.product_id,
-            quantity_requested=item.quantity_requested,
-            quantity_delivered=item.quantity_delivered
+    try:
+        # Fetch transfer with eager loading to avoid session issues
+        transfer = await transfer_manager.fetch(
+            transfer_id,
+            joins=["items", "to_outlet", "from_outlet", "requester", "approver"]
         )
-        for item in transfer_items.items
-    ]
+        
+        # Get transfer items with error handling
+        items = []
+        try:
+            transfer_items = await transfer_item_manager.fetch_all(
+                filters={"transfer_id": transfer_id}
+            )
+            
+            items = [
+                TransferItemResponse(
+                    uid=item.uid,
+                    product_id=item.product_id,
+                    quantity_requested=item.quantity_requested,
+                    quantity_delivered=item.quantity_delivered
+                )
+                for item in transfer_items.items
+            ]
+        except Exception as e:
+            print(f"Error fetching transfer items for {transfer_id}: {str(e)}")
+            # Continue with empty items list
+        
+        return StockTransferResponse(
+            uid=transfer.uid,
+            from_outlet_id=transfer.from_outlet_id,
+            to_outlet_id=transfer.to_outlet_id,
+            status=transfer.status,
+            requested_by=transfer.requested_by,
+            approved_by=transfer.approved_by,
+            delivery_person_id=transfer.delivery_person_id,
+            scheduled_date=transfer.scheduled_date,
+            delivered_date=transfer.delivered_date,
+            notes=transfer.notes,
+            items=items,
+            created_at=transfer.created_at
+        )
     
-    return StockTransferResponse(
-        uid=transfer.uid,
-        from_outlet_id=transfer.from_outlet_id,
-        to_outlet_id=transfer.to_outlet_id,
-        status=transfer.status,
-        requested_by=transfer.requested_by,
-        approved_by=transfer.approved_by,
-        delivery_person_id=transfer.delivery_person_id,
-        scheduled_date=transfer.scheduled_date,
-        delivered_date=transfer.delivered_date,
-        notes=transfer.notes,
-        items=items,
-        created_at=transfer.created_at
-    )
+    except Exception as e:
+        # If transfer fetch fails, try without joins
+        try:
+            transfer = await transfer_manager.fetch(transfer_id)
+            
+            # Get items separately
+            items = []
+            try:
+                transfer_items = await transfer_item_manager.fetch_all(
+                    filters={"transfer_id": transfer_id}
+                )
+                items = [
+                    TransferItemResponse(
+                        uid=item.uid,
+                        product_id=item.product_id,
+                        quantity_requested=item.quantity_requested,
+                        quantity_delivered=item.quantity_delivered
+                    )
+                    for item in transfer_items.items
+                ]
+            except:
+                pass
+            
+            return StockTransferResponse(
+                uid=transfer.uid,
+                from_outlet_id=transfer.from_outlet_id,
+                to_outlet_id=transfer.to_outlet_id,
+                status=transfer.status,
+                requested_by=transfer.requested_by,
+                approved_by=transfer.approved_by,
+                delivery_person_id=transfer.delivery_person_id,
+                scheduled_date=transfer.scheduled_date,
+                delivered_date=transfer.delivered_date,
+                notes=transfer.notes,
+                items=items,
+                created_at=transfer.created_at
+            )
+        except Exception as inner_e:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Transfer not found: {transfer_id}"
+            )
 
 
 @router.put("/{transfer_id}/status", response_model=StatusResponse)
@@ -686,17 +751,32 @@ async def get_pending_approvals(
         if current_user.role == UserRole.WAREHOUSE_MANAGER:
             filters["from_outlet_id"] = None
         
-        transfers = await transfer_manager.fetch_all(filters=filters)
+        # Fetch transfers with proper joins to avoid session issues
+        transfers = await transfer_manager.fetch_all(
+            filters=filters,
+            joins=["items", "to_outlet", "requester"]  # Eagerly load relationships
+        )
         
         transfer_responses = []
         for transfer in transfers.items:
-            transfer_response = await get_transfer_response(transfer.uid)
-            transfer_responses.append(transfer_response)
+            try:
+                transfer_response = await get_transfer_response(transfer.uid)
+                transfer_responses.append(transfer_response)
+            except Exception as e:
+                # Log error but continue with other transfers
+                print(f"Error processing transfer {transfer.uid}: {str(e)}")
+                continue
         
         return ListResponse(items=transfer_responses, count=len(transfer_responses))
     
     except Exception as e:
+        # More specific error handling
+        error_msg = str(e)
+        if "record not found" in error_msg.lower():
+            # Return empty list if no records found instead of 404
+            return ListResponse(items=[], count=0)
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch pending approvals: {str(e)}"
+            detail=f"Failed to fetch pending approvals: {error_msg}"
         )

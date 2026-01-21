@@ -135,9 +135,10 @@ async def get_warehouse_manager_dashboard(
             filters={"outlet_id": None}
         )
         
-        # Get pending transfer requests
+        # Get pending transfer requests with proper joins to load items
         pending_transfers = await transfer_manager.fetch_all(
-            filters={"status": TransferStatus.PENDING}
+            filters={"status": TransferStatus.PENDING},
+            joins=["items"]  # Eagerly load transfer items
         )
         
         # Get all products for stock analysis
@@ -147,13 +148,77 @@ async def get_warehouse_manager_dashboard(
         total_products = len(all_products.items)
         low_stock_count = 0
         out_of_stock_count = 0
+        low_stock_alerts = []
         
         for inv in warehouse_inventory.items:
-            product = await product_manager.fetch(inv.product_id)
-            if inv.quantity == 0:
-                out_of_stock_count += 1
-            elif inv.quantity <= product.min_stock_level:
-                low_stock_count += 1
+            try:
+                product = await product_manager.fetch(inv.product_id)
+                if inv.quantity == 0:
+                    out_of_stock_count += 1
+                elif inv.quantity <= product.min_stock_level:
+                    low_stock_count += 1
+                    low_stock_alerts.append({
+                        "product_id": inv.product_id,
+                        "product_name": product.product_name,
+                        "current_stock": inv.quantity,
+                        "min_level": product.min_stock_level,
+                        "reserved_stock": inv.reserved_quantity,
+                        "available_stock": inv.quantity - inv.reserved_quantity
+                    })
+            except Exception as e:
+                # Skip products that can't be fetched
+                continue
+        
+        # Build pending transfers response with safe item count
+        pending_transfers_data = []
+        for transfer in pending_transfers.items:
+            try:
+                # Get outlet name safely
+                outlet_name = "Unknown Outlet"
+                if transfer.to_outlet_id:
+                    try:
+                        outlet = await outlet_manager.fetch(transfer.to_outlet_id)
+                        outlet_name = outlet.outlet_name
+                    except:
+                        pass
+                
+                # Get requester name safely
+                requester_name = "Unknown User"
+                if transfer.requested_by:
+                    try:
+                        requester = await user_manager.fetch(transfer.requested_by)
+                        requester_name = requester.full_name
+                    except:
+                        pass
+                
+                # Count items safely
+                items_count = 0
+                if hasattr(transfer, 'items') and transfer.items:
+                    items_count = len(transfer.items)
+                else:
+                    # Fallback: count items manually
+                    try:
+                        transfer_items = await transfer_item_manager.fetch_all(
+                            filters={"transfer_id": transfer.uid}
+                        )
+                        items_count = len(transfer_items.items)
+                    except:
+                        items_count = 0
+                
+                pending_transfers_data.append({
+                    "transfer_id": transfer.uid,
+                    "to_outlet_id": transfer.to_outlet_id,
+                    "to_outlet_name": outlet_name,
+                    "requested_by": transfer.requested_by,
+                    "requester_name": requester_name,
+                    "scheduled_date": transfer.scheduled_date.isoformat() if transfer.scheduled_date else None,
+                    "items_count": items_count,
+                    "notes": transfer.notes,
+                    "created_at": transfer.created_at.isoformat()
+                })
+            except Exception as e:
+                # Skip transfers that can't be processed
+                continue
         
         return {
             "inventory_overview": {
@@ -162,26 +227,8 @@ async def get_warehouse_manager_dashboard(
                 "out_of_stock_items": out_of_stock_count,
                 "pending_transfers": len(pending_transfers.items)
             },
-            "pending_transfers": [
-                {
-                    "transfer_id": transfer.uid,
-                    "to_outlet_id": transfer.to_outlet_id,
-                    "requested_by": transfer.requested_by,
-                    "scheduled_date": transfer.scheduled_date.isoformat() if transfer.scheduled_date else None,
-                    "items_count": len(transfer.items) if hasattr(transfer, 'items') else 0
-                }
-                for transfer in pending_transfers.items[:10]
-            ],
-            "low_stock_alerts": [
-                {
-                    "product_id": inv.product_id,
-                    "current_stock": inv.quantity,
-                    "reserved_stock": inv.reserved_quantity,
-                    "available_stock": inv.quantity - inv.reserved_quantity
-                }
-                for inv in warehouse_inventory.items
-                if inv.quantity <= 10  # Assuming min level check
-            ][:10]
+            "pending_transfers": pending_transfers_data[:10],
+            "low_stock_alerts": low_stock_alerts[:10]
         }
     
     except HTTPException:
