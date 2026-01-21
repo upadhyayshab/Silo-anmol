@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
+from io import BytesIO
 
 from config import get_settings, get_engine
 from managers import (
@@ -452,24 +453,40 @@ async def get_invoice(
 @router.get("/{invoice_id}/pdf")
 async def generate_invoice_pdf(
     invoice_id: str,
-    _: str = Depends(require_roles(
+    current_user_id: str = Depends(require_roles(
         UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
     ))
 ):
     """
-    Generate PDF for invoice
-    TODO: Implement PDF generation with Puppeteer or similar
+    Generate and download invoice PDF
     """
     try:
-        # For now, return a placeholder response
-        # In production, this would generate actual PDF
-        return {
-            "status": "success",
-            "message": "PDF generation not yet implemented",
-            "pdf_url": f"/api/v1/invoices/{invoice_id}/download-pdf",
-            "note": "This endpoint will generate and return PDF download URL"
-        }
+        # Check access permissions
+        invoice = await invoice_manager.fetch(invoice_id)
+        current_user = await user_manager.fetch(current_user_id)
+        
+        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != invoice.outlet_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this invoice"
+            )
+        
+        # Generate PDF
+        pdf_buffer = await invoice_service.generate_invoice_pdf(invoice_id)
+        
+        # Return PDF as downloadable file
+        from fastapi.responses import StreamingResponse
+        
+        return StreamingResponse(
+            BytesIO(pdf_buffer.read()),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=invoice_{invoice.invoice_number}.pdf"
+            }
+        )
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -478,29 +495,41 @@ async def generate_invoice_pdf(
 
 
 @router.get("/{invoice_id}/print")
-async def get_printable_invoice(
+async def get_invoice_print_view(
     invoice_id: str,
-    _: str = Depends(require_roles(
+    current_user_id: str = Depends(require_roles(
         UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
     ))
 ):
     """
-    Get print-ready HTML for invoice
-    TODO: Implement HTML template generation
+    Get invoice in print-ready format (HTML or redirect to PDF)
     """
     try:
-        # For now, return a placeholder response
+        # Check access permissions
+        invoice = await invoice_manager.fetch(invoice_id)
+        current_user = await user_manager.fetch(current_user_id)
+        
+        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != invoice.outlet_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this invoice"
+            )
+        
+        # For now, redirect to PDF generation
+        # In future, this could return HTML template for browser printing
         return {
             "status": "success",
-            "message": "Print template generation not yet implemented",
-            "html_content": "<html><body><h1>Invoice Print Template</h1><p>To be implemented</p></body></html>",
-            "note": "This endpoint will return formatted HTML for printing"
+            "message": "Use PDF endpoint for printing",
+            "pdf_url": f"/api/v1/invoices/{invoice_id}/pdf",
+            "note": "Download PDF and print from your device"
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate print template: {str(e)}"
+            detail=f"Failed to get print view: {str(e)}"
         )
 
 

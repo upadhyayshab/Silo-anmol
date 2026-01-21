@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, date
+from io import BytesIO
 import uuid
 import json
 
@@ -10,6 +11,7 @@ from managers import (
     SalesInvoiceSchema, SalesInvoiceItemSchema
 )
 from utils.constants import InvoiceType, PaymentStatus, PaymentMethod
+from services.pdf_service import InvoicePDFGenerator
 
 
 class InvoiceService:
@@ -23,6 +25,7 @@ class InvoiceService:
         self.product_manager = ProductManager(engine)
         self.outlet_manager = OutletManager(engine)
         self.config_manager = SystemConfigurationManager(engine)
+        self.pdf_generator = InvoicePDFGenerator()
     
     async def generate_invoice_number(self, outlet_code: str) -> str:
         """
@@ -341,6 +344,67 @@ class InvoiceService:
         
         except Exception as e:
             raise Exception(f"Failed to restore inventory: {str(e)}")
+    
+    async def generate_invoice_pdf(self, invoice_id: str) -> BytesIO:
+        """
+        Generate PDF for an existing invoice
+        """
+        try:
+            # Get invoice with all details
+            invoice = await self.invoice_manager.fetch(invoice_id)
+            
+            # Get outlet details
+            outlet = await self.outlet_manager.fetch(invoice.outlet_id)
+            
+            # Get invoice items
+            items = await self.invoice_item_manager.fetch_all(
+                filters={"invoice_id": invoice_id}
+            )
+            
+            # Prepare data for PDF generation
+            pdf_data = {
+                'invoice_number': invoice.invoice_number,
+                'invoice_date': invoice.invoice_date.strftime('%d-%m-%Y'),
+                'outlet_name': outlet.outlet_name,
+                'payment_method': invoice.payment_method.value.upper(),
+                'customer_name': invoice.customer_name,
+                'customer_phone': invoice.customer_phone,
+                'customer_email': invoice.customer_email,
+                'customer_address': invoice.customer_address,
+                'customer_gstin': invoice.customer_gstin,
+                'subtotal': float(invoice.subtotal),
+                'discount_amount': float(invoice.discount_amount),
+                'taxable_amount': float(invoice.taxable_amount),
+                'cgst_amount': float(invoice.cgst_amount),
+                'sgst_amount': float(invoice.sgst_amount),
+                'igst_amount': float(invoice.igst_amount),
+                'total_tax': float(invoice.total_tax),
+                'total_amount': float(invoice.total_amount),
+                'items': []
+            }
+            
+            # Add items data
+            for item in items.items:
+                pdf_data['items'].append({
+                    'product_name': item.product_name,
+                    'hsn_code': item.hsn_code,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'discount_amount': float(item.discount_amount),
+                    'taxable_amount': float(item.taxable_amount),
+                    'tax_rate': float(item.tax_rate),
+                    'cgst_rate': float(item.cgst_rate),
+                    'sgst_rate': float(item.sgst_rate),
+                    'igst_rate': float(item.igst_rate),
+                    'total_tax': float(item.total_tax),
+                    'total_amount': float(item.total_amount)
+                })
+            
+            # Generate PDF
+            return self.pdf_generator.generate_invoice_pdf(pdf_data)
+        
+        except Exception as e:
+            raise Exception(f"Failed to generate invoice PDF: {str(e)}")
 
 
 __all__ = ["InvoiceService"]

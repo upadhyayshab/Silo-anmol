@@ -1,5 +1,10 @@
 
 # Production Dependencies for Silo ERP Backend
+
+# PDF Generation
+reportlab==4.0.7
+Pillow==10.1.0
+
 # Core Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
@@ -22,7 +27,6 @@ aiosqlite==0.20.0
 
 # Utilities
 python-dotenv==1.0.1
-python-multipart==0.0.6
 python-multipart==0.0.6
 
 # FastAPI Extensions
