@@ -1,8 +1,11 @@
 import sqlalchemy as db
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
+from typing import Optional, List
 
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
+from SharedBackend.managers.base import NESTED_JOINS
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod, 
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure
@@ -39,7 +42,23 @@ class UserSchema(BasePassSchema):
 
 
 class UserManager(BasePassManager[UserSchema]):
-    pass
+    async def update(
+            self,
+            uid: str,
+            updates: dict,
+            *,
+            session: AsyncSession = None,
+            joins: List[NESTED_JOINS] = None,
+            include: List[str] = None,
+            exclude: List[str] = None,
+    ) -> UserSchema:
+        """
+        Override update method to handle session management properly
+        and avoid detached instance errors
+        """
+        # Always fetch fresh data after update to avoid session issues
+        await super().update(uid, updates, session=session, joins=joins, include=include, exclude=exclude)
+        return await self.fetch(uid, session=session, joins=joins, include=include, exclude=exclude)
 
 
 # ============================================================================
