@@ -463,7 +463,7 @@ async def update_transfer_status(
 
 @router.get("", response_model=ListResponse[StockTransferResponse])
 async def get_transfers(
-    status: Optional[TransferStatus] = None,
+    transfer_status: Optional[TransferStatus] = None,
     from_outlet_id: Optional[str] = None,
     to_outlet_id: Optional[str] = None,
     requested_by: Optional[str] = None,
@@ -500,16 +500,16 @@ async def get_transfers(
         
         # Apply additional filters for admins or if user has broader access
         if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-            if status:
-                filters["status"] = status
+            if transfer_status:
+                filters["status"] = transfer_status
             if from_outlet_id is not None:
                 filters["from_outlet_id"] = from_outlet_id
             if to_outlet_id:
                 filters["to_outlet_id"] = to_outlet_id
             if requested_by:
                 filters["requested_by"] = requested_by
-        elif status:
-            filters["status"] = status
+        elif transfer_status:
+            filters["status"] = transfer_status
         
         # Fetch transfers with eager loading to prevent session issues
         transfers = await transfer_manager.fetch_all(
