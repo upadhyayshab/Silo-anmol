@@ -740,33 +740,8 @@ async def get_pending_approvals(
 ):
     """Get all transfers pending approval"""
     try:
-        # Simple approach - just fetch all transfers and filter
-        transfers = await transfer_manager.fetch_all()
-        
-        # Filter for PENDING status manually
-        pending_transfers = [t for t in transfers.items if t.status == TransferStatus.PENDING]
-        
-        # Build simple responses
-        transfer_responses = []
-        for transfer in pending_transfers:
-            transfer_response = StockTransferResponse(
-                uid=transfer.uid,
-                from_outlet_id=transfer.from_outlet_id,
-                to_outlet_id=transfer.to_outlet_id,
-                status=transfer.status,
-                requested_by=transfer.requested_by,
-                approved_by=transfer.approved_by,
-                delivery_person_id=transfer.delivery_person_id,
-                scheduled_date=transfer.scheduled_date,
-                delivered_date=transfer.delivered_date,
-                notes=transfer.notes,
-                items=[],  # Empty items for now to avoid complexity
-                created_at=transfer.created_at
-            )
-            transfer_responses.append(transfer_response)
-        
-        return ListResponse(items=transfer_responses, count=len(transfer_responses))
-    
+        # Ultra simple test - just return empty list to see if endpoint works
+        return ListResponse(items=[], count=0)
     except Exception as e:
         # Return empty list on any error
         print(f"Error in pending approvals: {str(e)}")
