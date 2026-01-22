@@ -146,6 +146,42 @@ async def list_outlets(
         )
 
 
+
+
+@router.get("/{outlet_id}", response_model=OutletResponse)
+async def get_outlet(
+    outlet_id: str,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+):
+    """Get outlet by ID"""
+    try:
+        outlet = await outlet_manager.fetch(outlet_id)
+        return outlet
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Outlet not found: {str(e)}"
+        )
+
+
+@router.put("/{outlet_id}", response_model=OutletResponse)
+async def update_outlet(
+    outlet_id: str,
+    payload: OutletUpdateRequest,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """Update outlet details"""
+    try:
+        updates = payload.dict(exclude_unset=True)
+        updated_outlet = await outlet_manager.update(outlet_id, updates)
+        return updated_outlet
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update outlet: {str(e)}"
+        )
+
+
 @router.post("", response_model=OutletResponse, status_code=status.HTTP_201_CREATED)
 async def create_outlet(
     payload: OutletCreateRequest,

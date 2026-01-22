@@ -7,7 +7,7 @@ from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id, get_password_hash, verify_password
+from utils.auth import hash_password, verify_password, require_roles, get_current_user_id, get_password_hash, verify_password
 from utils.constants import UserRole
 
 settings = get_settings()
@@ -58,6 +58,82 @@ router = APIRouter(prefix="/users", tags=["User Management"])
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch user: {str(e)}"
+        )
+
+
+
+
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: str,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """Get user by ID"""
+    try:
+        user = await user_manager.fetch(user_id)
+        return user
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User not found: {str(e)}"
+        )
+
+
+@router.put("/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: str,
+    payload: UserUpdateRequest,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """Update user details"""
+    try:
+        updates = payload.dict(exclude_unset=True)
+        updated_user = await user_manager.update(user_id, updates)
+        return updated_user
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update user: {str(e)}"
+        )
+
+
+@router.put("/{user_id}/password", response_model=StatusResponse)
+async def change_user_password(
+    user_id: str,
+    payload: UserPasswordChangeRequest,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Change user password"""
+    try:
+        # Users can only change their own password unless admin
+        if user_id != current_user_id:
+            # Check if current user is admin
+            current_user = await user_manager.fetch(current_user_id)
+            if current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Can only change your own password"
+                )
+        
+        # Verify old password
+        user = await user_manager.fetch(user_id)
+        if not verify_password(payload.old_password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid old password"
+            )
+        
+        # Update password
+        new_password_hash = hash_password(payload.new_password)
+        await user_manager.update(user_id, {"password_hash": new_password_hash})
+        
+        return StatusResponse(message="Password updated successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to change password: {str(e)}"
         )
 
 
@@ -261,17 +337,6 @@ async def deactivate_user(
         )
 
 
-@router.put("/{user_id}/password", response_model=StatusResponse)
-async def change_user_password(
-    user_id: str,
-    payload: UserPasswordChangeRequest,
-    current_user_id: str = Depends(get_current_user_id)
-):
-    """
-    Change user password
-    Users can only change their own password
-    """
-    try:
         # Users can only change their own password
         if user_id != current_user_id:
             raise HTTPException(

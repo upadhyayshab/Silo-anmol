@@ -803,6 +803,102 @@ async def email_invoice(
         )
 
 
+
+
+@router.get("/{invoice_id}", response_model=InvoiceResponse)
+async def get_invoice(
+    invoice_id: str,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+):
+    """Get invoice by ID with items"""
+    try:
+        # Get invoice
+        invoice = await invoice_manager.fetch(invoice_id)
+        
+        # Get invoice items
+        items = await invoice_item_manager.fetch_all(filters={"invoice_id": invoice_id})
+        
+        # Convert to response format
+        invoice_dict = invoice.__dict__.copy()
+        invoice_dict['items'] = [item.__dict__ for item in items.items]
+        
+        return InvoiceResponse(**invoice_dict)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invoice not found: {str(e)}"
+        )
+
+
+@router.put("/{invoice_id}", response_model=InvoiceResponse)
+async def update_invoice(
+    invoice_id: str,
+    payload: InvoiceCreateRequest,  # Reuse create request for updates
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER))
+):
+    """Update invoice (only if not finalized)"""
+    try:
+        # Check if invoice exists and is not cancelled
+        existing_invoice = await invoice_manager.fetch(invoice_id)
+        
+        if existing_invoice.is_cancelled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot update cancelled invoice"
+            )
+        
+        # For now, only allow updating notes and customer details
+        updates = {
+            "customer_name": payload.customer_name,
+            "customer_phone": payload.customer_phone,
+            "customer_email": payload.customer_email,
+            "customer_address": payload.customer_address,
+            "customer_gstin": payload.customer_gstin,
+            "customer_state_code": payload.customer_state_code,
+            "notes": payload.notes
+        }
+        
+        # Remove None values
+        updates = {k: v for k, v in updates.items() if v is not None}
+        
+        updated_invoice = await invoice_manager.update(invoice_id, updates)
+        return updated_invoice
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update invoice: {str(e)}"
+        )
+
+
+@router.get("/{invoice_id}/pdf")
+async def download_invoice_pdf(
+    invoice_id: str,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+):
+    """Download invoice as PDF"""
+    try:
+        from services.invoice_service import InvoiceService
+        
+        invoice_service = InvoiceService(engine)
+        pdf_buffer = await invoice_service.generate_invoice_pdf(invoice_id)
+        
+        from fastapi.responses import StreamingResponse
+        import io
+        
+        return StreamingResponse(
+            io.BytesIO(pdf_buffer.getvalue()),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=invoice_{invoice_id}.pdf"}
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate PDF: {str(e)}"
+        )
+
+
 @router.delete("/{invoice_id}")
 async def cancel_invoice(
     invoice_id: str,

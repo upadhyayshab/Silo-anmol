@@ -395,6 +395,70 @@ async def get_transfer_summary(
         )
 
 
+
+
+@router.put("/{transfer_id}/approve", response_model=StockTransferResponse)
+async def approve_transfer(
+    transfer_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+):
+    """Approve stock transfer request"""
+    try:
+        # Get transfer
+        transfer = await transfer_manager.fetch(transfer_id)
+        
+        if transfer.status != TransferStatus.PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only pending transfers can be approved"
+            )
+        
+        # Update transfer status
+        updates = {
+            "status": TransferStatus.APPROVED,
+            "approved_by": current_user_id
+        }
+        
+        updated_transfer = await transfer_manager.update(transfer_id, updates)
+        return updated_transfer
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to approve transfer: {str(e)}"
+        )
+
+
+@router.put("/{transfer_id}/status", response_model=StockTransferResponse)
+async def update_transfer_status(
+    transfer_id: str,
+    payload: StockTransferStatusUpdateRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+):
+    """Update transfer status"""
+    try:
+        updates = {
+            "status": payload.status,
+            "notes": payload.notes
+        }
+        
+        # Set delivery date if delivered
+        if payload.status == TransferStatus.DELIVERED:
+            from datetime import datetime
+            updates["delivered_date"] = datetime.utcnow()
+        
+        updated_transfer = await transfer_manager.update(transfer_id, updates)
+        return updated_transfer
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update transfer status: {str(e)}"
+        )
+
+
 # GENERIC ROUTE LAST (after all specific routes)
 
 @router.get("", response_model=ListResponse[StockTransferResponse])
@@ -605,25 +669,6 @@ async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
             )
 
 
-@router.put("/{transfer_id}/status", response_model=StatusResponse)
-async def update_transfer_status(
-    transfer_id: str,
-    payload: StockTransferStatusUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
-):
-    """
-    Update transfer status with approval workflow
-    - PENDING → APPROVED (warehouse manager/admin)
-    - APPROVED → IN_TRANSIT (warehouse manager/admin)
-    - IN_TRANSIT → DELIVERED (delivery person/admin)
-    - Any status → CANCELLED (admin only)
-    """
-    try:
-        transfer = await transfer_manager.fetch(transfer_id)
-        current_user = await user_manager.fetch(current_user_id)
-        
         # Validate status transition
         if not is_valid_transfer_status_transition(transfer.status, payload.status):
             raise HTTPException(

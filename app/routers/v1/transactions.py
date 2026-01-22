@@ -282,6 +282,102 @@ async def record_order_payment(
         )
 
 
+
+
+@router.get("/daily-collection")
+async def get_daily_collection(
+    date: Optional[str] = None,  # Format: YYYY-MM-DD
+    outlet_id: Optional[str] = None,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+):
+    """Get daily payment collections"""
+    try:
+        from datetime import datetime, date as date_type
+        
+        # Parse date or use today
+        if date:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        else:
+            target_date = date_type.today()
+        
+        # Build filters
+        filters = {}
+        if outlet_id:
+            filters["outlet_id"] = outlet_id
+        
+        # Get all transactions for the date
+        all_transactions = await transaction_manager.fetch_all(filters=filters)
+        
+        # Filter by date
+        daily_transactions = [
+            t for t in all_transactions.items
+            if t.payment_date.date() == target_date
+        ]
+        
+        # Calculate totals by payment method
+        totals = {}
+        for transaction in daily_transactions:
+            method = transaction.payment_method.value
+            if method not in totals:
+                totals[method] = {"count": 0, "amount": 0}
+            totals[method]["count"] += 1
+            totals[method]["amount"] += float(transaction.amount_paid)
+        
+        return {
+            "date": target_date.isoformat(),
+            "outlet_id": outlet_id,
+            "transactions": daily_transactions,
+            "summary": {
+                "total_transactions": len(daily_transactions),
+                "total_amount": sum(float(t.amount_paid) for t in daily_transactions),
+                "by_payment_method": totals
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch daily collection: {str(e)}"
+        )
+
+
+@router.get("/{order_id}", response_model=List[OrderTransactionResponse])
+async def get_order_transactions(
+    order_id: str,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER))
+):
+    """Get all transactions for an order"""
+    try:
+        transactions = await transaction_manager.fetch_all(filters={"order_id": order_id})
+        return transactions.items
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Transactions not found: {str(e)}"
+        )
+
+
+@router.put("/{transaction_id}", response_model=OrderTransactionResponse)
+async def update_transaction(
+    transaction_id: str,
+    payload: PaymentStatusUpdateRequest,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER))
+):
+    """Update transaction payment status"""
+    try:
+        updates = {
+            "payment_status": payload.payment_status,
+            "notes": payload.notes
+        }
+        
+        updated_transaction = await transaction_manager.update(transaction_id, updates)
+        return updated_transaction
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to update transaction: {str(e)}"
+        )
+
+
 # GENERIC ROUTE LAST (after all specific routes)
 
 @router.get("", response_model=ListResponse[OrderTransactionResponse])
