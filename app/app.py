@@ -45,8 +45,8 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
     print(f"🚀 Starting {settings.name} API Server")
-    print(f"📊 Database: {settings.database_url}")
-    print(f"🔧 Environment: {settings.environment}")
+    print(f"📊 Database: {settings.engine_str}")
+    print(f"🔧 Environment: {settings.env}")
     
     yield
     
@@ -73,7 +73,8 @@ app.add_middleware(
 )
 
 # Add SharedBackend middlewares
-app.add_middleware(SDKMiddleware)
+key_manager = ApiKeyManager(engine)
+app.add_middleware(SDKMiddleware, key_manager=key_manager)
 app.add_middleware(EntityMiddleware)
 
 # Include routers
@@ -87,8 +88,8 @@ async def root():
     return {
         "message": f"Welcome to {settings.name} API",
         "version": settings.version,
-        "environment": settings.environment,
-        "docs": "/docs" if settings.environment != "production" else "disabled",
+        "environment": settings.env,
+        "docs": "/docs" if settings.env != "production" else "disabled",
     }
 
 @app.get("/health")
@@ -98,7 +99,7 @@ async def health_check():
         "status": "healthy",
         "service": settings.name,
         "version": settings.version,
-        "environment": settings.environment,
+        "environment": settings.env,
     }
 
 if __name__ == "__main__":
@@ -107,5 +108,5 @@ if __name__ == "__main__":
         "app:app",
         host="0.0.0.0",
         port=8000,
-        reload=settings.environment == "development",
+        reload=settings.env == "development",
     )
