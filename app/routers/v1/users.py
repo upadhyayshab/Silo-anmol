@@ -7,7 +7,7 @@ from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
 )
-from utils.auth import hash_password, verify_password, require_roles, get_current_user_id, get_password_hash, verify_password
+from utils.auth import get_password_hash, verify_password, require_roles, get_current_user_id
 from utils.constants import UserRole
 
 settings = get_settings()
@@ -19,7 +19,11 @@ router = APIRouter(prefix="/users", tags=["User Management"])
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 
-# Duplicate /{user_id} route removed - moved to top of file
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: str,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT))
+):
     """Get specific user details"""
     try:
         # Users can view their own profile, admins can view any user
@@ -124,7 +128,7 @@ async def change_user_password(
             )
         
         # Update password
-        new_password_hash = hash_password(payload.new_password)
+        new_password_hash = get_password_hash(payload.new_password)
         await user_manager.update(user_id, {"password_hash": new_password_hash})
         
         return StatusResponse(message="Password updated successfully")

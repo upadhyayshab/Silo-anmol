@@ -18,7 +18,11 @@ router = APIRouter(prefix="/outlets", tags=["Outlet Management"])
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 
-# Duplicate /{outlet_id} route removed - moved to top of file
+@router.get("/{outlet_id}", response_model=OutletResponse)
+async def get_outlet(
+    outlet_id: str,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+):
     """Get specific outlet details"""
     try:
         outlet = await outlet_manager.fetch(outlet_id)
