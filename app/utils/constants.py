@@ -43,11 +43,11 @@ class InvoiceType(str, Enum):
 
 
 class TransferStatus(str, Enum):
-    PENDING = "pending"
-    APPROVED = "approved"
-    IN_TRANSIT = "in_transit"
-    DELIVERED = "delivered"
-    CANCELLED = "cancelled"
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    IN_TRANSIT = "IN_TRANSIT"
+    DELIVERED = "DELIVERED"
+    CANCELLED = "CANCELLED"
 
 
 class UnitOfMeasure(str, Enum):

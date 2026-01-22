@@ -776,7 +776,7 @@ async def get_transfer_efficiency(
             
             if transfer.status == TransferStatus.DELIVERED:
                 perf["completed"] += 1
-            elif transfer.status in [TransferStatus.PENDING, TransferStatus.APPROVED, TransferStatus.SHIPPED]:
+            elif transfer.status in [TransferStatus.PENDING, TransferStatus.APPROVED, TransferStatus.IN_TRANSIT]:
                 perf["pending"] += 1
             elif transfer.status == TransferStatus.CANCELLED:
                 perf["cancelled"] += 1
