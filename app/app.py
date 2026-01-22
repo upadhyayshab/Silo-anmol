@@ -59,8 +59,8 @@ app = FastAPI(
     description="ERP System API with comprehensive business management features",
     version=settings.version,
     lifespan=lifespan,
-    docs_url="/docs" if settings.environment != "production" else None,
-    redoc_url="/redoc" if settings.environment != "production" else None,
+    docs_url="/docs" if settings.env != "production" else None,
+    redoc_url="/redoc" if settings.env != "production" else None,
 )
 
 # Add CORS middleware

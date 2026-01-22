@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, status
+from typing import List
 
 from config import get_settings, get_engine
 from managers import OutletManager

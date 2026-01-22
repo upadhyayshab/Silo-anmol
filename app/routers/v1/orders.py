@@ -373,8 +373,7 @@ async def get_order(
 # GENERIC ROUTE LAST (after all specific routes)
 
 @router.get("", response_model=ListResponse[OrderResponse])
-async def get_orders(
-    status: Optional[OrderStatus] = None,
+async def get_orders(transfer_status: Optional[OrderStatus] = None,
     telecaller_id: Optional[str] = None,
     outlet_id: Optional[str] = None,
     customer_phone: Optional[str] = None,
@@ -404,7 +403,7 @@ async def get_orders(
                 filters["assigned_outlet_id"] = current_user.outlet_id
         
         # Apply additional filters
-        if status:
+        if transfer_status:
             filters["order_status"] = status
         if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
             filters["telecaller_id"] = telecaller_id
