@@ -753,11 +753,46 @@ async def get_pending_approvals(
             filters=filters
         )
         
+        # Build responses directly without using the problematic helper
         transfer_responses = []
         for transfer in transfers.items:
             try:
-                transfer_response = await get_transfer_response(transfer.uid)
+                # Get transfer items directly
+                items = []
+                try:
+                    transfer_items = await transfer_item_manager.fetch_all(
+                        filters={"transfer_id": transfer.uid}
+                    )
+                    items = [
+                        TransferItemResponse(
+                            uid=item.uid,
+                            product_id=item.product_id,
+                            quantity_requested=item.quantity_requested,
+                            quantity_delivered=item.quantity_delivered
+                        )
+                        for item in transfer_items.items
+                    ]
+                except Exception as e:
+                    print(f"Error fetching items for transfer {transfer.uid}: {str(e)}")
+                    # Continue with empty items list
+                
+                # Build response directly
+                transfer_response = StockTransferResponse(
+                    uid=transfer.uid,
+                    from_outlet_id=transfer.from_outlet_id,
+                    to_outlet_id=transfer.to_outlet_id,
+                    status=transfer.status,
+                    requested_by=transfer.requested_by,
+                    approved_by=transfer.approved_by,
+                    delivery_person_id=transfer.delivery_person_id,
+                    scheduled_date=transfer.scheduled_date,
+                    delivered_date=transfer.delivered_date,
+                    notes=transfer.notes,
+                    items=items,
+                    created_at=transfer.created_at
+                )
                 transfer_responses.append(transfer_response)
+                
             except Exception as e:
                 # Log error but continue with other transfers
                 print(f"Error processing transfer {transfer.uid}: {str(e)}")
