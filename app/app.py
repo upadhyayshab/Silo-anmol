@@ -74,8 +74,9 @@ app.add_middleware(
 
 # Add SharedBackend middlewares
 key_manager = ApiKeyManager(engine)
+entity_manager = EntityManager(engine)
 app.add_middleware(SDKMiddleware, key_manager=key_manager)
-app.add_middleware(EntityMiddleware)
+app.add_middleware(EntityMiddleware, entity_manager=entity_manager)
 
 # Include routers
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
