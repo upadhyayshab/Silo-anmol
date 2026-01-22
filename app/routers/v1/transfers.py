@@ -301,11 +301,8 @@ async def get_transfer(
 async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
     """Helper to build complete transfer response with items"""
     try:
-        # Fetch transfer with eager loading to avoid session issues
-        transfer = await transfer_manager.fetch(
-            transfer_id,
-            joins=["items", "to_outlet", "from_outlet", "requester", "approver"]
-        )
+        # Fetch transfer without joins (fetch relationships separately)
+        transfer = await transfer_manager.fetch(transfer_id)
         
         # Get transfer items with error handling
         items = []
@@ -343,7 +340,7 @@ async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
         )
     
     except Exception as e:
-        # If transfer fetch fails, try without joins
+        # If transfer fetch fails, handle the error
         try:
             transfer = await transfer_manager.fetch(transfer_id)
             
@@ -751,10 +748,9 @@ async def get_pending_approvals(
         if current_user.role == UserRole.WAREHOUSE_MANAGER:
             filters["from_outlet_id"] = None
         
-        # Fetch transfers with proper joins to avoid session issues
+        # Fetch transfers without joins (fetch relationships separately)
         transfers = await transfer_manager.fetch_all(
-            filters=filters,
-            joins=["items", "to_outlet", "requester"]  # Eagerly load relationships
+            filters=filters
         )
         
         transfer_responses = []

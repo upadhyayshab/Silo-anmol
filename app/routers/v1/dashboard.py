@@ -135,10 +135,9 @@ async def get_warehouse_manager_dashboard(
             filters={"outlet_id": None}
         )
         
-        # Get pending transfer requests with proper joins to load items
+        # Get pending transfer requests (no joins - fetch items separately)
         pending_transfers = await transfer_manager.fetch_all(
-            filters={"status": TransferStatus.PENDING},
-            joins=["items"]  # Eagerly load transfer items
+            filters={"status": TransferStatus.PENDING}
         )
         
         # Get all products for stock analysis
