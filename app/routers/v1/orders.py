@@ -242,6 +242,136 @@ async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: Li
         )
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+@router.get("/{order_id}", response_model=OrderResponse)
+async def get_order(
+    order_id: str,
+    current_user_id: str = Depends(require_roles(
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """Get specific order details"""
+    try:
+        order = await order_manager.fetch(order_id)
+        
+        # Check access permissions
+        current_user = await user_manager.fetch(current_user_id)
+        
+        # Role-based access control
+        if current_user.role == UserRole.TELECALLER:
+            if order.telecaller_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view your own orders"
+                )
+        elif current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id and order.outlet_id != current_user.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view orders for your outlet"
+                )
+        
+        # Get order items
+        order_items = await order_item_manager.fetch_all(
+            filters={"order_id": order_id}
+        )
+        
+        # Build response
+        return OrderResponse(
+            uid=order.uid,
+            order_number=order.order_number,
+            customer_name=order.customer_name,
+            customer_phone=order.customer_phone,
+            customer_address=order.customer_address,
+            telecaller_id=order.telecaller_id,
+            outlet_id=order.outlet_id,
+            status=order.status,
+            payment_status=order.payment_status,
+            total_amount=order.total_amount,
+            advance_amount=order.advance_amount,
+            delivery_date=order.delivery_date,
+            notes=order.notes,
+            items=[
+                {
+                    "product_id": item.product_id,
+                    "quantity": item.quantity,
+                    "unit_price": item.unit_price,
+                    "total_price": item.total_price
+                }
+                for item in order_items.items
+            ],
+            created_at=order.created_at,
+            created_by=order.created_by,
+            last_updated=order.last_updated
+        )
+    
+    except Exception as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Order not found"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch order: {str(e)}"
+        )
+
+
+# Duplicate GET /{order_id}/transactions route removed - moved to top of file
+    """Get all transactions for an order"""
+    try:
+        # Verify order exists and user has access
+        order = await order_manager.fetch(order_id)
+        
+        current_user = await user_manager.fetch(current_user_id)
+        
+        # Role-based access control
+        if current_user.role == UserRole.TELECALLER:
+            if order.telecaller_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view transactions for your own orders"
+                )
+        elif current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id and order.outlet_id != current_user.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view transactions for your outlet's orders"
+                )
+        
+        # Get transactions
+        transactions = await transaction_manager.fetch_all(
+            filters={"order_id": order_id}
+        )
+        
+        transaction_responses = []
+        for transaction in transactions.items:
+            transaction_responses.append(OrderTransactionResponse(
+                uid=transaction.uid,
+                order_id=transaction.order_id,
+                amount=transaction.amount,
+                payment_method=transaction.payment_method,
+                collection_type=transaction.collection_type,
+                reference_number=transaction.reference_number,
+                notes=transaction.notes,
+                created_at=transaction.created_at,
+                created_by=transaction.created_by
+            ))
+        
+        return ListResponse(items=transaction_responses, count=len(transaction_responses))
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch order transactions: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=ListResponse[OrderResponse])
 async def get_orders(
     status: Optional[OrderStatus] = None,
@@ -309,13 +439,7 @@ async def get_orders(
         )
 
 
-@router.get("/{order_id}", response_model=OrderResponse)
-async def get_order(
-    order_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
-):
+# Duplicate GET /{order_id} route removed - moved to top of file
     """Get specific order details"""
     try:
         order = await order_manager.fetch(order_id)
@@ -735,13 +859,7 @@ async def add_order_transaction(
         )
 
 
-@router.get("/{order_id}/transactions", response_model=ListResponse[OrderTransactionResponse])
-async def get_order_transactions(
-    order_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
-):
+# Duplicate GET /{order_id}/transactions route removed - moved to top of file
     """Get all transactions for an order"""
     try:
         order = await order_manager.fetch(order_id)

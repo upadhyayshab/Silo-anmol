@@ -32,6 +32,192 @@ class ActivityLogResponse(BaseModel):
         from_attributes = True
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+@router.get("/user/{user_id}", response_model=List[ActivityLogResponse])
+async def get_user_activity_logs(
+    user_id: str,
+    action: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 50,
+    offset: int = 0,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT))
+):
+    """Get activity logs for a specific user"""
+    try:
+        # Build filters
+        filters = {"user_id": user_id}
+        
+        if action:
+            filters["action"] = action
+        if start_date:
+            filters["created_at__gte"] = start_date
+        if end_date:
+            filters["created_at__lte"] = end_date
+        
+        # Fetch logs
+        logs = await activity_manager.fetch_all(
+            filters=filters,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Enhance with user names
+        log_responses = []
+        for log in logs.items:
+            try:
+                user = await user_manager.fetch(log.user_id)
+                user_name = f"{user.first_name} {user.last_name}".strip()
+            except:
+                user_name = "Unknown User"
+            
+            log_responses.append(ActivityLogResponse(
+                uid=log.uid,
+                user_id=log.user_id,
+                user_name=user_name,
+                action=log.action,
+                entity_type=log.entity_type,
+                entity_id=log.entity_id,
+                details=log.details,
+                ip_address=log.ip_address,
+                created_at=log.created_at
+            ))
+        
+        return log_responses
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user activity logs: {str(e)}"
+        )
+
+
+@router.get("/entity/{entity_type}/{entity_id}", response_model=List[ActivityLogResponse])
+async def get_entity_activity_logs(
+    entity_type: str,
+    entity_id: str,
+    action: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 50,
+    offset: int = 0,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT))
+):
+    """Get activity logs for a specific entity"""
+    try:
+        # Build filters
+        filters = {
+            "entity_type": entity_type,
+            "entity_id": entity_id
+        }
+        
+        if action:
+            filters["action"] = action
+        if start_date:
+            filters["created_at__gte"] = start_date
+        if end_date:
+            filters["created_at__lte"] = end_date
+        
+        # Fetch logs
+        logs = await activity_manager.fetch_all(
+            filters=filters,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Enhance with user names
+        log_responses = []
+        for log in logs.items:
+            try:
+                user = await user_manager.fetch(log.user_id)
+                user_name = f"{user.first_name} {user.last_name}".strip()
+            except:
+                user_name = "Unknown User"
+            
+            log_responses.append(ActivityLogResponse(
+                uid=log.uid,
+                user_id=log.user_id,
+                user_name=user_name,
+                action=log.action,
+                entity_type=log.entity_type,
+                entity_id=log.entity_id,
+                details=log.details,
+                ip_address=log.ip_address,
+                created_at=log.created_at
+            ))
+        
+        return log_responses
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch entity activity logs: {str(e)}"
+        )
+
+
+@router.get("/summary")
+async def get_activity_summary(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """Get activity summary statistics"""
+    try:
+        # Build filters
+        filters = {}
+        if start_date:
+            filters["created_at__gte"] = start_date
+        if end_date:
+            filters["created_at__lte"] = end_date
+        
+        # Fetch all logs for the period
+        logs = await activity_manager.fetch_all(filters=filters)
+        
+        # Calculate summary statistics
+        total_activities = len(logs.items)
+        
+        # Group by action
+        action_counts = {}
+        user_counts = {}
+        entity_counts = {}
+        
+        for log in logs.items:
+            # Count by action
+            action_counts[log.action] = action_counts.get(log.action, 0) + 1
+            
+            # Count by user
+            user_counts[log.user_id] = user_counts.get(log.user_id, 0) + 1
+            
+            # Count by entity type
+            entity_counts[log.entity_type] = entity_counts.get(log.entity_type, 0) + 1
+        
+        return {
+            "period": {
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None
+            },
+            "summary": {
+                "total_activities": total_activities,
+                "unique_users": len(user_counts),
+                "unique_entity_types": len(entity_counts)
+            },
+            "breakdown": {
+                "by_action": action_counts,
+                "by_user": dict(list(user_counts.items())[:10]),  # Top 10 users
+                "by_entity_type": entity_counts
+            }
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate activity summary: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=List[ActivityLogResponse])
 async def get_activity_logs(
     user_id: Optional[str] = None,
@@ -112,14 +298,7 @@ async def get_activity_logs(
         )
 
 
-@router.get("/user/{user_id}", response_model=List[ActivityLogResponse])
-async def get_user_activity_logs(
-    user_id: str,
-    entity_type: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
-    current_user_id: str = Depends(get_current_user_id)
-):
+# Duplicate user route removed - moved to top of file
     """
     Get activity logs for a specific user
     Users can view their own logs, admins can view any user's logs
@@ -175,14 +354,7 @@ async def get_user_activity_logs(
         )
 
 
-@router.get("/entity/{entity_type}/{entity_id}", response_model=List[ActivityLogResponse])
-async def get_entity_activity_logs(
-    entity_type: str,
-    entity_id: str,
-    limit: int = 50,
-    offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT))
-):
+# Duplicate entity route removed - moved to top of file
     """
     Get activity logs for a specific entity (order, invoice, product, etc.)
     """
@@ -227,18 +399,7 @@ async def get_entity_activity_logs(
         )
 
 
-@router.get("/summary")
-async def get_activity_summary(
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
-):
-    """
-    Get activity summary statistics
-    """
-    try:
-        # Get all logs (would need optimization for large datasets)
-        all_logs = await activity_manager.fetch_all()
+# Duplicate summary route removed - functionality preserved above
         
         # Filter by date if specified
         filtered_logs = []

@@ -97,6 +97,193 @@ async def record_order_payment(
         )
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+# Duplicate /{transaction_id} route removed - moved to top of file
+    """Get specific transaction details"""
+    try:
+        transaction = await transaction_manager.fetch(transaction_id)
+        
+        # Check access permissions
+        current_user = await user_manager.fetch(current_user_id)
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            # Verify the transaction belongs to user's outlet
+            order = await order_manager.fetch(transaction.order_id)
+            if order.outlet_id != current_user.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to this transaction"
+                )
+        
+        return OrderTransactionResponse(
+            uid=transaction.uid,
+            order_id=transaction.order_id,
+            amount=transaction.amount,
+            payment_method=transaction.payment_method,
+            collection_type=transaction.collection_type,
+            reference_number=transaction.reference_number,
+            notes=transaction.notes,
+            created_at=transaction.created_at,
+            created_by=transaction.created_by
+        )
+    
+    except Exception as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transaction not found"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch transaction: {str(e)}"
+        )
+
+
+# Duplicate /order/{order_id} route removed - moved to top of file
+    """Get all transactions for a specific order"""
+    try:
+        # Verify order exists and check access
+        order = await order_manager.fetch(order_id)
+        
+        current_user = await user_manager.fetch(current_user_id)
+        
+        # Role-based access control
+        if current_user.role == UserRole.TELECALLER:
+            if order.telecaller_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view transactions for your own orders"
+                )
+        elif current_user.role == UserRole.OUTLET_MANAGER:
+            if order.outlet_id != current_user.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view transactions for your outlet's orders"
+                )
+        
+        # Get transactions
+        transactions = await transaction_manager.fetch_all(
+            filters={"order_id": order_id}
+        )
+        
+        return [
+            OrderTransactionResponse(
+                uid=transaction.uid,
+                order_id=transaction.order_id,
+                amount=transaction.amount,
+                payment_method=transaction.payment_method,
+                collection_type=transaction.collection_type,
+                reference_number=transaction.reference_number,
+                notes=transaction.notes,
+                created_at=transaction.created_at,
+                created_by=transaction.created_by
+            )
+            for transaction in transactions.items
+        ]
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch order transactions: {str(e)}"
+        )
+
+
+# Duplicate /daily-collection/{collection_date} route removed - moved to top of file
+    """Get daily collection summary for a specific date"""
+    try:
+        current_user = await user_manager.fetch(current_user_id)
+        
+        # Build filters
+        filters = {
+            "created_at__date": collection_date
+        }
+        
+        # Role-based filtering
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id:
+                # Get transactions for orders from this outlet
+                outlet_orders = await order_manager.fetch_all(
+                    filters={"outlet_id": current_user.outlet_id}
+                )
+                order_ids = [order.uid for order in outlet_orders.items]
+                if order_ids:
+                    filters["order_id__in"] = order_ids
+                else:
+                    # No orders for this outlet
+                    return {
+                        "collection_date": collection_date.isoformat(),
+                        "outlet_id": current_user.outlet_id,
+                        "total_collection": 0.0,
+                        "transaction_count": 0,
+                        "payment_method_breakdown": {},
+                        "transactions": []
+                    }
+        elif outlet_id and current_user.role in [UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            # Filter by specific outlet
+            outlet_orders = await order_manager.fetch_all(
+                filters={"outlet_id": outlet_id}
+            )
+            order_ids = [order.uid for order in outlet_orders.items]
+            if order_ids:
+                filters["order_id__in"] = order_ids
+        
+        # Get transactions
+        transactions = await transaction_manager.fetch_all(filters=filters)
+        
+        # Calculate summary
+        total_collection = Decimal('0')
+        payment_method_breakdown = {}
+        
+        transaction_details = []
+        for transaction in transactions.items:
+            total_collection += transaction.amount
+            
+            # Payment method breakdown
+            method = transaction.payment_method.value
+            if method not in payment_method_breakdown:
+                payment_method_breakdown[method] = {
+                    "count": 0,
+                    "amount": Decimal('0')
+                }
+            payment_method_breakdown[method]["count"] += 1
+            payment_method_breakdown[method]["amount"] += transaction.amount
+            
+            transaction_details.append({
+                "transaction_id": transaction.uid,
+                "order_id": transaction.order_id,
+                "amount": float(transaction.amount),
+                "payment_method": method,
+                "collection_type": transaction.collection_type.value,
+                "reference_number": transaction.reference_number,
+                "created_at": transaction.created_at.isoformat()
+            })
+        
+        return {
+            "collection_date": collection_date.isoformat(),
+            "outlet_id": outlet_id,
+            "total_collection": float(total_collection),
+            "transaction_count": len(transactions.items),
+            "payment_method_breakdown": {
+                method: {
+                    "count": data["count"],
+                    "amount": float(data["amount"])
+                }
+                for method, data in payment_method_breakdown.items()
+            },
+            "transactions": transaction_details
+        }
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch daily collection: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=ListResponse[OrderTransactionResponse])
 async def get_payment_transactions(
     order_id: Optional[str] = None,
@@ -175,13 +362,7 @@ async def get_payment_transactions(
         )
 
 
-@router.get("/{transaction_id}", response_model=OrderTransactionResponse)
-async def get_transaction_details(
-    transaction_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
-    ))
-):
+# Duplicate /{transaction_id} route removed - moved to top of file
     """
     Get transaction details by ID
     """
@@ -220,14 +401,7 @@ async def get_transaction_details(
         )
 
 
-@router.get("/order/{order_id}", response_model=List[OrderTransactionResponse])
-async def get_order_transactions(
-    order_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, 
-        UserRole.TELECALLER, UserRole.ACCOUNTANT
-    ))
-):
+# Duplicate /order/{order_id} route removed - moved to top of file
     """
     Get all transactions for a specific order
     """
@@ -279,14 +453,7 @@ async def get_order_transactions(
         )
 
 
-@router.get("/daily-collection/{collection_date}", response_model=dict)
-async def get_daily_collection(
-    collection_date: date,
-    outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
-    ))
-):
+# Duplicate /daily-collection/{collection_date} route removed - moved to top of file
     """
     Get daily payment collection summary
     """

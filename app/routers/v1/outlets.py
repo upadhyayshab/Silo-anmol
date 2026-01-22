@@ -16,6 +16,42 @@ outlet_manager = OutletManager(engine)
 router = APIRouter(prefix="/outlets", tags=["Outlet Management"])
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+# Duplicate /{outlet_id} route removed - moved to top of file
+    """Get specific outlet details"""
+    try:
+        outlet = await outlet_manager.fetch(outlet_id)
+        
+        return OutletResponse(
+            uid=outlet.uid,
+            outlet_name=outlet.outlet_name,
+            address=outlet.address,
+            city=outlet.city,
+            state=outlet.state,
+            pincode=outlet.pincode,
+            phone=outlet.phone,
+            email=outlet.email,
+            manager_id=outlet.manager_id,
+            is_active=outlet.is_active,
+            created_at=outlet.created_at,
+            last_updated=outlet.last_updated
+        )
+    
+    except Exception as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Outlet not found"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch outlet: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=ListResponse[OutletResponse])
 async def list_outlets(
     is_active: bool = None,
@@ -77,14 +113,7 @@ async def list_outlets(
         )
 
 
-@router.get("/{outlet_id}", response_model=OutletResponse)
-async def get_outlet(
-    outlet_id: str,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN,
-        UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
-    ))
-):
+# Duplicate /{outlet_id} route removed - moved to top of file
     """
     Get outlet by ID
     Requires: super_admin, admin, warehouse_manager, outlet_manager, or accountant role

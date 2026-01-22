@@ -17,6 +17,52 @@ user_manager = UserManager(engine)
 router = APIRouter(prefix="/users", tags=["User Management"])
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+# Duplicate /{user_id} route removed - moved to top of file
+    """Get specific user details"""
+    try:
+        # Users can view their own profile, admins can view any user
+        current_user = await user_manager.fetch(current_user_id)
+        
+        if current_user_id != user_id and current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You can only view your own profile"
+            )
+        
+        user = await user_manager.fetch(user_id)
+        
+        return UserResponse(
+            uid=user.uid,
+            username=user.username,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            phone=user.phone,
+            role=user.role,
+            outlet_id=user.outlet_id,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            last_login=user.last_login
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        if "not found" in str(e).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=ListResponse[UserResponse])
 async def list_users(
     role: UserRole = None,
@@ -70,11 +116,7 @@ async def list_users(
         )
 
 
-@router.get("/{user_id}", response_model=UserResponse)
-async def get_user(
-    user_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
-):
+# Duplicate /{user_id} route removed - moved to top of file
     """
     Get user by ID
     Requires: super_admin or admin role

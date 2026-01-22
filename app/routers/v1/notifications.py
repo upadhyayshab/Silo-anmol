@@ -39,6 +39,32 @@ class UnreadCountResponse(BaseModel):
     unread_count: int
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+@router.get("/unread-count", response_model=UnreadCountResponse)
+async def get_unread_count(
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Get count of unread notifications for current user"""
+    try:
+        notifications = await notification_manager.fetch_all(
+            filters={
+                "user_id": current_user_id,
+                "is_read": False
+            }
+        )
+        
+        return UnreadCountResponse(unread_count=len(notifications.items))
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get unread count: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=List[NotificationResponse])
 async def get_user_notifications(
     is_read: Optional[bool] = None,
@@ -79,25 +105,7 @@ async def get_user_notifications(
         )
 
 
-@router.get("/unread-count", response_model=UnreadCountResponse)
-async def get_unread_count(
-    current_user_id: str = Depends(get_current_user_id)
-):
-    """
-    Get count of unread notifications for current user
-    """
-    try:
-        unread_notifications = await notification_manager.fetch_all(
-            filters={"user_id": current_user_id, "is_read": False}
-        )
-        
-        return UnreadCountResponse(unread_count=len(unread_notifications.items))
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch unread count: {str(e)}"
-        )
+# Duplicate unread-count route removed - moved to top of file for proper ordering
 
 
 @router.put("/{notification_id}/read", response_model=NotificationResponse)

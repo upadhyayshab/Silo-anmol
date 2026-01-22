@@ -20,6 +20,178 @@ outlet_manager = OutletManager(engine)
 router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
 
 
+# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+@router.get("/product/{product_id}", response_model=ListResponse[InventoryResponse])
+async def get_product_inventory(
+    product_id: str,
+    current_user_id: str = Depends(require_roles(
+        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """Get inventory for a specific product across all outlets"""
+    try:
+        current_user = await user_manager.fetch(current_user_id)
+        
+        filters = {"product_id": product_id}
+        
+        # Role-based filtering
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id:
+                filters["outlet_id"] = current_user.outlet_id
+        
+        inventory_items = await inventory_manager.fetch_all(filters=filters)
+        
+        inventory_responses = []
+        for item in inventory_items.items:
+            try:
+                product = await product_manager.fetch(item.product_id)
+                outlet = None
+                if item.outlet_id:
+                    outlet = await outlet_manager.fetch(item.outlet_id)
+                
+                inventory_responses.append(InventoryResponse(
+                    uid=item.uid,
+                    product_id=item.product_id,
+                    product_name=product.product_name,
+                    outlet_id=item.outlet_id,
+                    outlet_name=outlet.outlet_name if outlet else "Warehouse",
+                    quantity=item.quantity,
+                    reserved_quantity=item.reserved_quantity,
+                    available_quantity=item.quantity - item.reserved_quantity,
+                    min_stock_level=product.min_stock_level,
+                    last_updated=item.last_updated
+                ))
+            except Exception as e:
+                print(f"Error processing inventory item {item.uid}: {str(e)}")
+                continue
+        
+        return ListResponse(items=inventory_responses, count=len(inventory_responses))
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch product inventory: {str(e)}"
+        )
+
+
+@router.get("/low-stock", response_model=ListResponse[InventoryResponse])
+async def get_low_stock_alerts(
+    outlet_id: Optional[str] = None,
+    current_user_id: str = Depends(require_roles(
+        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """Get items with low stock levels"""
+    try:
+        current_user = await user_manager.fetch(current_user_id)
+        
+        filters = {}
+        
+        # Role-based filtering
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id:
+                filters["outlet_id"] = current_user.outlet_id
+        elif outlet_id:
+            filters["outlet_id"] = outlet_id
+        
+        inventory_items = await inventory_manager.fetch_all(filters=filters)
+        
+        low_stock_items = []
+        for item in inventory_items.items:
+            try:
+                product = await product_manager.fetch(item.product_id)
+                
+                # Check if stock is below minimum level
+                available_quantity = item.quantity - item.reserved_quantity
+                if available_quantity <= product.min_stock_level:
+                    outlet = None
+                    if item.outlet_id:
+                        outlet = await outlet_manager.fetch(item.outlet_id)
+                    
+                    low_stock_items.append(InventoryResponse(
+                        uid=item.uid,
+                        product_id=item.product_id,
+                        product_name=product.product_name,
+                        outlet_id=item.outlet_id,
+                        outlet_name=outlet.outlet_name if outlet else "Warehouse",
+                        quantity=item.quantity,
+                        reserved_quantity=item.reserved_quantity,
+                        available_quantity=available_quantity,
+                        min_stock_level=product.min_stock_level,
+                        last_updated=item.last_updated
+                    ))
+            except Exception as e:
+                print(f"Error processing inventory item {item.uid}: {str(e)}")
+                continue
+        
+        return ListResponse(items=low_stock_items, count=len(low_stock_items))
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch low stock items: {str(e)}"
+        )
+
+
+@router.get("/reserved", response_model=ListResponse[InventoryResponse])
+async def get_reserved_stock(
+    outlet_id: Optional[str] = None,
+    current_user_id: str = Depends(require_roles(
+        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """Get items with reserved stock"""
+    try:
+        current_user = await user_manager.fetch(current_user_id)
+        
+        filters = {}
+        
+        # Role-based filtering
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id:
+                filters["outlet_id"] = current_user.outlet_id
+        elif outlet_id:
+            filters["outlet_id"] = outlet_id
+        
+        inventory_items = await inventory_manager.fetch_all(filters=filters)
+        
+        reserved_items = []
+        for item in inventory_items.items:
+            if item.reserved_quantity > 0:
+                try:
+                    product = await product_manager.fetch(item.product_id)
+                    outlet = None
+                    if item.outlet_id:
+                        outlet = await outlet_manager.fetch(item.outlet_id)
+                    
+                    reserved_items.append(InventoryResponse(
+                        uid=item.uid,
+                        product_id=item.product_id,
+                        product_name=product.product_name,
+                        outlet_id=item.outlet_id,
+                        outlet_name=outlet.outlet_name if outlet else "Warehouse",
+                        quantity=item.quantity,
+                        reserved_quantity=item.reserved_quantity,
+                        available_quantity=item.quantity - item.reserved_quantity,
+                        min_stock_level=product.min_stock_level,
+                        last_updated=item.last_updated
+                    ))
+                except Exception as e:
+                    print(f"Error processing inventory item {item.uid}: {str(e)}")
+                    continue
+        
+        return ListResponse(items=reserved_items, count=len(reserved_items))
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch reserved inventory: {str(e)}"
+        )
+
+
+# GENERIC ROUTE LAST (after all specific routes)
+
 @router.get("", response_model=ListResponse[InventoryResponse])
 async def get_inventory(
     outlet_id: Optional[str] = None,  # NULL for warehouse
@@ -84,134 +256,13 @@ async def get_inventory(
         )
 
 
-@router.get("/product/{product_id}", response_model=ListResponse[InventoryResponse])
-async def get_product_inventory(
-    product_id: str,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
-):
-    """
-    Get inventory for a specific product across all locations
-    """
-    try:
-        inventory_items = await inventory_manager.fetch_all(
-            filters={"product_id": product_id}
-        )
-        
-        inventory_responses = [
-            InventoryResponse(
-                uid=item.uid,
-                product_id=item.product_id,
-                outlet_id=item.outlet_id,
-                quantity=item.quantity,
-                reserved_quantity=item.reserved_quantity,
-                available_quantity=item.quantity - item.reserved_quantity,
-                last_updated=item.last_updated
-            )
-            for item in inventory_items.items
-        ]
-        
-        return ListResponse(items=inventory_responses, count=len(inventory_responses))
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch product inventory: {str(e)}"
-        )
+# Duplicate routes removed - moved to top of file for proper ordering
 
 
-@router.get("/low-stock", response_model=ListResponse[InventoryResponse])
-async def get_low_stock_alerts(
-    outlet_id: Optional[str] = None,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER
-    ))
-):
-    """
-    Get all items with stock below minimum threshold
-    """
-    try:
-        # Get all inventory items
-        inventory_items = await inventory_manager.fetch_all(
-            filters={"outlet_id": outlet_id} if outlet_id else None
-        )
-        
-        low_stock_items = []
-        
-        for item in inventory_items.items:
-            # Get product details to check min_stock_level
-            product = await product_manager.fetch(item.product_id)
-            available_quantity = item.quantity - item.reserved_quantity
-            
-            if available_quantity < product.min_stock_level:
-                low_stock_items.append(
-                    InventoryResponse(
-                        uid=item.uid,
-                        product_id=item.product_id,
-                        outlet_id=item.outlet_id,
-                        quantity=item.quantity,
-                        reserved_quantity=item.reserved_quantity,
-                        available_quantity=available_quantity,
-                        last_updated=item.last_updated
-                    )
-                )
-        
-        return ListResponse(items=low_stock_items, count=len(low_stock_items))
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch low stock alerts: {str(e)}"
-        )
+# Duplicate low-stock route removed
 
 
-@router.get("/reserved", response_model=ListResponse[InventoryResponse])
-async def get_reserved_stock(
-    outlet_id: Optional[str] = None,
-    product_id: Optional[str] = None,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER
-    ))
-):
-    """
-    Get all items with reserved stock (pending orders)
-    """
-    try:
-        filters = {}
-        if outlet_id is not None:
-            filters["outlet_id"] = outlet_id
-        if product_id:
-            filters["product_id"] = product_id
-        
-        inventory_items = await inventory_manager.fetch_all(
-            filters=filters if filters else None
-        )
-        
-        reserved_items = [
-            InventoryResponse(
-                uid=item.uid,
-                product_id=item.product_id,
-                outlet_id=item.outlet_id,
-                quantity=item.quantity,
-                reserved_quantity=item.reserved_quantity,
-                available_quantity=item.quantity - item.reserved_quantity,
-                last_updated=item.last_updated
-            )
-            for item in inventory_items.items
-            if item.reserved_quantity > 0
-        ]
-        
-        return ListResponse(items=reserved_items, count=len(reserved_items))
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch reserved stock: {str(e)}"
-        )
+# Duplicate reserved route removed
 
 
 @router.post("/adjust", response_model=StatusResponse)
