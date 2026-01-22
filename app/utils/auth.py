@@ -24,8 +24,20 @@ security = HTTPBearer()
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash using bcrypt directly"""
     try:
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-    except Exception:
+        # Handle both string and bytes formats
+        if isinstance(hashed_password, str):
+            hashed_bytes = hashed_password.encode('utf-8')
+        else:
+            hashed_bytes = hashed_password
+            
+        if isinstance(plain_password, str):
+            plain_bytes = plain_password.encode('utf-8')
+        else:
+            plain_bytes = plain_password
+            
+        return bcrypt.checkpw(plain_bytes, hashed_bytes)
+    except Exception as e:
+        print(f"Password verification error: {e}")
         return False
 
 
@@ -106,10 +118,18 @@ def require_roles(*allowed_roles: UserRole):
                 detail="Could not validate credentials",
             )
         
-        if user_role not in [role for role in allowed_roles]:
+        # Handle both enum and string role values
+        allowed_role_values = []
+        for role in allowed_roles:
+            if hasattr(role, 'value'):
+                allowed_role_values.append(role.value)
+            else:
+                allowed_role_values.append(str(role))
+        
+        if user_role not in allowed_role_values:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {[r for r in allowed_roles]}",
+                detail=f"Access denied. Required roles: {allowed_role_values}",
             )
         
         return user_id

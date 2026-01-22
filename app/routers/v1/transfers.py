@@ -511,12 +511,11 @@ async def get_transfers(
         elif transfer_status:
             filters["status"] = transfer_status
         
-        # Fetch transfers with eager loading to prevent session issues
+        # Fetch transfers without joins to prevent SQLAlchemy loader options error
         transfers = await transfer_manager.fetch_all(
             filters=filters,
             limit=limit,
-            offset=offset,
-            joins=["items", "to_outlet", "from_outlet", "requester"]
+            offset=offset
         )
         
         transfer_responses = []
