@@ -2,19 +2,19 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
 from datetime import datetime, date
 
-from app.config import get_settings, get_engine
-from app.managers import (
+from config import get_settings, get_engine
+from managers import (
     StockTransferOrderManager, TransferItemManager, InventoryManager,
     ProductManager, OutletManager, UserManager,
     StockTransferOrderSchema, TransferItemSchema, InventorySchema
 )
-from app.models import (
+from models import (
     StockTransferCreateRequest, StockTransferStatusUpdateRequest,
     StockTransferResponse, TransferItemResponse,
     ListResponse, StatusResponse
 )
-from app.utils.auth import require_roles, get_current_user_id
-from app.utils.constants import UserRole, TransferStatus
+from utils.auth import require_roles, get_current_user_id
+from utils.constants import UserRole, TransferStatus
 import uuid
 
 settings = get_settings()
