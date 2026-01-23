@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from config import get_settings, get_engine
-from managers import InventoryManager, ProductManager, OutletManager, InventorySchema
+from managers import InventoryManager, ProductManager, OutletManager, UserManager, InventorySchema
 from models import (
     InventoryResponse, StockAdjustmentRequest,
     ListResponse, StatusResponse
@@ -16,6 +16,7 @@ engine = get_engine(settings.name)
 inventory_manager = InventoryManager(engine)
 product_manager = ProductManager(engine)
 outlet_manager = OutletManager(engine)
+user_manager = UserManager(engine)
 
 router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
 
