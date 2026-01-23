@@ -26,10 +26,10 @@ async def get_user(
 ):
     """Get specific user details"""
     try:
-        # Users can view their own profile, admins can view any user
+        # Users can view their own profile, admins and warehouse managers can view any user
         current_user = await user_manager.fetch(current_user_id)
         
-        if current_user_id != user_id and current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
+        if current_user_id != user_id and current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: You can only view your own profile"
