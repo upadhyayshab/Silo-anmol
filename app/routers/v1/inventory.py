@@ -54,13 +54,10 @@ async def get_product_inventory(
                 inventory_responses.append(InventoryResponse(
                     uid=item.uid,
                     product_id=item.product_id,
-                    product_name=product.product_name,
                     outlet_id=item.outlet_id,
-                    outlet_name=outlet.outlet_name if outlet else "Warehouse",
                     quantity=item.quantity,
                     reserved_quantity=item.reserved_quantity,
                     available_quantity=item.quantity - item.reserved_quantity,
-                    min_stock_level=product.min_stock_level,
                     last_updated=item.last_updated
                 ))
             except Exception as e:
@@ -113,13 +110,10 @@ async def get_low_stock_alerts(
                     low_stock_items.append(InventoryResponse(
                         uid=item.uid,
                         product_id=item.product_id,
-                        product_name=product.product_name,
                         outlet_id=item.outlet_id,
-                        outlet_name=outlet.outlet_name if outlet else "Warehouse",
                         quantity=item.quantity,
                         reserved_quantity=item.reserved_quantity,
                         available_quantity=available_quantity,
-                        min_stock_level=product.min_stock_level,
                         last_updated=item.last_updated
                     ))
             except Exception as e:
@@ -169,13 +163,10 @@ async def get_reserved_stock(
                     reserved_items.append(InventoryResponse(
                         uid=item.uid,
                         product_id=item.product_id,
-                        product_name=product.product_name,
                         outlet_id=item.outlet_id,
-                        outlet_name=outlet.outlet_name if outlet else "Warehouse",
                         quantity=item.quantity,
                         reserved_quantity=item.reserved_quantity,
                         available_quantity=item.quantity - item.reserved_quantity,
-                        min_stock_level=product.min_stock_level,
                         last_updated=item.last_updated
                     ))
                 except Exception as e:
