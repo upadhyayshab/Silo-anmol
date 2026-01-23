@@ -4,7 +4,7 @@ from datetime import datetime, date
 from decimal import Decimal
 import re
 
-from app.utils.constants import (
+from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure
 )
