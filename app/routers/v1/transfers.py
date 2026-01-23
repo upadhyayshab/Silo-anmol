@@ -489,11 +489,50 @@ async def get_transfers(
         if current_user.role == UserRole.OUTLET_MANAGER:
             # Outlet managers see transfers involving their outlet
             if current_user.outlet_id:
-                # Show transfers TO their outlet (requests they made) or FROM their outlet
-                filters["$or"] = [
-                    {"to_outlet_id": current_user.outlet_id},
-                    {"from_outlet_id": current_user.outlet_id}
-                ]
+                # For outlet managers, we need to fetch transfers separately and combine
+                # since SQLAlchemy doesn't support MongoDB-style $or in our current setup
+                to_outlet_transfers = await transfer_manager.fetch_all(
+                    filters={"to_outlet_id": current_user.outlet_id},
+                    limit=limit,
+                    offset=offset
+                )
+                from_outlet_transfers = await transfer_manager.fetch_all(
+                    filters={"from_outlet_id": current_user.outlet_id},
+                    limit=limit,
+                    offset=offset
+                )
+                
+                # Combine and deduplicate transfers
+                all_transfers = {}
+                for transfer in to_outlet_transfers.items:
+                    all_transfers[transfer.uid] = transfer
+                for transfer in from_outlet_transfers.items:
+                    all_transfers[transfer.uid] = transfer
+                
+                # Convert back to list and apply additional filters
+                filtered_transfers = []
+                for transfer in all_transfers.values():
+                    # Apply status filter if specified
+                    if transfer_status and transfer.status != transfer_status:
+                        continue
+                    # Apply date filters
+                    if from_date and transfer.created_at.date() < from_date:
+                        continue
+                    if to_date and transfer.created_at.date() > to_date:
+                        continue
+                    filtered_transfers.append(transfer)
+                
+                # Build responses
+                transfer_responses = []
+                for transfer in filtered_transfers[:limit]:
+                    try:
+                        transfer_response = await get_transfer_response(transfer.uid)
+                        transfer_responses.append(transfer_response)
+                    except Exception as e:
+                        print(f"Error processing transfer {transfer.uid}: {str(e)}")
+                        continue
+                
+                return ListResponse(items=transfer_responses, count=len(transfer_responses))
         elif current_user.role == UserRole.WAREHOUSE_MANAGER:
             # Warehouse managers see transfers involving warehouse (from_outlet_id = NULL)
             filters["from_outlet_id"] = None
@@ -511,30 +550,32 @@ async def get_transfers(
         elif transfer_status:
             filters["status"] = transfer_status
         
-        # Fetch transfers without joins to prevent SQLAlchemy loader options error
-        transfers = await transfer_manager.fetch_all(
-            filters=filters,
-            limit=limit,
-            offset=offset
-        )
-        
-        transfer_responses = []
-        for transfer in transfers.items:
-            try:
-                # Filter by date range if specified
-                if from_date and transfer.created_at.date() < from_date:
+        # For non-outlet managers, use normal filtering
+        if current_user.role != UserRole.OUTLET_MANAGER:
+            # Fetch transfers without joins to prevent SQLAlchemy loader options error
+            transfers = await transfer_manager.fetch_all(
+                filters=filters,
+                limit=limit,
+                offset=offset
+            )
+            
+            transfer_responses = []
+            for transfer in transfers.items:
+                try:
+                    # Filter by date range if specified
+                    if from_date and transfer.created_at.date() < from_date:
+                        continue
+                    if to_date and transfer.created_at.date() > to_date:
+                        continue
+                    
+                    transfer_response = await get_transfer_response(transfer.uid)
+                    transfer_responses.append(transfer_response)
+                except Exception as e:
+                    # Log error but continue with other transfers
+                    print(f"Error processing transfer {transfer.uid}: {str(e)}")
                     continue
-                if to_date and transfer.created_at.date() > to_date:
-                    continue
-                
-                transfer_response = await get_transfer_response(transfer.uid)
-                transfer_responses.append(transfer_response)
-            except Exception as e:
-                # Log error but continue with other transfers
-                print(f"Error processing transfer {transfer.uid}: {str(e)}")
-                continue
-        
-        return ListResponse(items=transfer_responses, count=len(transfer_responses))
+            
+            return ListResponse(items=transfer_responses, count=len(transfer_responses))
     
     except Exception as e:
         # Handle "record not found" errors gracefully
@@ -946,12 +987,26 @@ async def assign_delivery_person(
         
         filters = {}
         if outlet_id:
-            filters["$or"] = [
-                {"from_outlet_id": outlet_id},
-                {"to_outlet_id": outlet_id}
-            ]
-        
-        transfers = await transfer_manager.fetch_all(filters=filters)
+            # For outlet-specific reports, we need to fetch transfers separately
+            # since SQLAlchemy doesn't support MongoDB-style $or in our current setup
+            from_outlet_transfers = await transfer_manager.fetch_all(
+                filters={"from_outlet_id": outlet_id}
+            )
+            to_outlet_transfers = await transfer_manager.fetch_all(
+                filters={"to_outlet_id": outlet_id}
+            )
+            
+            # Combine transfers
+            all_transfers = {}
+            for transfer in from_outlet_transfers.items:
+                all_transfers[transfer.uid] = transfer
+            for transfer in to_outlet_transfers.items:
+                all_transfers[transfer.uid] = transfer
+            
+            transfers_list = list(all_transfers.values())
+        else:
+            transfers = await transfer_manager.fetch_all(filters=filters)
+            transfers_list = transfers.items
         
         # Calculate summary statistics
         status_counts = {status.value: 0 for status in TransferStatus}
@@ -959,7 +1014,7 @@ async def assign_delivery_person(
         completed_transfers = 0
         pending_approvals = 0
         
-        for transfer in transfers.items:
+        for transfer in transfers_list:
             if transfer.created_at.date() >= from_date and transfer.created_at.date() <= to_date:
                 total_transfers += 1
                 status_counts[transfer.status.value] += 1
