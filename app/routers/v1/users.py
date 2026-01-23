@@ -39,16 +39,15 @@ async def get_user(
         
         return UserResponse(
             uid=user.uid,
-            username=user.username,
             email=user.email,
-            first_name=user.first_name,
-            last_name=user.last_name,
+            full_name=user.full_name,
             phone=user.phone,
             role=user.role,
             outlet_id=user.outlet_id,
             is_active=user.is_active,
             created_at=user.created_at,
-            last_login=user.last_login
+            last_login=user.last_login,
+            updated_at=user.updated_at
         )
     
     except HTTPException:
@@ -67,38 +66,7 @@ async def get_user(
 
 
 
-@router.get("/{user_id}", response_model=UserResponse)
-async def get_user(
-    user_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
-):
-    """Get user by ID"""
-    try:
-        user = await user_manager.fetch(user_id)
-        return user
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User not found: {str(e)}"
-        )
 
-
-@router.put("/{user_id}", response_model=UserResponse)
-async def update_user(
-    user_id: str,
-    payload: UserUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
-):
-    """Update user details"""
-    try:
-        updates = payload.dict(exclude_unset=True)
-        updated_user = await user_manager.update(user_id, updates)
-        return updated_user
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to update user: {str(e)}"
-        )
 
 
 @router.put("/{user_id}/password", response_model=StatusResponse)
@@ -193,34 +161,6 @@ async def list_users(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch users: {str(e)}"
-        )
-
-
-# Duplicate /{user_id} route removed - moved to top of file
-    """
-    Get user by ID
-    Requires: super_admin or admin role
-    """
-    try:
-        user = await user_manager.fetch(user_id)
-        
-        return UserResponse(
-            uid=user.uid,
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            phone=user.phone,
-            outlet_id=user.outlet_id,
-            is_active=user.is_active,
-            last_login=user.last_login,
-            created_at=user.created_at,
-            updated_at=user.updated_at
-        )
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User not found: {str(e)}"
         )
 
 
@@ -341,31 +281,4 @@ async def deactivate_user(
         )
 
 
-        # Users can only change their own password
-        if user_id != current_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only change your own password"
-            )
-        
-        # Verify old password using bcrypt
-        user = await user_manager.fetch(user_id)
-        if not verify_password(payload.old_password, user.password_hash):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Incorrect old password"
-            )
-        
-        # Update password using bcrypt
-        new_password_hash = get_password_hash(payload.new_password)
-        await user_manager.update(user_id, {"password_hash": new_password_hash})
-        
-        return StatusResponse(status="ok", message="Password changed successfully")
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to change password: {str(e)}"
-        )
+
