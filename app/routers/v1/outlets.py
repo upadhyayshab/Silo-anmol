@@ -31,16 +31,19 @@ async def get_outlet(
         return OutletResponse(
             uid=outlet.uid,
             outlet_name=outlet.outlet_name,
+            outlet_code=outlet.outlet_code,
             address=outlet.address,
             city=outlet.city,
             state=outlet.state,
             pincode=outlet.pincode,
             phone=outlet.phone,
             email=outlet.email,
+            gstin=outlet.gstin,
+            state_code=outlet.state_code,
+            pan=outlet.pan,
             manager_id=outlet.manager_id,
             is_active=outlet.is_active,
-            created_at=outlet.created_at,
-            last_updated=outlet.last_updated
+            created_at=outlet.created_at
         )
     
     except Exception as e:
@@ -118,73 +121,7 @@ async def list_outlets(
         )
 
 
-# Duplicate /{outlet_id} route removed - moved to top of file
-    """
-    Get outlet by ID
-    Requires: super_admin, admin, warehouse_manager, outlet_manager, or accountant role
-    """
-    try:
-        outlet = await outlet_manager.fetch(outlet_id)
-        
-        return OutletResponse(
-            uid=outlet.uid,
-            outlet_name=outlet.outlet_name,
-            outlet_code=outlet.outlet_code,
-            address=outlet.address,
-            city=outlet.city,
-            state=outlet.state,
-            pincode=outlet.pincode,
-            phone=outlet.phone,
-            email=outlet.email,
-            gstin=outlet.gstin,
-            state_code=outlet.state_code,
-            pan=outlet.pan,
-            manager_id=outlet.manager_id,
-            is_active=outlet.is_active,
-            created_at=outlet.created_at
-        )
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Outlet not found: {str(e)}"
-        )
 
-
-
-
-@router.get("/{outlet_id}", response_model=OutletResponse)
-async def get_outlet(
-    outlet_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
-):
-    """Get outlet by ID"""
-    try:
-        outlet = await outlet_manager.fetch(outlet_id)
-        return outlet
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Outlet not found: {str(e)}"
-        )
-
-
-@router.put("/{outlet_id}", response_model=OutletResponse)
-async def update_outlet(
-    outlet_id: str,
-    payload: OutletUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
-):
-    """Update outlet details"""
-    try:
-        updates = payload.dict(exclude_unset=True)
-        updated_outlet = await outlet_manager.update(outlet_id, updates)
-        return updated_outlet
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to update outlet: {str(e)}"
-        )
 
 
 @router.post("", response_model=OutletResponse, status_code=status.HTTP_201_CREATED)
