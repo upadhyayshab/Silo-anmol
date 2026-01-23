@@ -204,49 +204,105 @@ async def get_inventory(
     """
     try:
         filters = {}
+        
+        # Handle outlet_id filtering properly
         if outlet_id is not None:
-            filters["outlet_id"] = outlet_id
+            # Convert string "null" to actual None for warehouse filtering
+            if outlet_id.lower() == "null":
+                filters["outlet_id"] = None
+            else:
+                filters["outlet_id"] = outlet_id
+        
         if product_id:
             filters["product_id"] = product_id
         
-        inventory_items = await inventory_manager.fetch_all(
-            limit=limit,
-            offset=offset,
-            filters=filters if filters else None
-        )
-        
-        inventory_responses = []
-        
-        for item in inventory_items.items:
-            available_quantity = item.quantity - item.reserved_quantity
-            
-            # Filter low stock items if requested
-            if low_stock_only:
-                # Get product min_stock_level
-                product = await product_manager.fetch(item.product_id)
-                if available_quantity >= product.min_stock_level:
-                    continue
-            
-            inventory_responses.append(
-                InventoryResponse(
-                    uid=item.uid,
-                    product_id=item.product_id,
-                    outlet_id=item.outlet_id,
-                    quantity=item.quantity,
-                    reserved_quantity=item.reserved_quantity,
-                    available_quantity=available_quantity,
-                    last_updated=item.last_updated
-                )
+        # If filtering by warehouse (outlet_id=None) and the manager doesn't handle None properly,
+        # we'll fetch all and filter manually
+        if outlet_id is not None and outlet_id.lower() == "null":
+            # Get all inventory and filter for warehouse items (outlet_id is None)
+            all_inventory = await inventory_manager.fetch_all(
+                limit=0,  # Get all to filter properly
+                offset=0
             )
+            
+            # Filter for warehouse items manually
+            warehouse_items = [
+                item for item in all_inventory.items 
+                if item.outlet_id is None
+            ]
+            
+            # Apply pagination manually
+            total_count = len(warehouse_items)
+            paginated_items = warehouse_items[offset:offset + limit] if limit > 0 else warehouse_items[offset:]
+            
+            inventory_responses = []
+            for item in paginated_items:
+                available_quantity = item.quantity - item.reserved_quantity
+                
+                # Filter low stock items if requested
+                if low_stock_only:
+                    try:
+                        product = await product_manager.fetch(item.product_id)
+                        if available_quantity >= product.min_stock_level:
+                            continue
+                    except:
+                        continue
+                
+                inventory_responses.append(
+                    InventoryResponse(
+                        uid=item.uid,
+                        product_id=item.product_id,
+                        outlet_id=item.outlet_id,
+                        quantity=item.quantity,
+                        reserved_quantity=item.reserved_quantity,
+                        available_quantity=available_quantity,
+                        last_updated=item.last_updated
+                    )
+                )
+            
+            return ListResponse(items=inventory_responses, count=total_count)
         
-        return ListResponse(items=inventory_responses, count=len(inventory_responses))
+        else:
+            # Use normal filtering for non-warehouse queries
+            inventory_items = await inventory_manager.fetch_all(
+                limit=limit,
+                offset=offset,
+                filters=filters if filters else None
+            )
+            
+            inventory_responses = []
+            
+            for item in inventory_items.items:
+                available_quantity = item.quantity - item.reserved_quantity
+                
+                # Filter low stock items if requested
+                if low_stock_only:
+                    try:
+                        product = await product_manager.fetch(item.product_id)
+                        if available_quantity >= product.min_stock_level:
+                            continue
+                    except:
+                        continue
+                
+                inventory_responses.append(
+                    InventoryResponse(
+                        uid=item.uid,
+                        product_id=item.product_id,
+                        outlet_id=item.outlet_id,
+                        quantity=item.quantity,
+                        reserved_quantity=item.reserved_quantity,
+                        available_quantity=available_quantity,
+                        last_updated=item.last_updated
+                    )
+                )
+            
+            return ListResponse(items=inventory_responses, count=len(inventory_responses))
     
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch inventory: {str(e)}"
         )
-
 
 # Duplicate routes removed - moved to top of file for proper ordering
 
