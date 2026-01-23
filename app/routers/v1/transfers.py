@@ -440,21 +440,45 @@ async def update_transfer_status(
 ):
     """Update transfer status"""
     try:
+        # Get current transfer to validate transition
+        transfer = await transfer_manager.fetch(transfer_id)
+        
+        # Validate status transition
+        if not is_valid_transfer_status_transition(transfer.status, payload.status):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status transition from {transfer.status} to {payload.status}"
+            )
+        
         updates = {
             "status": payload.status,
             "notes": payload.notes
         }
         
-        # Set delivery date if delivered
-        if payload.status == TransferStatus.DELIVERED:
+        # Handle status-specific logic
+        if payload.status == TransferStatus.APPROVED:
+            updates["approved_by"] = current_user_id
+            # Reserve stock at source location
+            await reserve_transfer_stock(transfer_id)
+        
+        elif payload.status == TransferStatus.DELIVERED:
             from datetime import datetime
             updates["delivered_date"] = datetime.utcnow()
+            # Complete the stock transfer - this creates inventory records
+            await complete_stock_transfer(transfer_id)
+        
+        elif payload.status == TransferStatus.CANCELLED:
+            # Release reserved stock if any
+            await release_transfer_stock(transfer_id)
         
         updated_transfer = await transfer_manager.update(transfer_id, updates)
         return updated_transfer
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update transfer status: {str(e)}"
         )
 
@@ -887,109 +911,6 @@ async def reserve_transfer_stock(transfer_id: str):
                 inventory_item.uid,
                 {
                     "reserved_quantity": new_reserved,
-                    "last_updated": datetime.utcnow()
-                }
-            )
-
-
-async def complete_stock_transfer(transfer_id: str):
-    """Complete stock transfer by moving inventory between locations"""
-    transfer = await transfer_manager.fetch(transfer_id)
-    transfer_items = await transfer_item_manager.fetch_all(
-        filters={"transfer_id": transfer_id}
-    )
-    
-    for item in transfer_items.items:
-        # Reduce stock at source location
-        source_inventory = await inventory_manager.fetch_all(
-            filters={
-                "product_id": item.product_id,
-                "outlet_id": transfer.from_outlet_id
-            }
-        )
-        
-        if source_inventory.items:
-            source_item = source_inventory.items[0]
-            new_quantity = source_item.quantity - item.quantity_requested
-            new_reserved = source_item.reserved_quantity - item.quantity_requested
-            
-            await inventory_manager.update(
-                source_item.uid,
-                {
-                    "quantity": max(0, new_quantity),
-                    "reserved_quantity": max(0, new_reserved),
-                    "last_updated": datetime.utcnow()
-                }
-            )
-        
-        # Add stock at destination location
-        dest_inventory = await inventory_manager.fetch_all(
-            filters={
-                "product_id": item.product_id,
-                "outlet_id": transfer.to_outlet_id
-            }
-        )
-        
-        if dest_inventory.items:
-            # Update existing inventory
-            dest_item = dest_inventory.items[0]
-            new_quantity = dest_item.quantity + item.quantity_requested
-            
-            await inventory_manager.update(
-                dest_item.uid,
-                {
-                    "quantity": new_quantity,
-                    "last_updated": datetime.utcnow()
-                }
-            )
-        else:
-            # Create new inventory record at destination
-            from managers import InventorySchema
-            new_inventory = InventorySchema(
-                product_id=item.product_id,
-                outlet_id=transfer.to_outlet_id,
-                quantity=item.quantity_requested,
-                reserved_quantity=0,
-                last_updated=datetime.utcnow()
-            )
-            await inventory_manager.create(new_inventory)
-        
-        # Update delivered quantity
-        await transfer_item_manager.update(
-            item.uid,
-            {"quantity_delivered": item.quantity_requested}
-        )
-
-
-async def release_transfer_stock(transfer_id: str):
-    """Release reserved stock when transfer is cancelled"""
-    transfer = await transfer_manager.fetch(transfer_id)
-    
-    # Only release if transfer was approved (stock was reserved)
-    if transfer.status not in [TransferStatus.APPROVED, TransferStatus.IN_TRANSIT]:
-        return
-    
-    transfer_items = await transfer_item_manager.fetch_all(
-        filters={"transfer_id": transfer_id}
-    )
-    
-    for item in transfer_items.items:
-        # Find inventory at source location
-        inventory_items = await inventory_manager.fetch_all(
-            filters={
-                "product_id": item.product_id,
-                "outlet_id": transfer.from_outlet_id
-            }
-        )
-        
-        if inventory_items.items:
-            inventory_item = inventory_items.items[0]
-            new_reserved = inventory_item.reserved_quantity - item.quantity_requested
-            
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": max(0, new_reserved),
                     "last_updated": datetime.utcnow()
                 }
             )
