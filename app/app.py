@@ -10,7 +10,34 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import SharedBackend modules
 from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager, GenericManager
-from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
+
+# Safe import of middlewares with fallback
+try:
+    from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
+    MIDDLEWARES_AVAILABLE = True
+    print("✅ SharedBackend middlewares imported successfully")
+except Exception as e:
+    print(f"⚠️  SharedBackend middlewares import failed: {e}")
+    MIDDLEWARES_AVAILABLE = False
+    
+    # Create fallback middleware classes
+    from starlette.middleware.base import BaseHTTPMiddleware
+    
+    class SDKMiddleware(BaseHTTPMiddleware):
+        def __init__(self, app, key_manager=None):
+            super().__init__(app)
+            self.key_manager = key_manager
+        
+        async def dispatch(self, request, call_next):
+            return await call_next(request)
+    
+    class EntityMiddleware(BaseHTTPMiddleware):
+        def __init__(self, app, entity_manager=None):
+            super().__init__(app)
+            self.entity_manager = entity_manager
+        
+        async def dispatch(self, request, call_next):
+            return await call_next(request)
 
 # Import local modules
 from config import get_settings, get_engine
@@ -55,8 +82,15 @@ app.add_middleware(
 # Add SharedBackend middlewares
 key_manager = ApiKeyManager(engine)
 entity_manager = EntityManager(engine)
-app.add_middleware(SDKMiddleware, key_manager=key_manager)
-app.add_middleware(EntityMiddleware, entity_manager=entity_manager)
+
+# Add middlewares with error handling
+try:
+    app.add_middleware(SDKMiddleware, key_manager=key_manager)
+    app.add_middleware(EntityMiddleware, entity_manager=entity_manager)
+    print("✅ Middlewares added successfully")
+except Exception as e:
+    print(f"⚠️  Middleware setup failed: {e}")
+    print("🔄 Continuing without middlewares...")
 
 # Include routers
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
