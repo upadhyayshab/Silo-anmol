@@ -431,7 +431,7 @@ async def approve_transfer(
         )
 
 
-@router.put("/{transfer_id}/status", response_model=StockTransferResponse)
+@router.put("/{transfer_id}/status", response_model=StatusResponse)
 async def update_transfer_status(
     transfer_id: str,
     payload: StockTransferStatusUpdateRequest,
@@ -471,8 +471,12 @@ async def update_transfer_status(
             # Release reserved stock if any
             await release_transfer_stock(transfer_id)
         
-        updated_transfer = await transfer_manager.update(transfer_id, updates)
-        return updated_transfer
+        await transfer_manager.update(transfer_id, updates)
+        
+        return StatusResponse(
+            status="ok",
+            message=f"Transfer status updated to {payload.status}"
+        )
         
     except HTTPException:
         raise
