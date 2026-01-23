@@ -6,7 +6,7 @@ from typing import Optional, List
 
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
 from SharedBackend.managers.base import NESTED_JOINS
-from utils.constants import (
+from app.utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod, 
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure
 )
