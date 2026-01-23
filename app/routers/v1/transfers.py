@@ -2,19 +2,19 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
 from datetime import datetime, date
 
-from config import get_settings, get_engine
-from managers import (
+from app.config import get_settings, get_engine
+from app.managers import (
     StockTransferOrderManager, TransferItemManager, InventoryManager,
     ProductManager, OutletManager, UserManager,
-    StockTransferOrderSchema, TransferItemSchema
+    StockTransferOrderSchema, TransferItemSchema, InventorySchema
 )
-from models import (
+from app.models import (
     StockTransferCreateRequest, StockTransferStatusUpdateRequest,
     StockTransferResponse, TransferItemResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, TransferStatus
+from app.utils.auth import require_roles, get_current_user_id
+from app.utils.constants import UserRole, TransferStatus
 import uuid
 
 settings = get_settings()
@@ -870,7 +870,6 @@ async def complete_stock_transfer(transfer_id: str):
             )
         else:
             # Create new inventory record at destination
-            from managers import InventorySchema
             new_inventory = InventorySchema(
                 product_id=item.product_id,
                 outlet_id=transfer.to_outlet_id,
