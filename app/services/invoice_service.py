@@ -120,7 +120,8 @@ class InvoiceService:
         created_by: str = None
     ) -> Dict:
         """
-        Create complete invoice with GST calculations and inventory deduction
+        Create complete invoice with GST calculations
+        Note: Inventory deduction is now handled during order creation to prevent double deduction
         """
         try:
             # Get outlet details
@@ -229,8 +230,8 @@ class InvoiceService:
                 created_item = await self.invoice_item_manager.create(item)
                 created_items.append(created_item)
                 
-                # Deduct inventory
-                await self.deduct_inventory(outlet_id, item_data['product_id'], item_data['quantity'])
+                # Note: Inventory deduction removed - now handled during order creation
+                # This prevents double deduction when frontend creates orders for walk-in customers
             
             return {
                 'invoice': created_invoice,

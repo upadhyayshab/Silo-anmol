@@ -488,7 +488,7 @@ async def create_invoice(
 ):
     """
     Create new invoice with GST calculations
-    Automatically deducts inventory
+    Note: Inventory deduction now handled during order creation
     """
     try:
         # Check outlet access
@@ -975,7 +975,7 @@ async def cancel_invoice(
 # Duplicate POST route removed - functionality preserved above
     """
     Create GST-compliant invoice for outlet walk-in sales
-    Automatically calculates taxes and deducts inventory
+    Automatically calculates taxes (inventory deduction now handled during order creation)
     """
     try:
         # Verify outlet exists and user has access
@@ -1122,7 +1122,7 @@ async def cancel_invoice(
         
         created_invoice = await invoice_manager.create(new_invoice)
         
-        # Create invoice items and deduct inventory
+        # Create invoice items (inventory already deducted during order creation)
         created_items = []
         for item_data in invoice_items_data:
             # Create invoice item
@@ -1150,17 +1150,8 @@ async def cancel_invoice(
             created_item = await invoice_item_manager.create(invoice_item)
             created_items.append(created_item)
             
-            # Deduct inventory immediately (walk-in sale)
-            inventory_item = item_data["inventory_item"]
-            new_quantity = inventory_item.quantity - item_data["quantity"]
-            
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "quantity": new_quantity,
-                    "last_updated": datetime.utcnow()
-                }
-            )
+            # Note: Inventory deduction removed - now handled during order creation
+            # This prevents double deduction when frontend creates orders for walk-in customers
         
         # Return complete invoice response
         return await get_invoice_response(created_invoice.uid)
