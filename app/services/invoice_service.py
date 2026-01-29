@@ -367,6 +367,7 @@ class InvoiceService:
                 'invoice_number': invoice.invoice_number,
                 'invoice_date': invoice.invoice_date.strftime('%d-%m-%Y'),
                 'outlet_name': outlet.outlet_name,
+                'outlet_gstin': outlet.gstin,  # Add outlet GSTIN
                 'payment_method': invoice.payment_method.value.upper(),
                 'customer_name': invoice.customer_name,
                 'customer_phone': invoice.customer_phone,
