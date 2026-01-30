@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tax Invoice - {{ invoice_number }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            line-height: 1.3;
+            color: #333;
+            padding: 15px;
+        }
+        
+        .invoice-container {
+            border: 2px solid #4CAF50;
+            padding: 15px;
+            width: 100%;
+            background: white;
+        }
+        
+        /* Header Section */
+        .header-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+        
+        .header-table td {
+            padding: 8px;
+            vertical-align: top;
+        }
+        
+        .company-name {
+            font-size: 20px;
+            font-weight: bold;
+            color: #4CAF50;
+            margin-bottom: 5px;
+        }
+        
+        .company-gstin {
+            font-size: 10px;
+            color: #666;
+        }
+        
+        .invoice-title {
+            text-align: right;
+        }
+        
+        .invoice-title h1 {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .invoice-details {
+            font-size: 10px;
+            text-align: right;
+        }
+        
+        .invoice-details div {
+            margin-bottom: 2px;
+        }
+        
+        /* Section Headers */
+        .section-header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 6px 10px;
+            font-weight: bold;
+            font-size: 12px;
+            margin: 15px 0 8px 0;
+            text-align: left;
+        }
+        
+        /* Bill To Section */
+        .bill-to-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+        }
+        
+        .bill-to-table td {
+            padding: 6px 10px;
+            border-bottom: 1px solid #eee;
+            font-size: 10px;
+        }
+        
+        /* Items Table */
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+        
+        .items-table th {
+            background-color: #4CAF50;
+            color: white;
+            padding: 8px 6px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 10px;
+            border: 1px solid #4CAF50;
+        }
+        
+        .items-table td {
+            padding: 6px;
+            text-align: center;
+            border: 1px solid #ddd;
+            font-size: 10px;
+        }
+        
+        .items-table .text-left {
+            text-align: left;
+        }
+        
+        .items-table .text-right {
+            text-align: right;
+        }
+        
+        /* Totals Table */
+        .totals-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
+        }
+        
+        .totals-table td {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            font-size: 11px;
+        }
+        
+        .totals-table .label {
+            background-color: #f8f9fa;
+            font-weight: bold;
+            width: 65%;
+        }
+        
+        .totals-table .amount {
+            text-align: right;
+            width: 35%;
+        }
+        
+        .total-amount-row {
+            background-color: #4CAF50 !important;
+            color: white !important;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        
+        .total-amount-row td {
+            background-color: #4CAF50 !important;
+            color: white !important;
+        }
+        
+        /* Amount in Words */
+        .amount-words {
+            background-color: #f8f9fa;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            font-style: italic;
+            margin-bottom: 15px;
+            font-size: 10px;
+        }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            font-size: 9px;
+            color: #666;
+            font-style: italic;
+            margin-top: 20px;
+            border: 1px solid #4CAF50;
+            padding: 5px;
+        }
+        
+        /* PDF Specific Styles */
+        @page {
+            size: A4;
+            margin: 1cm;
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <!-- Header Section -->
+        <table class="header-table">
+            <tr>
+                <td style="width: 50%;">
+                    <div class="company-name">Silo Fortune<br>Private Limited</div>
+                    <div class="company-gstin">GSTIN: {{ outlet_gstin or '[YOUR GSTIN]' }}</div>
+                </td>
+                <td style="width: 50%;" class="invoice-title">
+                    <h1>TAX INVOICE</h1>
+                    <div class="invoice-details">
+                        <div><strong>Invoice Number:</strong> {{ invoice_number }}</div>
+                        <div><strong>Invoice Date:</strong> {{ invoice_date }}</div>
+                        <div><strong>Outlet:</strong> {{ outlet_name }}</div>
+                        <div><strong>Payment Method:</strong> {{ payment_method }}</div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+        
+        <!-- Bill To Section -->
+        {% if customer_name or customer_phone %}
+        <div class="section-header">BILL TO</div>
+        <table class="bill-to-table">
+            {% if customer_name %}
+            <tr>
+                <td><strong>Name:</strong> {{ customer_name }}</td>
+            </tr>
+            {% endif %}
+            {% if customer_phone %}
+            <tr>
+                <td><strong>Phone:</strong> {{ customer_phone }}</td>
+            </tr>
+            {% endif %}
+            {% if customer_address %}
+            <tr>
+                <td><strong>Address:</strong> {{ customer_address }}</td>
+            </tr>
+            {% endif %}
+        </table>
+        {% endif %}
+        
+        <!-- Items Section -->
+        <div class="section-header">ITEMS</div>
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th style="width: 8%;">S.No</th>
+                    <th style="width: 35%;">Product Name</th>
+                    <th style="width: 12%;">Quantity</th>
+                    <th style="width: 15%;">Unit Price</th>
+                    <th style="width: 15%;">Discount</th>
+                    <th style="width: 15%;">Selling Price<br>(Total)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td class="text-left">{{ item.product_name }}</td>
+                    <td>{{ item.quantity }}</td>
+                    <td class="text-right">Rs {{ "%.2f"|format(item.unit_price) }}</td>
+                    <td class="text-right">Rs {{ "%.2f"|format(item.discount_amount) }}</td>
+                    <td class="text-right">Rs {{ "%.2f"|format(item.total_amount) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        
+        <!-- Invoice Totals Section -->
+        <div class="section-header">INVOICE TOTALS</div>
+        <table class="totals-table">
+            <tr>
+                <td class="label">Subtotal:</td>
+                <td class="amount">Rs {{ "%.2f"|format(subtotal) }}</td>
+            </tr>
+            <tr>
+                <td class="label">Discount:</td>
+                <td class="amount">Rs {{ "%.2f"|format(discount_amount) }}</td>
+            </tr>
+            <tr>
+                <td class="label">Taxable Amount:</td>
+                <td class="amount">Rs {{ "%.2f"|format(taxable_amount) }}</td>
+            </tr>
+            <tr class="total-amount-row">
+                <td class="label">Total Amount:</td>
+                <td class="amount">Rs {{ "%.2f"|format(total_amount) }}</td>
+            </tr>
+        </table>
+        
+        <!-- Amount in Words -->
+        <div class="amount-words">
+            <strong>Amount in Words:</strong> {{ amount_in_words }}
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            This is a computer-generated invoice.
+        </div>
+    </div>
+</body>
+</html>

@@ -146,6 +146,8 @@ class ProductCreateRequest(BaseModel):
     barcode: Optional[str] = None
     image_url: Optional[str] = None
     min_stock_level: int = Field(default=10, ge=0)
+    commission: Decimal = Field(default=0.00, ge=0, description="Commission in rupees")
+    discount: Decimal = Field(default=0.00, ge=0, description="Discount in rupees")
 
 
 class ProductUpdateRequest(BaseModel):
@@ -160,6 +162,8 @@ class ProductUpdateRequest(BaseModel):
     barcode: Optional[str] = None
     image_url: Optional[str] = None
     min_stock_level: Optional[int] = None
+    commission: Optional[Decimal] = Field(None, ge=0, description="Commission in rupees")
+    discount: Optional[Decimal] = Field(None, ge=0, description="Discount in rupees")
     is_active: Optional[bool] = None
 
 
@@ -177,6 +181,8 @@ class ProductResponse(BaseModel):
     barcode: Optional[str]
     image_url: Optional[str]
     min_stock_level: int
+    commission: Decimal
+    discount: Decimal
     is_active: bool
     created_at: datetime
 
@@ -215,7 +221,7 @@ class StockAdjustmentRequest(BaseModel):
 class OrderItemRequest(BaseModel):
     product_id: str
     quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., gt=0)
+    # unit_price removed - now calculated automatically from product.cost_price - product.discount
 
 
 class OrderCreateRequest(BaseModel):
@@ -331,7 +337,6 @@ class PaymentStatusUpdateRequest(BaseModel):
 class InvoiceItemRequest(BaseModel):
     product_id: str
     quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., gt=0)
     discount_percentage: Decimal = Field(default=0, ge=0, le=100)
 
 
