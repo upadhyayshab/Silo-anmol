@@ -137,7 +137,10 @@ class InvoiceService:
             for item_data in items:
                 product = await self.product_manager.fetch(item_data['product_id'])
                 quantity = item_data['quantity']
-                unit_price = Decimal(str(item_data.get('unit_price', product.unit_price)))
+                # Calculate unit_price using new pricing logic: cost_price - discount
+                calculated_unit_price = product.cost_price - product.discount
+                # Ensure unit_price is not negative
+                unit_price = max(calculated_unit_price, Decimal('0.00'))
                 discount_percentage = Decimal(str(item_data.get('discount_percentage', 0)))
                 
                 # Calculate item amounts

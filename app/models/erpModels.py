@@ -337,7 +337,6 @@ class PaymentStatusUpdateRequest(BaseModel):
 class InvoiceItemRequest(BaseModel):
     product_id: str
     quantity: int = Field(..., gt=0)
-    unit_price: Decimal = Field(..., gt=0)
     discount_percentage: Decimal = Field(default=0, ge=0, le=100)
 
 
