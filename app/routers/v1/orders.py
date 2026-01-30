@@ -72,14 +72,22 @@ async def create_order(
                     detail=f"Product not found: {item.product_id}"
                 )
             
-            # Calculate item subtotal
-            subtotal = item.quantity * item.unit_price
+            # Calculate unit_price using new pricing logic
+            # unit_price = cost_price - discount (cost_price is MRP, discount in rupees)
+            calculated_unit_price = product.cost_price - product.discount
+            
+            # Ensure unit_price is not negative
+            if calculated_unit_price < 0:
+                calculated_unit_price = Decimal('0.00')
+            
+            # Calculate item subtotal using calculated price
+            subtotal = item.quantity * calculated_unit_price
             total_amount += subtotal
             
             validated_items.append({
                 "product": product,
                 "quantity": item.quantity,
-                "unit_price": item.unit_price,
+                "unit_price": calculated_unit_price,  # Use calculated price
                 "subtotal": subtotal
             })
         
