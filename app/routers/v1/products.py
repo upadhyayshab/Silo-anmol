@@ -160,6 +160,8 @@ async def list_products(
                 barcode=prod.barcode,
                 image_url=prod.image_url,
                 min_stock_level=prod.min_stock_level,
+                commission=prod.commission,
+                discount=prod.discount,
                 is_active=prod.is_active,
                 created_at=prod.created_at
             )
@@ -211,6 +213,8 @@ async def get_product_by_barcode(
             barcode=prod.barcode,
             image_url=prod.image_url,
             min_stock_level=prod.min_stock_level,
+            commission=prod.commission,
+            discount=prod.discount,
             is_active=prod.is_active,
             created_at=prod.created_at
         )
@@ -252,6 +256,8 @@ async def get_product(
             barcode=prod.barcode,
             image_url=prod.image_url,
             min_stock_level=prod.min_stock_level,
+            commission=prod.commission,
+            discount=prod.discount,
             is_active=prod.is_active,
             created_at=prod.created_at
         )
@@ -304,6 +310,8 @@ async def create_product(
             barcode=payload.barcode,
             image_url=payload.image_url,
             min_stock_level=payload.min_stock_level,
+            commission=payload.commission,
+            discount=payload.discount,
             is_active=True
         )
         
@@ -323,6 +331,8 @@ async def create_product(
             barcode=created_product.barcode,
             image_url=created_product.image_url,
             min_stock_level=created_product.min_stock_level,
+            commission=created_product.commission,
+            discount=created_product.discount,
             is_active=created_product.is_active,
             created_at=created_product.created_at
         )
@@ -371,6 +381,8 @@ async def update_product(
             barcode=updated_product.barcode,
             image_url=updated_product.image_url,
             min_stock_level=updated_product.min_stock_level,
+            commission=updated_product.commission,
+            discount=updated_product.discount,
             is_active=updated_product.is_active,
             created_at=updated_product.created_at
         )
