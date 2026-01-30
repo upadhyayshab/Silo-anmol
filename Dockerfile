@@ -3,6 +3,10 @@ FROM python:3.12-slim AS build
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
+    pkg-config \
+    libcairo2-dev \
+    libgirepository1.0-dev \
+    gir1.2-cairo-1.0 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
