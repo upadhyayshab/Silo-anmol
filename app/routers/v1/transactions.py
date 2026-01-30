@@ -30,7 +30,7 @@ router = APIRouter(prefix="/transactions", tags=["Payment Transactions"])
 async def record_order_payment(
     payload: OrderTransactionCreateRequest,
     current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER
     ))
 ):
     """
@@ -47,6 +47,12 @@ async def record_order_payment(
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied to this order"
+                )
+        elif current_user.role == UserRole.TELECALLER:
+            if order.telecaller_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only record payments for your own orders"
                 )
         
         # Check if order can receive payment
@@ -289,7 +295,7 @@ async def record_order_payment(
 async def get_daily_collection(
     date: Optional[str] = None,  # Format: YYYY-MM-DD
     outlet_id: Optional[str] = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER))
 ):
     """Get daily payment collections"""
     try:
@@ -361,7 +367,7 @@ async def get_order_transactions(
 async def update_transaction(
     transaction_id: str,
     payload: PaymentStatusUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER))
 ):
     """Update transaction payment status"""
     try:
@@ -392,7 +398,7 @@ async def get_payment_transactions(
     limit: int = 50,
     offset: int = 0,
     current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER
     ))
 ):
     """
@@ -435,6 +441,11 @@ async def get_payment_transactions(
                 # Get the order to check outlet
                 order = await order_manager.fetch(transaction.order_id)
                 if order.assigned_outlet_id != current_user.outlet_id:
+                    continue
+            elif current_user.role == UserRole.TELECALLER:
+                # Get the order to check telecaller
+                order = await order_manager.fetch(transaction.order_id)
+                if order.telecaller_id != current_user_id:
                     continue
             
             filtered_transactions.append(OrderTransactionResponse(
