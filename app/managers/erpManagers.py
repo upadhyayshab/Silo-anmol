@@ -299,7 +299,13 @@ class CustomerOrderSchema(BaseSchema):
     actual_delivery_date = db.Column(db.DateTime(timezone=True), nullable=True)
     
     status_remarks = db.Column(db.Text)  # Mandatory for cancelled/pending
-    total_amount = db.Column(db.Numeric(10, 2), nullable=False)
+    
+    # Pricing fields
+    gross_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Total before manual discount
+    manual_discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Manual discount in rupees
+    discount_applied = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total discount applied
+    prepaid_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Amount already paid
+    total_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Final net amount
 
     # Relationships
     telecaller = relationship("UserSchema", back_populates="created_orders")
