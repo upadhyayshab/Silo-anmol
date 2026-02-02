@@ -27,6 +27,10 @@ class UserSchema(BasePassSchema):
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     last_login = db.Column(db.DateTime(timezone=True), nullable=True)
+    
+    # Password reset fields
+    password_reset_token = db.Column(db.String(255), nullable=True, index=True)
+    password_reset_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     # Relationships
     outlet = relationship("OutletSchema", back_populates="users", foreign_keys=[outlet_id])
