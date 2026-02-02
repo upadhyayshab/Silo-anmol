@@ -175,10 +175,10 @@ async def forgot_password(payload: ForgotPasswordRequest):
         
         # Generate reset token (valid for 1 hour)
         import secrets
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         
         reset_token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(hours=1)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
         
         # Update user with reset token
         await user_manager.update(user.uid, {
@@ -208,7 +208,7 @@ async def reset_password(payload: ResetPasswordRequest):
     Reset password using reset token
     """
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
         from utils.auth import hash_password
         
         # Find user by reset token
@@ -223,7 +223,7 @@ async def reset_password(payload: ResetPasswordRequest):
         user = users.items[0]
         
         # Check if token is expired
-        if not user.password_reset_expires_at or user.password_reset_expires_at < datetime.utcnow():
+        if not user.password_reset_expires_at or user.password_reset_expires_at < datetime.now(timezone.utc):
             # Clear expired token
             await user_manager.update(user.uid, {
                 "password_reset_token": None,
