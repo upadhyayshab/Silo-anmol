@@ -238,6 +238,8 @@ class OrderCreateRequest(BaseModel):
     collection_type: CollectionType
     payment_method: PaymentMethod
     expected_delivery_date: Optional[date] = None
+    manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
+    prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance")
     items: List[OrderItemRequest]
 
 
@@ -289,7 +291,11 @@ class OrderResponse(BaseModel):
     expected_delivery_date: Optional[date]
     actual_delivery_date: Optional[datetime]
     status_remarks: Optional[str]
-    total_amount: Decimal
+    gross_amount: Decimal  # Total before manual discount
+    manual_discount: Decimal  # Manual discount applied
+    discount_applied: Decimal  # Total discount (product + manual)
+    prepaid_amount: Decimal  # Amount already paid
+    total_amount: Decimal  # Final net amount
     items: List[OrderItemResponse] = []
     created_at: datetime
 

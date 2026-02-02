@@ -53,8 +53,9 @@ async def create_order(
     Automatically reserves stock at assigned outlet
     """
     try:
-        # Validate products and calculate total
-        total_amount = Decimal('0.00')
+        # Validate products and calculate pricing
+        gross_amount = Decimal('0.00')  # Total at MRP (cost_price)
+        product_discount_total = Decimal('0.00')  # Sum of all product-level discounts
         validated_items = []
         
         for item in payload.items:
@@ -72,24 +73,68 @@ async def create_order(
                     detail=f"Product not found: {item.product_id}"
                 )
             
-            # Calculate unit_price using new pricing logic
-            # unit_price = cost_price - discount (cost_price is MRP, discount in rupees)
-            calculated_unit_price = product.cost_price - product.discount
+            # Calculate gross amount (always at MRP/cost_price)
+            item_gross = item.quantity * product.cost_price
+            gross_amount += item_gross
             
-            # Ensure unit_price is not negative
-            if calculated_unit_price < 0:
-                calculated_unit_price = Decimal('0.00')
+            # Calculate product-level discount
+            item_product_discount = item.quantity * product.discount
+            product_discount_total += item_product_discount
             
-            # Calculate item subtotal using calculated price
+            # Determine unit_price based on manual_discount logic
+            if payload.manual_discount > 0:
+                # Manual discount mode: ignore product discounts, use MRP
+                calculated_unit_price = product.cost_price
+            else:
+                # Normal mode: apply product discounts
+                calculated_unit_price = product.cost_price - product.discount
+                # Ensure unit_price is not negative
+                if calculated_unit_price < 0:
+                    calculated_unit_price = Decimal('0.00')
+            
+            # Calculate item subtotal
             subtotal = item.quantity * calculated_unit_price
-            total_amount += subtotal
             
             validated_items.append({
                 "product": product,
                 "quantity": item.quantity,
-                "unit_price": calculated_unit_price,  # Use calculated price
-                "subtotal": subtotal
+                "unit_price": calculated_unit_price,
+                "subtotal": subtotal,
+                "gross_amount": item_gross,
+                "product_discount": item_product_discount
             })
+        
+        # Calculate final pricing
+        if payload.manual_discount > 0:
+            # Manual discount mode
+            discount_applied = payload.manual_discount
+            amount_after_discount = gross_amount - payload.manual_discount
+        else:
+            # Normal mode - use product discounts
+            discount_applied = product_discount_total
+            amount_after_discount = gross_amount - product_discount_total
+        
+        # Apply prepaid amount
+        final_total_amount = amount_after_discount - payload.prepaid_amount
+        
+        # Validation checks
+        if payload.manual_discount > gross_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Manual discount ({payload.manual_discount}) cannot exceed gross amount ({gross_amount})"
+            )
+        
+        if payload.prepaid_amount > amount_after_discount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Prepaid amount ({payload.prepaid_amount}) cannot exceed order total after discount ({amount_after_discount})"
+            )
+        
+        if final_total_amount < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Final order amount cannot be negative"
+            )
         
         # Create order
         order_number = generate_order_number()
@@ -121,7 +166,11 @@ async def create_order(
             payment_method=payload.payment_method,
             order_date=datetime.utcnow(),
             expected_delivery_date=payload.expected_delivery_date,
-            total_amount=total_amount
+            gross_amount=gross_amount,
+            manual_discount=payload.manual_discount,
+            discount_applied=discount_applied,
+            prepaid_amount=payload.prepaid_amount,
+            total_amount=final_total_amount
         )
         
         created_order = await order_manager.create(new_order)
