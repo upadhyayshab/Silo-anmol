@@ -546,6 +546,12 @@ async def get_order_response(order_id: str) -> OrderResponse:
         for item in order_items.items
     ]
     
+    # Handle backward compatibility for orders created before new pricing fields
+    gross_amount = getattr(order, 'gross_amount', order.total_amount)
+    manual_discount = getattr(order, 'manual_discount', Decimal('0.00'))
+    discount_applied = getattr(order, 'discount_applied', Decimal('0.00'))
+    prepaid_amount = getattr(order, 'prepaid_amount', Decimal('0.00'))
+    
     return OrderResponse(
         uid=order.uid,
         order_number=order.order_number,
@@ -564,6 +570,10 @@ async def get_order_response(order_id: str) -> OrderResponse:
         expected_delivery_date=order.expected_delivery_date,
         actual_delivery_date=order.actual_delivery_date,
         status_remarks=order.status_remarks,
+        gross_amount=gross_amount,
+        manual_discount=manual_discount,
+        discount_applied=discount_applied,
+        prepaid_amount=prepaid_amount,
         total_amount=order.total_amount,
         items=items,
         created_at=order.created_at

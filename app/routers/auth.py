@@ -159,8 +159,7 @@ async def get_current_user(user_id: str = Depends(get_current_user_id)):
 @router.post("/forgot-password", response_model=StatusResponse)
 async def forgot_password(payload: ForgotPasswordRequest):
     """
-    Request password reset (sends email with reset token)
-    TODO: Implement email sending
+    Request password reset (generates reset token)
     """
     try:
         users = await user_manager.fetch_all(filters={"email": payload.email})
@@ -172,8 +171,25 @@ async def forgot_password(payload: ForgotPasswordRequest):
                 message="If the email exists, a password reset link has been sent"
             )
         
-        # TODO: Generate reset token and send email
-        # For now, just return success
+        user = users.items[0]
+        
+        # Generate reset token (valid for 1 hour)
+        import secrets
+        from datetime import datetime, timedelta
+        
+        reset_token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(hours=1)
+        
+        # Update user with reset token
+        await user_manager.update(user.uid, {
+            "password_reset_token": reset_token,
+            "password_reset_expires_at": expires_at
+        })
+        
+        # TODO: Send email with reset token
+        # For now, log the token (remove this in production)
+        print(f"Password reset token for {user.email}: {reset_token}")
+        
         return StatusResponse(
             status="ok",
             message="If the email exists, a password reset link has been sent"
@@ -190,16 +206,57 @@ async def forgot_password(payload: ForgotPasswordRequest):
 async def reset_password(payload: ResetPasswordRequest):
     """
     Reset password using reset token
-    TODO: Implement token validation
     """
     try:
-        # TODO: Validate reset token and update password
-        # For now, just return success
+        from datetime import datetime
+        from utils.auth import hash_password
+        
+        # Find user by reset token
+        users = await user_manager.fetch_all(filters={"password_reset_token": payload.token})
+        
+        if not users.items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token"
+            )
+        
+        user = users.items[0]
+        
+        # Check if token is expired
+        if not user.password_reset_expires_at or user.password_reset_expires_at < datetime.utcnow():
+            # Clear expired token
+            await user_manager.update(user.uid, {
+                "password_reset_token": None,
+                "password_reset_expires_at": None
+            })
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token"
+            )
+        
+        # Validate new password
+        if len(payload.new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+        
+        # Hash new password and clear reset token
+        hashed_password = hash_password(payload.new_password)
+        
+        await user_manager.update(user.uid, {
+            "password_hash": hashed_password,
+            "password_reset_token": None,
+            "password_reset_expires_at": None
+        })
+        
         return StatusResponse(
             status="ok",
             message="Password reset successfully"
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
