@@ -389,6 +389,7 @@ class StockTransferOrderSchema(BaseSchema):
     """Stock transfer between warehouse and outlets"""
     __tablename__ = "stock_transfer_orders"
 
+    transfer_number = db.Column(db.String(50), unique=True, nullable=True, index=True)
     from_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)  # NULL = warehouse
     to_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
     status = db.Column(db.Enum(TransferStatus), default=TransferStatus.PENDING, nullable=False, index=True)

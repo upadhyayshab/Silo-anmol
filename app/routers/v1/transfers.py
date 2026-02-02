@@ -30,6 +30,12 @@ user_manager = UserManager(engine)
 router = APIRouter(prefix="/transfers", tags=["Stock Transfer Management"])
 
 
+def generate_transfer_number() -> str:
+    """Generate unique transfer number"""
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    return f"TRF-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
+
+
 @router.post("", response_model=StockTransferResponse)
 async def create_transfer_request(
     payload: StockTransferCreateRequest,
@@ -138,6 +144,7 @@ async def create_transfer_request(
         
         # Create transfer order
         new_transfer = StockTransferOrderSchema(
+            transfer_number=generate_transfer_number(),
             from_outlet_id=payload.from_outlet_id,
             to_outlet_id=payload.to_outlet_id,
             status=TransferStatus.PENDING,
