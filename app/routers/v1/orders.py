@@ -248,7 +248,7 @@ async def create_order(
         # Auto-assign outlet based on delivery area (for telecaller orders)
         # Outlet manager orders are already assigned to their outlet
         if not assigned_outlet_id:
-            assigned_outlet = await auto_assign_outlet(payload.district, payload.state)
+            assigned_outlet = await auto_assign_outlet(payload.district, payload.state, payload.taluk)
             if assigned_outlet:
                 # Update order with assigned outlet
                 await order_manager.update(
@@ -334,30 +334,95 @@ async def create_order(
         )
 
 
-async def auto_assign_outlet(district: str, state: str) -> Optional[object]:
-    """Auto-assign outlet based on delivery area"""
+async def auto_assign_outlet(district: str, state: str, taluk: str = None) -> Optional[object]:
+    """Auto-assign outlet based on Google Sheets mapping"""
     try:
-        # Simple logic: find outlet in same district/state
-        outlets = await outlet_manager.fetch_all(
-            filters={"is_active": True}
-        )
+        import httpx
         
-        # First try: exact district match
-        for outlet in outlets.items:
-            if outlet.city.lower() == district.lower() and outlet.state.lower() == state.lower():
-                return outlet
+        # Google Apps Script endpoint for outlet mapping
+        GOOGLE_OUTLET_API = "https://script.google.com/macros/s/AKfycbxqlS7Og-4AKNm79aweOzjVqOcmyFXHaHpy7xmfcz27i0knowG_vjEFWZ_Ha8drY4CYbA/exec"
         
-        # Second try: same state
-        for outlet in outlets.items:
-            if outlet.state.lower() == state.lower():
-                return outlet
+        # Prepare API request parameters
+        params = {
+            "action": "getOutlet",
+            "district": district,
+            "taluk": taluk or ""  # Use empty string if taluk is None
+        }
         
-        # Fallback: first active outlet
-        if outlets.items:
-            return outlets.items[0]
+        print(f"🔍 DEBUG: Calling Google Outlet API with district='{district}', taluk='{taluk}'")
         
-        return None
-    except:
+        # Call Google Apps Script API with redirect following
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(GOOGLE_OUTLET_API, params=params)
+            
+            print(f"📡 DEBUG: API response status: {response.status_code}")
+            print(f"📡 DEBUG: Final URL: {response.url}")
+            
+            if response.status_code != 200:
+                print(f"❌ Google API error: {response.status_code}")
+                print(f"❌ Response: {response.text[:200]}...")
+                return None
+            
+            try:
+                api_data = response.json()
+                print(f"📋 Google API response: {api_data}")
+            except Exception as json_error:
+                print(f"❌ JSON parsing error: {json_error}")
+                print(f"❌ Raw response: {response.text[:200]}...")
+                return None
+            
+            if not api_data.get("success"):
+                print(f"❌ Google API returned success=false")
+                return None
+            
+            # Get outlet name from API response
+            api_outlet_name = api_data.get("outlet", "").strip()
+            if not api_outlet_name:
+                print(f"❌ No outlet name in API response")
+                return None
+            
+            print(f"🎯 API returned outlet: '{api_outlet_name}'")
+            
+            # Get all active outlets from database
+            outlets = await outlet_manager.fetch_all(
+                filters={"is_active": True}
+            )
+            
+            if not outlets.items:
+                print(f"❌ No active outlets found in database")
+                return None
+            
+            # Match outlet using first word comparison (case-insensitive)
+            api_first_word = api_outlet_name.lower().split()[0] if api_outlet_name else ""
+            
+            print(f"🔍 Looking for outlets matching first word: '{api_first_word}'")
+            
+            matched_outlet = None
+            for outlet in outlets.items:
+                outlet_first_word = outlet.outlet_name.lower().split()[0] if outlet.outlet_name else ""
+                print(f"   • Checking '{outlet.outlet_name}' (first word: '{outlet_first_word}')")
+                
+                if api_first_word == outlet_first_word:
+                    matched_outlet = outlet
+                    print(f"✅ MATCH FOUND: '{outlet.outlet_name}' matches API response '{api_outlet_name}'")
+                    break
+            
+            if matched_outlet:
+                return matched_outlet
+            
+            # Fallback: If no exact match, log available outlets and return None
+            print(f"❌ No outlet found matching '{api_outlet_name}' (first word: '{api_first_word}')")
+            print(f"📋 Available outlet first words: {[o.outlet_name.lower().split()[0] for o in outlets.items]}")
+            print(f"💡 SUGGESTION: Update Google Sheets to return one of these outlet names:")
+            for outlet in outlets.items:
+                print(f"   • '{outlet.outlet_name}' (use '{outlet.outlet_name.split()[0]}' in Google Sheets)")
+            
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error in Google outlet assignment: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
