@@ -278,7 +278,11 @@ class OrderResponse(BaseModel):
     order_number: str
     customer_name: str
     customer_phone: str
+    house_no: Optional[str]
+    street: Optional[str]
     address_line: str
+    village: Optional[str]
+    taluk: Optional[str]
     district: str
     state: str
     pincode: str
