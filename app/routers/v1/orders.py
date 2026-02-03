@@ -175,18 +175,42 @@ async def create_order(
         
         created_order = await order_manager.create(new_order)
         
-        # Create order items
+        # Create order items with detailed error handling
         order_items = []
-        for item_data in validated_items:
-            order_item = OrderItemSchema(
-                order_id=created_order.uid,
-                product_id=item_data["product"].uid,
-                quantity=item_data["quantity"],
-                unit_price=item_data["unit_price"],
-                subtotal=item_data["subtotal"]
+        items_creation_errors = []
+        
+        for i, item_data in enumerate(validated_items):
+            try:
+                order_item = OrderItemSchema(
+                    order_id=created_order.uid,
+                    product_id=item_data["product"].uid,
+                    quantity=item_data["quantity"],
+                    unit_price=item_data["unit_price"],
+                    total_price=item_data["subtotal"],  # Use subtotal as total_price for database
+                    subtotal=item_data["subtotal"]
+                )
+                created_item = await order_item_manager.create(order_item)
+                order_items.append(created_item)
+            except Exception as item_error:
+                error_msg = f"Failed to create item {i+1} (product: {item_data['product'].product_name}): {str(item_error)}"
+                items_creation_errors.append(error_msg)
+                print(f"❌ ORDER ITEM CREATION ERROR: {error_msg}")  # Debug logging
+        
+        # If no items were created, this is a critical error
+        if not order_items and validated_items:
+            error_details = "; ".join(items_creation_errors) if items_creation_errors else "Unknown error in items creation"
+            # Update order with error status
+            await order_manager.update(
+                created_order.uid,
+                {
+                    "status_remarks": f"Order created but items creation failed: {error_details}",
+                    "order_status": OrderStatus.PENDING
+                }
             )
-            created_item = await order_item_manager.create(order_item)
-            order_items.append(created_item)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Order created but failed to create order items: {error_details}"
+            )
         
         # Auto-assign outlet based on delivery area (for telecaller orders)
         # Outlet manager orders are already assigned to their outlet
@@ -215,8 +239,54 @@ async def create_order(
                     }
                 )
         
-        # Fetch complete order with items
-        return await get_order_response(created_order.uid)
+        # Build response directly to avoid potential SQLAlchemy session issues
+        order_items_response = []
+        for item in order_items:
+            try:
+                order_items_response.append(OrderItemResponse(
+                    uid=item.uid,
+                    product_id=item.product_id,
+                    quantity=item.quantity,
+                    unit_price=item.unit_price,
+                    subtotal=item.subtotal  # Use subtotal field for response
+                ))
+            except Exception as response_error:
+                print(f"❌ ORDER ITEM RESPONSE ERROR: {str(response_error)}")  # Debug logging
+        
+        # Build the order response with proper error handling
+        try:
+            return OrderResponse(
+                uid=created_order.uid,
+                order_number=created_order.order_number,
+                customer_name=created_order.customer_name,
+                customer_phone=created_order.customer_phone,
+                address_line=created_order.address_line,
+                district=created_order.district,
+                state=created_order.state,
+                pincode=created_order.pincode,
+                telecaller_id=created_order.telecaller_id,
+                assigned_outlet_id=assigned_outlet_id,
+                order_status=created_order.order_status,
+                collection_type=created_order.collection_type,
+                payment_method=created_order.payment_method,
+                order_date=created_order.order_date,
+                expected_delivery_date=created_order.expected_delivery_date,
+                actual_delivery_date=created_order.actual_delivery_date,
+                status_remarks=created_order.status_remarks,
+                gross_amount=gross_amount,
+                manual_discount=payload.manual_discount,
+                discount_applied=discount_applied,
+                prepaid_amount=payload.prepaid_amount,
+                total_amount=final_total_amount,
+                items=order_items_response,
+                created_at=created_order.created_at
+            )
+        except Exception as response_error:
+            print(f"❌ ORDER RESPONSE CONSTRUCTION ERROR: {str(response_error)}")  # Debug logging
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Order created successfully but failed to build response: {str(response_error)}"
+            )
     
     except HTTPException:
         raise

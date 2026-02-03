@@ -331,6 +331,11 @@ class OrderItemSchema(BaseSchema):
     product_id = db.Column(db.String, db.ForeignKey("products.uid"), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     unit_price = db.Column(db.Numeric(10, 2), nullable=False)
+    total_price = db.Column(db.Numeric(10, 2), nullable=False)  # Match database schema
+    tax_rate = db.Column(db.Numeric(5, 2), default=0.00)
+    tax_amount = db.Column(db.Numeric(10, 2), default=0.00)
+    discount_percentage = db.Column(db.Numeric(5, 2), default=0.00)
+    discount_amount = db.Column(db.Numeric(10, 2), default=0.00)
     subtotal = db.Column(db.Numeric(10, 2), nullable=False)
 
     # Relationships
