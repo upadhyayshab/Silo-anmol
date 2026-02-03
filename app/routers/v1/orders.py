@@ -12,7 +12,7 @@ from managers import (
 from models import (
     OrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
     OrderAssignRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
-    OrderResponse, OrderTransactionResponse,
+    OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
