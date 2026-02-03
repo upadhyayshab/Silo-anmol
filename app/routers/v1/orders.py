@@ -53,6 +53,15 @@ async def create_order(
     Automatically reserves stock at assigned outlet
     """
     try:
+        # DEBUG: Log the received prepaid amount with type information
+        print(f"🔍 DEBUG: Received prepaid_amount = {payload.prepaid_amount} (type: {type(payload.prepaid_amount)})")
+        print(f"🔍 DEBUG: Received manual_discount = {payload.manual_discount} (type: {type(payload.manual_discount)})")
+        print(f"🔍 DEBUG: Full payload: {payload}")
+        
+        # Additional debug: Check if there's any conversion happening
+        original_prepaid = payload.prepaid_amount
+        print(f"🔍 DEBUG: original_prepaid variable = {original_prepaid} (type: {type(original_prepaid)})")
+        
         # Validate products and calculate pricing
         gross_amount = Decimal('0.00')  # Total at MRP (cost_price)
         product_discount_total = Decimal('0.00')  # Sum of all product-level discounts
@@ -147,6 +156,18 @@ async def create_order(
         if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id:
             assigned_outlet_id = current_user.outlet_id
         
+        # DEBUG: Log values before creating order with detailed type information
+        print(f"🔍 DEBUG: Before creating order:")
+        print(f"   • gross_amount = {gross_amount} (type: {type(gross_amount)})")
+        print(f"   • manual_discount = {payload.manual_discount} (type: {type(payload.manual_discount)})")
+        print(f"   • discount_applied = {discount_applied} (type: {type(discount_applied)})")
+        print(f"   • prepaid_amount = {payload.prepaid_amount} (type: {type(payload.prepaid_amount)})")
+        print(f"   • final_total_amount = {final_total_amount} (type: {type(final_total_amount)})")
+        
+        # Additional check: Verify the prepaid amount hasn't changed
+        if payload.prepaid_amount != original_prepaid:
+            print(f"❌ CRITICAL: prepaid_amount changed from {original_prepaid} to {payload.prepaid_amount}!")
+        
         new_order = CustomerOrderSchema(
             order_number=order_number,
             customer_name=payload.customer_name,
@@ -173,7 +194,19 @@ async def create_order(
             total_amount=final_total_amount
         )
         
+        # DEBUG: Log the created order schema values
+        print(f"🔍 DEBUG: Created order schema:")
+        print(f"   • new_order.prepaid_amount = {new_order.prepaid_amount}")
+        print(f"   • new_order.manual_discount = {new_order.manual_discount}")
+        print(f"   • new_order.total_amount = {new_order.total_amount}")
+        
         created_order = await order_manager.create(new_order)
+        
+        # DEBUG: Log the created order from database
+        print(f"🔍 DEBUG: After database insert:")
+        print(f"   • created_order.prepaid_amount = {created_order.prepaid_amount}")
+        print(f"   • created_order.manual_discount = {created_order.manual_discount}")
+        print(f"   • created_order.total_amount = {created_order.total_amount}")
         
         # Create order items with detailed error handling
         order_items = []
@@ -260,7 +293,11 @@ async def create_order(
                 order_number=created_order.order_number,
                 customer_name=created_order.customer_name,
                 customer_phone=created_order.customer_phone,
+                house_no=created_order.house_no,
+                street=created_order.street,
                 address_line=created_order.address_line,
+                village=created_order.village,
+                taluk=created_order.taluk,
                 district=created_order.district,
                 state=created_order.state,
                 pincode=created_order.pincode,
@@ -276,7 +313,7 @@ async def create_order(
                 gross_amount=gross_amount,
                 manual_discount=payload.manual_discount,
                 discount_applied=discount_applied,
-                prepaid_amount=payload.prepaid_amount,
+                prepaid_amount=created_order.prepaid_amount,
                 total_amount=final_total_amount,
                 items=order_items_response,
                 created_at=created_order.created_at
@@ -627,7 +664,11 @@ async def get_order_response(order_id: str) -> OrderResponse:
         order_number=order.order_number,
         customer_name=order.customer_name,
         customer_phone=order.customer_phone,
+        house_no=getattr(order, 'house_no', None),
+        street=getattr(order, 'street', None),
         address_line=order.address_line,
+        village=getattr(order, 'village', None),
+        taluk=getattr(order, 'taluk', None),
         district=order.district,
         state=order.state,
         pincode=order.pincode,
