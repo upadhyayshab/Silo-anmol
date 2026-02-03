@@ -511,12 +511,11 @@ async def create_invoice(
                 "customer_state_code": payload.customer_state_code
             }
         
-        # Prepare items
+        # Prepare items (unit_price will be calculated by the service)
         items = [
             {
                 "product_id": item.product_id,
                 "quantity": item.quantity,
-                "unit_price": item.unit_price,
                 "discount_percentage": item.discount_percentage
             }
             for item in payload.items
