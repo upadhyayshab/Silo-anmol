@@ -417,6 +417,7 @@ async def list_invoices(
                     hsn_code=item.hsn_code,
                     quantity=item.quantity,
                     unit_price=item.unit_price,
+                    total_price=item.total_price,  # Add missing total_price field
                     discount_percentage=item.discount_percentage,
                     discount_amount=item.discount_amount,
                     taxable_amount=item.taxable_amount,
@@ -544,6 +545,7 @@ async def create_invoice(
                 hsn_code=item.hsn_code,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
+                total_price=item.total_price,  # Add missing total_price field
                 discount_percentage=item.discount_percentage,
                 discount_amount=item.discount_amount,
                 taxable_amount=item.taxable_amount,
@@ -632,6 +634,7 @@ async def create_invoice(
                 hsn_code=item.hsn_code,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
+                total_price=item.total_price,  # Add missing total_price field
                 discount_percentage=item.discount_percentage,
                 discount_amount=item.discount_amount,
                 taxable_amount=item.taxable_amount,
