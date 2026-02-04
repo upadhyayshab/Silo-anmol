@@ -371,6 +371,7 @@ class InvoiceItemResponse(BaseModel):
     hsn_code: str
     quantity: int
     unit_price: Decimal
+    total_price: Decimal  # quantity * unit_price (before discount)
     discount_percentage: Decimal
     discount_amount: Decimal
     taxable_amount: Decimal

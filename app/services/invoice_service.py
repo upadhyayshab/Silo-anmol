@@ -175,6 +175,7 @@ class InvoiceService:
                     'taxable_amount': taxable_amount,
                     'tax_rate': product.tax_rate,
                     'total_tax': total_tax,
+                    'total_price': line_total,  # Add total_price field for database compatibility
                     'total_amount': item_total,
                     **gst_amounts
                 })

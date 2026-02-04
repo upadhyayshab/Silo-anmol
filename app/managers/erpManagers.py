@@ -246,6 +246,7 @@ class SalesInvoiceItemSchema(BaseSchema):
     hsn_code = db.Column(db.String(8), nullable=False)
     quantity = db.Column(db.Integer, nullable=False)
     unit_price = db.Column(db.Numeric(10, 2), nullable=False)
+    total_price = db.Column(db.Numeric(10, 2), nullable=False)  # quantity * unit_price (before discount)
     discount_percentage = db.Column(db.Numeric(5, 2), default=0)
     discount_amount = db.Column(db.Numeric(10, 2), default=0)
     taxable_amount = db.Column(db.Numeric(10, 2), nullable=False)
