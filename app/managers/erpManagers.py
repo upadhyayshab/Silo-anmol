@@ -221,6 +221,10 @@ class SalesInvoiceSchema(BaseSchema):
     amount_paid = db.Column(db.Numeric(10, 2), nullable=False)
     balance_amount = db.Column(db.Numeric(10, 2), default=0)
     
+    # New payment tracking fields
+    prepaid_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Amount paid in advance
+    paid_at_outlet = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Amount paid at outlet
+    
     notes = db.Column(db.Text)
     is_cancelled = db.Column(db.Boolean, default=False, nullable=False)
     cancelled_reason = db.Column(db.Text)
@@ -247,7 +251,8 @@ class SalesInvoiceItemSchema(BaseSchema):
     quantity = db.Column(db.Integer, nullable=False)
     unit_price = db.Column(db.Numeric(10, 2), nullable=False)
     total_price = db.Column(db.Numeric(10, 2), nullable=False)  # quantity * unit_price (before discount)
-    discount_percentage = db.Column(db.Numeric(5, 2), default=0)
+    product_manual_discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # New field: manual discount per unit
+    discount_percentage = db.Column(db.Numeric(5, 2), default=0, nullable=True)  # Made optional for backward compatibility
     discount_amount = db.Column(db.Numeric(10, 2), default=0)
     taxable_amount = db.Column(db.Numeric(10, 2), nullable=False)
     tax_rate = db.Column(db.Numeric(5, 2), nullable=False)

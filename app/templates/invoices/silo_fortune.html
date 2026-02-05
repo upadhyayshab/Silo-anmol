@@ -243,7 +243,7 @@
                     <th style="width: 35%;">Product Name</th>
                     <th style="width: 12%;">Quantity</th>
                     <th style="width: 15%;">Unit Price</th>
-                    <th style="width: 15%;">Discount</th>
+                    <th style="width: 15%;">Discount (per item)</th>
                     <th style="width: 15%;">Selling Price<br>(Total)</th>
                 </tr>
             </thead>
@@ -254,8 +254,8 @@
                     <td class="text-left">{{ item.product_name }}</td>
                     <td>{{ item.quantity }}</td>
                     <td class="text-right">Rs {{ "%.2f"|format(item.unit_price) }}</td>
-                    <td class="text-right">Rs {{ "%.2f"|format(item.discount_amount) }}</td>
-                    <td class="text-right">Rs {{ "%.2f"|format(item.total_amount) }}</td>
+                    <td class="text-right">Rs {{ "%.2f"|format(item.product_manual_discount or 0) }}</td>
+                    <td class="text-right">Rs {{ "%.2f"|format(item.taxable_amount) }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -265,20 +265,25 @@
         <div class="section-header">INVOICE TOTALS</div>
         <table class="totals-table">
             <tr>
-                <td class="label">Subtotal:</td>
-                <td class="amount">Rs {{ "%.2f"|format(subtotal) }}</td>
-            </tr>
-            <tr>
-                <td class="label">Discount:</td>
-                <td class="amount">Rs {{ "%.2f"|format(discount_amount) }}</td>
-            </tr>
-            <tr>
                 <td class="label">Taxable Amount:</td>
                 <td class="amount">Rs {{ "%.2f"|format(taxable_amount) }}</td>
             </tr>
             <tr class="total-amount-row">
                 <td class="label">Total Amount:</td>
                 <td class="amount">Rs {{ "%.2f"|format(total_amount) }}</td>
+            </tr>
+        </table>
+        
+        <!-- Payments Section -->
+        <div class="section-header">PAYMENTS</div>
+        <table class="totals-table">
+            <tr>
+                <td class="label">Prepaid:</td>
+                <td class="amount">Rs {{ "%.2f"|format(prepaid_amount or 0) }}</td>
+            </tr>
+            <tr>
+                <td class="label">Paid at Outlet:</td>
+                <td class="amount">Rs {{ "%.2f"|format(paid_at_outlet or total_amount) }}</td>
             </tr>
         </table>
         

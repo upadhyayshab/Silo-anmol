@@ -115,12 +115,13 @@ class InvoiceService:
         items: List[Dict],
         customer_details: Optional[Dict] = None,
         payment_method: PaymentMethod = PaymentMethod.CASH,
-        discount_amount: Decimal = Decimal('0.00'),
+        discount_amount: Decimal = Decimal('0.00'),  # Ignored in new logic
+        prepaid_amount: Decimal = Decimal('0.00'),  # New field
         notes: Optional[str] = None,
         created_by: str = None
     ) -> Dict:
         """
-        Create complete invoice with GST calculations
+        Create complete invoice with new pricing logic (no GST, simplified calculations)
         Note: Inventory deduction is now handled during order creation to prevent double deduction
         """
         try:
@@ -130,39 +131,40 @@ class InvoiceService:
             # Generate invoice number
             invoice_number = await self.generate_invoice_number(outlet.outlet_code)
             
-            # Calculate totals
-            subtotal = Decimal('0.00')
+            # Calculate totals with new pricing logic
+            taxable_amount = Decimal('0.00')  # Sum of all selling prices
             invoice_items = []
             
             for item_data in items:
                 product = await self.product_manager.fetch(item_data['product_id'])
                 quantity = item_data['quantity']
-                # Calculate unit_price using new pricing logic: cost_price - discount
-                calculated_unit_price = product.cost_price - product.discount
-                # Ensure unit_price is not negative
-                unit_price = max(calculated_unit_price, Decimal('0.00'))
-                discount_percentage = Decimal(str(item_data.get('discount_percentage', 0)))
                 
-                # Calculate item amounts
-                line_total = unit_price * quantity
-                item_discount_amount = line_total * discount_percentage / 100
-                taxable_amount = line_total - item_discount_amount
+                # New pricing logic
+                unit_price = product.cost_price  # No more product.discount deduction
+                product_manual_discount = Decimal(str(item_data.get('product_manual_discount', 0)))
                 
-                # Calculate GST for this item
-                gst_amounts = self.calculate_gst_amounts(
-                    taxable_amount,
-                    product.tax_rate,
-                    outlet.state_code,
-                    customer_details.get('customer_state_code') if customer_details else None
-                )
+                # Calculate selling price: (cost_price - manual_discount_per_unit) * quantity
+                selling_price_per_unit = unit_price - product_manual_discount
+                # Ensure selling price is not negative
+                if selling_price_per_unit < 0:
+                    selling_price_per_unit = Decimal('0.00')
                 
-                total_tax = (
-                    gst_amounts['cgst_amount'] + 
-                    gst_amounts['sgst_amount'] + 
-                    gst_amounts['igst_amount']
-                )
+                total_price = unit_price * quantity  # Before discount
+                total_discount_amount = product_manual_discount * quantity  # Total discount for this line
+                selling_price_total = selling_price_per_unit * quantity  # Final selling price
                 
-                item_total = taxable_amount + total_tax
+                # No GST calculations - all GST amounts are 0
+                gst_amounts = {
+                    "cgst_rate": Decimal('0.00'),
+                    "cgst_amount": Decimal('0.00'),
+                    "sgst_rate": Decimal('0.00'),
+                    "sgst_amount": Decimal('0.00'),
+                    "igst_rate": Decimal('0.00'),
+                    "igst_amount": Decimal('0.00')
+                }
+                
+                total_tax = Decimal('0.00')  # No tax
+                item_total = selling_price_total  # Same as selling price (no tax)
                 
                 invoice_items.append({
                     'product_id': product.uid,
@@ -170,28 +172,28 @@ class InvoiceService:
                     'hsn_code': product.hsn_code,
                     'quantity': quantity,
                     'unit_price': unit_price,
-                    'discount_percentage': discount_percentage,
-                    'discount_amount': item_discount_amount,
-                    'taxable_amount': taxable_amount,
-                    'tax_rate': product.tax_rate,
+                    'total_price': total_price,  # Before discount
+                    'product_manual_discount': product_manual_discount,  # Per unit discount
+                    'discount_percentage': Decimal('0.00'),  # Not used anymore
+                    'discount_amount': total_discount_amount,  # Total discount for line
+                    'taxable_amount': selling_price_total,  # Same as selling price
+                    'tax_rate': Decimal('0.00'),  # No tax
                     'total_tax': total_tax,
-                    'total_price': line_total,  # Add total_price field for database compatibility
                     'total_amount': item_total,
                     **gst_amounts
                 })
                 
-                subtotal += line_total
+                taxable_amount += selling_price_total
             
-            # Calculate invoice totals
-            total_discount = discount_amount + sum([item['discount_amount'] for item in invoice_items])
-            taxable_amount = subtotal - total_discount
+            # Calculate invoice totals (simplified - no GST)
+            subtotal = sum([item['total_price'] for item in invoice_items])  # Before discounts
+            total_discount = sum([item['discount_amount'] for item in invoice_items])
+            total_tax = Decimal('0.00')  # No GST
+            total_amount = taxable_amount  # Same as taxable amount (no tax)
             
-            total_cgst = sum([item['cgst_amount'] for item in invoice_items])
-            total_sgst = sum([item['sgst_amount'] for item in invoice_items])
-            total_igst = sum([item['igst_amount'] for item in invoice_items])
-            total_tax = total_cgst + total_sgst + total_igst
-            
-            total_amount = taxable_amount + total_tax
+            # Calculate payment breakdown
+            prepaid = prepaid_amount or Decimal('0.00')
+            paid_at_outlet = total_amount - prepaid
             
             # Create invoice record
             invoice = SalesInvoiceSchema(
@@ -210,13 +212,15 @@ class InvoiceService:
                 subtotal=subtotal,
                 discount_amount=total_discount,
                 taxable_amount=taxable_amount,
-                cgst_amount=total_cgst,
-                sgst_amount=total_sgst,
-                igst_amount=total_igst,
-                total_tax=total_tax,
+                cgst_amount=Decimal('0.00'),
+                sgst_amount=Decimal('0.00'),
+                igst_amount=Decimal('0.00'),
+                total_tax=Decimal('0.00'),
                 total_amount=total_amount,
                 amount_paid=total_amount,
                 balance_amount=Decimal('0.00'),
+                prepaid_amount=prepaid,
+                paid_at_outlet=paid_at_outlet,
                 notes=notes,
                 is_cancelled=False,
                 created_by=created_by
@@ -386,6 +390,8 @@ class InvoiceService:
                 'igst_amount': float(invoice.igst_amount),
                 'total_tax': float(invoice.total_tax),
                 'total_amount': float(invoice.total_amount),
+                'prepaid_amount': float(getattr(invoice, 'prepaid_amount', 0)),  # New field
+                'paid_at_outlet': float(getattr(invoice, 'paid_at_outlet', invoice.total_amount)),  # New field
                 'items': []
             }
             
@@ -396,6 +402,7 @@ class InvoiceService:
                     'hsn_code': item.hsn_code,
                     'quantity': item.quantity,
                     'unit_price': float(item.unit_price),
+                    'product_manual_discount': float(getattr(item, 'product_manual_discount', 0)),  # New field
                     'discount_amount': float(item.discount_amount),
                     'taxable_amount': float(item.taxable_amount),
                     'tax_rate': float(item.tax_rate),

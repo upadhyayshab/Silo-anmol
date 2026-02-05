@@ -36,6 +36,69 @@ invoice_service = InvoiceService(engine)
 router = APIRouter(prefix="/invoices", tags=["Invoice Management"])
 
 
+def build_invoice_response(invoice, items=None) -> InvoiceResponse:
+    """Helper function to build InvoiceResponse with all fields including new payment fields"""
+    item_responses = []
+    if items:
+        for item in items:
+            item_responses.append(InvoiceItemResponse(
+                uid=item.uid,
+                product_id=item.product_id,
+                product_name=item.product_name,
+                hsn_code=item.hsn_code,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                total_price=item.total_price,
+                product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00')),
+                discount_percentage=getattr(item, 'discount_percentage', None),
+                discount_amount=item.discount_amount,
+                taxable_amount=item.taxable_amount,
+                tax_rate=item.tax_rate,
+                cgst_rate=item.cgst_rate,
+                cgst_amount=item.cgst_amount,
+                sgst_rate=item.sgst_rate,
+                sgst_amount=item.sgst_amount,
+                igst_rate=item.igst_rate,
+                igst_amount=item.igst_amount,
+                total_tax=item.total_tax,
+                total_amount=item.total_amount
+            ))
+    
+    return InvoiceResponse(
+        uid=invoice.uid,
+        invoice_number=invoice.invoice_number,
+        outlet_id=invoice.outlet_id,
+        customer_name=invoice.customer_name,
+        customer_phone=invoice.customer_phone,
+        customer_email=invoice.customer_email,
+        customer_address=invoice.customer_address,
+        customer_gstin=invoice.customer_gstin,
+        customer_state_code=invoice.customer_state_code,
+        invoice_date=invoice.invoice_date,
+        invoice_type=invoice.invoice_type,
+        payment_method=invoice.payment_method,
+        payment_status=invoice.payment_status,
+        subtotal=invoice.subtotal,
+        discount_amount=invoice.discount_amount,
+        taxable_amount=invoice.taxable_amount,
+        cgst_amount=invoice.cgst_amount,
+        sgst_amount=invoice.sgst_amount,
+        igst_amount=invoice.igst_amount,
+        total_tax=invoice.total_tax,
+        total_amount=invoice.total_amount,
+        amount_paid=invoice.amount_paid,
+        balance_amount=invoice.balance_amount,
+        prepaid_amount=getattr(invoice, 'prepaid_amount', Decimal('0.00')),
+        paid_at_outlet=getattr(invoice, 'paid_at_outlet', Decimal('0.00')),
+        notes=invoice.notes,
+        is_cancelled=invoice.is_cancelled,
+        cancelled_reason=invoice.cancelled_reason,
+        created_by=invoice.created_by,
+        items=item_responses,
+        created_at=invoice.created_at
+    )
+
+
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 
 @router.get("/next-number/{outlet_id}")
@@ -517,7 +580,7 @@ async def create_invoice(
             {
                 "product_id": item.product_id,
                 "quantity": item.quantity,
-                "discount_percentage": item.discount_percentage
+                "product_manual_discount": item.product_manual_discount
             }
             for item in payload.items
         ]
@@ -528,7 +591,8 @@ async def create_invoice(
             items=items,
             customer_details=customer_details,
             payment_method=payload.payment_method,
-            discount_amount=payload.discount_amount,
+            discount_amount=payload.discount_amount,  # Ignored in new logic
+            prepaid_amount=payload.prepaid_amount,  # New field
             notes=payload.notes,
             created_by=current_user_id
         )
@@ -545,8 +609,9 @@ async def create_invoice(
                 hsn_code=item.hsn_code,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
-                total_price=item.total_price,  # Add missing total_price field
-                discount_percentage=item.discount_percentage,
+                total_price=item.total_price,
+                product_manual_discount=item.product_manual_discount,  # New field
+                discount_percentage=getattr(item, 'discount_percentage', None),  # Optional field
                 discount_amount=item.discount_amount,
                 taxable_amount=item.taxable_amount,
                 tax_rate=item.tax_rate,
