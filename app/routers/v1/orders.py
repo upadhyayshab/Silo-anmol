@@ -64,7 +64,8 @@ async def create_order(
         
         # Validate products and calculate pricing
         gross_amount = Decimal('0.00')  # Total at MRP (cost_price)
-        product_discount_total = Decimal('0.00')  # Sum of all product-level discounts
+        product_discount_total = Decimal('0.00')  # Sum of all product manual discounts
+        total_commission = Decimal('0.00')  # Total commission for the order
         validated_items = []
         
         for item in payload.items:
@@ -86,23 +87,26 @@ async def create_order(
             item_gross = item.quantity * product.cost_price
             gross_amount += item_gross
             
-            # Calculate product-level discount
-            item_product_discount = item.quantity * product.discount
-            product_discount_total += item_product_discount
+            # Calculate product manual discount total
+            product_discount_total += item.product_manual_discount
             
-            # Determine unit_price based on manual_discount logic
-            if payload.manual_discount > 0:
-                # Manual discount mode: ignore product discounts, use MRP
-                calculated_unit_price = product.cost_price
-            else:
-                # Normal mode: apply product discounts
-                calculated_unit_price = product.cost_price - product.discount
-                # Ensure unit_price is not negative
-                if calculated_unit_price < 0:
-                    calculated_unit_price = Decimal('0.00')
+            # Calculate unit_price after product manual discount
+            per_unit_discount = item.product_manual_discount / item.quantity if item.quantity > 0 else Decimal('0.00')
+            calculated_unit_price = product.cost_price - per_unit_discount
+            # Ensure unit_price is not negative
+            if calculated_unit_price < 0:
+                calculated_unit_price = Decimal('0.00')
             
             # Calculate item subtotal
             subtotal = item.quantity * calculated_unit_price
+            
+            # Calculate commission for this item
+            # Commission base = cost_price - per_unit_discount
+            commission_base = max(product.cost_price - per_unit_discount, Decimal('0.00'))
+            # Commission percentage interpretation (product.commission is now percentage 0-100)
+            commission_per_unit = commission_base * (product.commission / 100)
+            item_commission = commission_per_unit * item.quantity
+            total_commission += item_commission
             
             validated_items.append({
                 "product": product,
@@ -110,27 +114,22 @@ async def create_order(
                 "unit_price": calculated_unit_price,
                 "subtotal": subtotal,
                 "gross_amount": item_gross,
-                "product_discount": item_product_discount
+                "product_manual_discount": item.product_manual_discount,
+                "commission": item_commission
             })
         
-        # Calculate final pricing
-        if payload.manual_discount > 0:
-            # Manual discount mode
-            discount_applied = payload.manual_discount
-            amount_after_discount = gross_amount - payload.manual_discount
-        else:
-            # Normal mode - use product discounts
-            discount_applied = product_discount_total
-            amount_after_discount = gross_amount - product_discount_total
+        # Calculate final pricing (simplified - no manual_discount condition)
+        discount_applied = product_discount_total  # Always use product manual discounts
+        amount_after_discount = gross_amount - product_discount_total
         
         # Apply prepaid amount
         final_total_amount = amount_after_discount - payload.prepaid_amount
         
         # Validation checks
-        if payload.manual_discount > gross_amount:
+        if product_discount_total > gross_amount:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Manual discount ({payload.manual_discount}) cannot exceed gross amount ({gross_amount})"
+                detail=f"Total product discounts ({product_discount_total}) cannot exceed gross amount ({gross_amount})"
             )
         
         if payload.prepaid_amount > amount_after_discount:
@@ -159,9 +158,10 @@ async def create_order(
         # DEBUG: Log values before creating order with detailed type information
         print(f"🔍 DEBUG: Before creating order:")
         print(f"   • gross_amount = {gross_amount} (type: {type(gross_amount)})")
-        print(f"   • manual_discount = {payload.manual_discount} (type: {type(payload.manual_discount)})")
+        print(f"   • manual_discount = {payload.manual_discount} (type: {type(payload.manual_discount)}) [LEGACY - IGNORED]")
         print(f"   • discount_applied = {discount_applied} (type: {type(discount_applied)})")
         print(f"   • prepaid_amount = {payload.prepaid_amount} (type: {type(payload.prepaid_amount)})")
+        print(f"   • total_commission = {total_commission} (type: {type(total_commission)})")
         print(f"   • final_total_amount = {final_total_amount} (type: {type(final_total_amount)})")
         
         # Additional check: Verify the prepaid amount hasn't changed
@@ -188,10 +188,11 @@ async def create_order(
             order_date=datetime.utcnow(),
             expected_delivery_date=payload.expected_delivery_date,
             gross_amount=gross_amount,
-            manual_discount=payload.manual_discount,
+            manual_discount=payload.manual_discount,  # Keep for backward compatibility but not used in calculations
             discount_applied=discount_applied,
             prepaid_amount=payload.prepaid_amount,
-            total_amount=final_total_amount
+            total_amount=final_total_amount,
+            total_commission=total_commission  # New field
         )
         
         # DEBUG: Log the created order schema values
@@ -207,6 +208,7 @@ async def create_order(
         print(f"   • created_order.prepaid_amount = {created_order.prepaid_amount}")
         print(f"   • created_order.manual_discount = {created_order.manual_discount}")
         print(f"   • created_order.total_amount = {created_order.total_amount}")
+        print(f"   • created_order.total_commission = {created_order.total_commission}")
         
         # Create order items with detailed error handling
         order_items = []
@@ -220,7 +222,8 @@ async def create_order(
                     quantity=item_data["quantity"],
                     unit_price=item_data["unit_price"],
                     total_price=item_data["subtotal"],  # Use subtotal as total_price for database
-                    subtotal=item_data["subtotal"]
+                    subtotal=item_data["subtotal"],
+                    product_manual_discount=item_data["product_manual_discount"]  # New field
                 )
                 created_item = await order_item_manager.create(order_item)
                 order_items.append(created_item)
@@ -281,7 +284,8 @@ async def create_order(
                     product_id=item.product_id,
                     quantity=item.quantity,
                     unit_price=item.unit_price,
-                    subtotal=item.subtotal  # Use subtotal field for response
+                    subtotal=item.subtotal,  # Use subtotal field for response
+                    product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00'))  # New field with backward compatibility
                 ))
             except Exception as response_error:
                 print(f"❌ ORDER ITEM RESPONSE ERROR: {str(response_error)}")  # Debug logging
@@ -311,10 +315,11 @@ async def create_order(
                 actual_delivery_date=created_order.actual_delivery_date,
                 status_remarks=created_order.status_remarks,
                 gross_amount=gross_amount,
-                manual_discount=payload.manual_discount,
+                manual_discount=payload.manual_discount,  # Keep for backward compatibility
                 discount_applied=discount_applied,
                 prepaid_amount=created_order.prepaid_amount,
                 total_amount=final_total_amount,
+                total_commission=total_commission,  # New field
                 items=order_items_response,
                 created_at=created_order.created_at
             )
@@ -687,7 +692,8 @@ async def get_order_response(order_id: str) -> OrderResponse:
             product_id=item.product_id,
             quantity=item.quantity,
             unit_price=item.unit_price,
-            subtotal=item.subtotal
+            subtotal=item.subtotal,
+            product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00'))  # New field with backward compatibility
         )
         for item in order_items.items
     ]
@@ -697,6 +703,7 @@ async def get_order_response(order_id: str) -> OrderResponse:
     manual_discount = getattr(order, 'manual_discount', Decimal('0.00'))
     discount_applied = getattr(order, 'discount_applied', Decimal('0.00'))
     prepaid_amount = getattr(order, 'prepaid_amount', Decimal('0.00'))
+    total_commission = getattr(order, 'total_commission', Decimal('0.00'))  # New field with backward compatibility
     
     return OrderResponse(
         uid=order.uid,
@@ -725,6 +732,7 @@ async def get_order_response(order_id: str) -> OrderResponse:
         discount_applied=discount_applied,
         prepaid_amount=prepaid_amount,
         total_amount=order.total_amount,
+        total_commission=total_commission,  # New field
         items=items,
         created_at=order.created_at
     )
