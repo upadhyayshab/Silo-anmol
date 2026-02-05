@@ -350,7 +350,8 @@ class PaymentStatusUpdateRequest(BaseModel):
 class InvoiceItemRequest(BaseModel):
     product_id: str
     quantity: int = Field(..., gt=0)
-    discount_percentage: Decimal = Field(default=0, ge=0, le=100)
+    product_manual_discount: Decimal = Field(default=0, ge=0, description="Manual discount per unit in rupees")
+    discount_percentage: Optional[Decimal] = Field(None, ge=0, le=100, description="Deprecated - use product_manual_discount instead")
 
 
 class InvoiceCreateRequest(BaseModel):
@@ -363,7 +364,8 @@ class InvoiceCreateRequest(BaseModel):
     customer_state_code: Optional[str] = None
     payment_method: PaymentMethod
     items: List[InvoiceItemRequest]
-    discount_amount: Decimal = Field(default=0, ge=0)
+    discount_amount: Decimal = Field(default=0, ge=0, description="Deprecated - ignored in processing")
+    prepaid_amount: Decimal = Field(default=0, ge=0, description="Amount paid in advance")
     notes: Optional[str] = None
 
 
@@ -375,7 +377,8 @@ class InvoiceItemResponse(BaseModel):
     quantity: int
     unit_price: Decimal
     total_price: Decimal  # quantity * unit_price (before discount)
-    discount_percentage: Decimal
+    product_manual_discount: Decimal  # Manual discount per unit
+    discount_percentage: Optional[Decimal] = None  # Deprecated field
     discount_amount: Decimal
     taxable_amount: Decimal
     tax_rate: Decimal
@@ -416,6 +419,8 @@ class InvoiceResponse(BaseModel):
     total_amount: Decimal
     amount_paid: Decimal
     balance_amount: Decimal
+    prepaid_amount: Decimal  # New field
+    paid_at_outlet: Decimal  # New field
     notes: Optional[str]
     is_cancelled: bool
     cancelled_reason: Optional[str]
