@@ -495,7 +495,7 @@ async def get_order(
                     detail="Access denied: You can only view your own orders"
                 )
         elif current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id and order.outlet_id != current_user.outlet_id:
+            if current_user.outlet_id and order.assigned_outlet_id != current_user.outlet_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied: You can only view orders for your outlet"
@@ -506,34 +506,8 @@ async def get_order(
             filters={"order_id": order_id}
         )
         
-        # Build response
-        return OrderResponse(
-            uid=order.uid,
-            order_number=order.order_number,
-            customer_name=order.customer_name,
-            customer_phone=order.customer_phone,
-            customer_address=order.customer_address,
-            telecaller_id=order.telecaller_id,
-            outlet_id=order.outlet_id,
-            status=order.status,
-            payment_status=order.payment_status,
-            total_amount=order.total_amount,
-            advance_amount=order.advance_amount,
-            delivery_date=order.delivery_date,
-            notes=order.notes,
-            items=[
-                {
-                    "product_id": item.product_id,
-                    "quantity": item.quantity,
-                    "unit_price": item.unit_price,
-                    "total_price": item.total_price
-                }
-                for item in order_items.items
-            ],
-            created_at=order.created_at,
-            created_by=order.created_by,
-            last_updated=order.last_updated
-        )
+        # Use the helper function to build proper response
+        return await get_order_response(order_id)
     
     except Exception as e:
         if "not found" in str(e).lower():
