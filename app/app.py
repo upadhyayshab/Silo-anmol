@@ -66,8 +66,8 @@ app = FastAPI(
     description="ERP System API with comprehensive business management features",
     version=settings.version,
     lifespan=lifespan,
-    docs_url="/docs" if settings.env != "production" else None,
-    redoc_url="/redoc" if settings.env != "production" else None,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
 # Add CORS middleware
@@ -104,7 +104,7 @@ async def root():
         "message": f"Welcome to {settings.name} API",
         "version": settings.version,
         "environment": settings.env,
-        "docs": "/docs" if settings.env != "production" else "disabled",
+        "docs": "/docs",
     }
 
 @app.get("/health")
