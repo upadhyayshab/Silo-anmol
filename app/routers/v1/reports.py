@@ -86,6 +86,15 @@ async def get_outlet_orders(
             "delivered": 0,
             "cancelled": 0
         }
+        commission_summary = {
+            "total_commission": 0.0,
+            "by_status": {
+                "pending": 0.0,
+                "delivery_allotted": 0.0,
+                "delivered": 0.0,
+                "cancelled": 0.0
+            }
+        }
         
         for order in orders_result.items:
             # Apply date filtering if specified
@@ -97,6 +106,11 @@ async def get_outlet_orders(
             
             # Count status
             status_counts[order.order_status.value] += 1
+            
+            # Calculate commission (with backward compatibility)
+            order_commission = float(getattr(order, 'total_commission', 0.0))
+            commission_summary["total_commission"] += order_commission
+            commission_summary["by_status"][order.order_status.value] += order_commission
             
             # Build order data
             order_data = {
@@ -111,7 +125,8 @@ async def get_outlet_orders(
                 "gross_amount": float(order.gross_amount),
                 "manual_discount": float(order.manual_discount),
                 "discount_applied": float(order.discount_applied),
-                "prepaid_amount": float(order.prepaid_amount)
+                "prepaid_amount": float(order.prepaid_amount),
+                "total_commission": order_commission  # NEW: Commission data per order
             }
             
             order_list.append(order_data)
@@ -125,6 +140,7 @@ async def get_outlet_orders(
             "total_orders": len(order_list),
             "orders": order_list,
             "status_summary": status_counts,
+            "commission_summary": commission_summary,  # NEW: Commission summary by status
             "filters_applied": {
                 "status": status.value if status else None,
                 "from_date": from_date.isoformat() if from_date else None,
