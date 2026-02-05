@@ -307,10 +307,11 @@ class CustomerOrderSchema(BaseSchema):
     
     # Pricing fields
     gross_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Total before manual discount
-    manual_discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Manual discount in rupees
+    manual_discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Manual discount in rupees (legacy)
     discount_applied = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total discount applied
     prepaid_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Amount already paid
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Final net amount
+    total_commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total commission for order
 
     # Relationships
     telecaller = relationship("UserSchema", back_populates="created_orders")
@@ -338,6 +339,7 @@ class OrderItemSchema(BaseSchema):
     discount_percentage = db.Column(db.Numeric(5, 2), default=0.00)
     discount_amount = db.Column(db.Numeric(10, 2), default=0.00)
     subtotal = db.Column(db.Numeric(10, 2), nullable=False)
+    product_manual_discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # New field
 
     # Relationships
     order = relationship("CustomerOrderSchema", back_populates="items")

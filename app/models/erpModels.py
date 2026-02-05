@@ -221,7 +221,8 @@ class StockAdjustmentRequest(BaseModel):
 class OrderItemRequest(BaseModel):
     product_id: str
     quantity: int = Field(..., gt=0)
-    # unit_price removed - now calculated automatically from product.cost_price - product.discount
+    product_manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount for this product in rupees")
+    # unit_price removed - now calculated automatically from product.cost_price - product_manual_discount
 
 
 class OrderCreateRequest(BaseModel):
@@ -268,6 +269,7 @@ class OrderItemResponse(BaseModel):
     quantity: int
     unit_price: Decimal
     subtotal: Decimal
+    product_manual_discount: Decimal
 
     class Config:
         from_attributes = True
@@ -296,10 +298,11 @@ class OrderResponse(BaseModel):
     actual_delivery_date: Optional[datetime]
     status_remarks: Optional[str]
     gross_amount: Decimal  # Total before manual discount
-    manual_discount: Decimal  # Manual discount applied
-    discount_applied: Decimal  # Total discount (product + manual)
+    manual_discount: Decimal  # Manual discount applied (legacy field, kept for compatibility)
+    discount_applied: Decimal  # Total discount (product manual discounts)
     prepaid_amount: Decimal  # Amount already paid
     total_amount: Decimal  # Final net amount
+    total_commission: Decimal  # Total commission for the order
     items: List[OrderItemResponse] = []
     created_at: datetime
 
