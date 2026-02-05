@@ -29,64 +29,117 @@ activity_manager = ActivityLogManager(engine)
 router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 
 
-@router.get("/dashboard/overview")
-async def get_dashboard_overview(
+@router.get("/dashboard-overview")
+async def get_outlet_orders(
+    outlet_id: str,
+    status: Optional[OrderStatus] = None,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    limit: int = 100,
+    offset: int = 0,
     current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
     ))
 ):
     """
-    Get high-level business overview for dashboard
+    Get all orders for a specific outlet (assigned OR walk-in)
+    Returns order_id, total_amount, and status for each order
     """
     try:
-        today = date.today()
-        month_start = today.replace(day=1)
+        # Get current user for access control
+        current_user = await user_manager.fetch(current_user_id)
         
-        # Get current month data
-        invoices = await invoice_manager.fetch_all(
-            filters={"is_cancelled": False}
+        # Access control: outlet managers can only view their own outlet
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id != outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only view orders for your outlet"
+                )
+        
+        # Verify outlet exists
+        try:
+            outlet = await outlet_manager.fetch(outlet_id)
+        except:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Outlet not found"
+            )
+        
+        # Build filters
+        filters = {"assigned_outlet_id": outlet_id}
+        if status:
+            filters["order_status"] = status
+        
+        # Fetch all orders for this outlet
+        orders_result = await order_manager.fetch_all(
+            filters=filters,
+            limit=limit,
+            offset=offset
         )
         
-        orders = await order_manager.fetch_all()
+        # Process orders and apply date filtering
+        order_list = []
+        status_counts = {
+            "pending": 0,
+            "delivery_allotted": 0,
+            "delivered": 0,
+            "cancelled": 0
+        }
         
-        # Calculate metrics
-        current_month_sales = sum(
-            float(inv.total_amount) for inv in invoices.items
-            if inv.invoice_date >= month_start and inv.invoice_date <= today
-        )
+        for order in orders_result.items:
+            # Apply date filtering if specified
+            order_date = order.order_date.date()
+            if from_date and order_date < from_date:
+                continue
+            if to_date and order_date > to_date:
+                continue
+            
+            # Count status
+            status_counts[order.order_status.value] += 1
+            
+            # Build order data
+            order_data = {
+                "order_id": order.uid,
+                "order_number": order.order_number,
+                "total_amount": float(order.total_amount),  # Final price after all calculations
+                "status": order.order_status.value,  # OrderStatus enum value
+                "customer_name": order.customer_name,
+                "customer_phone": order.customer_phone,
+                "order_date": order.order_date.isoformat(),
+                "collection_type": order.collection_type.value,
+                "gross_amount": float(order.gross_amount),
+                "manual_discount": float(order.manual_discount),
+                "discount_applied": float(order.discount_applied),
+                "prepaid_amount": float(order.prepaid_amount)
+            }
+            
+            order_list.append(order_data)
         
-        current_month_orders = len([
-            order for order in orders.items
-            if order.order_date.date() >= month_start and order.order_date.date() <= today
-        ])
-        
-        pending_orders = len([
-            order for order in orders.items
-            if order.order_status == OrderStatus.PENDING
-        ])
-        
-        # Get inventory alerts
-        low_stock_count = 0
-        all_inventory = await inventory_manager.fetch_all()
-        for inv_item in all_inventory.items:
-            product = await product_manager.fetch(inv_item.product_id)
-            available = inv_item.quantity - inv_item.reserved_quantity
-            if available < product.min_stock_level:
-                low_stock_count += 1
+        # Sort by order_date (newest first)
+        order_list.sort(key=lambda x: x["order_date"], reverse=True)
         
         return {
-            "current_month_sales": current_month_sales,
-            "current_month_orders": current_month_orders,
-            "pending_orders": pending_orders,
-            "low_stock_alerts": low_stock_count,
-            "total_outlets": len((await outlet_manager.fetch_all(filters={"is_active": True})).items),
-            "last_updated": datetime.utcnow()
+            "outlet_id": outlet_id,
+            "outlet_name": outlet.outlet_name,
+            "total_orders": len(order_list),
+            "orders": order_list,
+            "status_summary": status_counts,
+            "filters_applied": {
+                "status": status.value if status else None,
+                "from_date": from_date.isoformat() if from_date else None,
+                "to_date": to_date.isoformat() if to_date else None,
+                "limit": limit,
+                "offset": offset
+            }
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch dashboard overview: {str(e)}"
+            detail=f"Failed to fetch outlet orders: {str(e)}"
         )
 
 
