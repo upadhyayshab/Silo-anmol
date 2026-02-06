@@ -1216,7 +1216,13 @@ async def delete_order(
     """
     try:
         # Fetch the order
-        order = await order_manager.fetch(order_id)
+        try:
+            order = await order_manager.fetch(order_id)
+        except Exception as fetch_error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Order not found: {str(fetch_error)}"
+            )
         
         # Validation 1: Check prepaid amount
         if order.prepaid_amount > 0:
@@ -1322,7 +1328,31 @@ async def delete_order(
             print(f"Warning: Failed to log deletion activity: {log_error}")
         
         # Delete the order (cascade will handle related tables)
-        await order_manager.delete(order_id)
+        # Note: Using direct session delete to avoid SharedBackend bug
+        try:
+            async with order_manager.session_factory() as session:
+                # Fetch the order again in this session
+                import sqlalchemy as db
+                query = db.select(CustomerOrderSchema).filter_by(uid=order_id)
+                result = await session.execute(query)
+                order_to_delete = result.scalar_one_or_none()
+                
+                if not order_to_delete:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Order not found during deletion"
+                    )
+                
+                # Delete the order
+                await session.delete(order_to_delete)
+                await session.commit()
+        except HTTPException:
+            raise
+        except Exception as delete_error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete order from database: {str(delete_error)}"
+            )
         
         return StatusResponse(
             status="ok",
