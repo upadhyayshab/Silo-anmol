@@ -248,10 +248,10 @@ class InvoiceService:
                     'subtotal': float(subtotal),
                     'discount_amount': float(total_discount),
                     'taxable_amount': float(taxable_amount),
-                    'cgst_amount': float(total_cgst),
-                    'sgst_amount': float(total_sgst),
-                    'igst_amount': float(total_igst),
-                    'total_tax': float(total_tax),
+                    'cgst_amount': 0.00,  # No GST
+                    'sgst_amount': 0.00,  # No GST
+                    'igst_amount': 0.00,  # No GST
+                    'total_tax': 0.00,  # No GST
                     'total_amount': float(total_amount)
                 }
             }
