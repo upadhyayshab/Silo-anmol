@@ -1189,3 +1189,150 @@ async def update_order_payment_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update payment status: {str(e)}"
         )
+
+
+
+@router.delete("/{order_id}", response_model=StatusResponse)
+async def delete_order(
+    order_id: str,
+    reason: str,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """
+    Permanently delete an order
+    
+    Restrictions:
+    - Cannot delete if prepaid_amount > 0
+    - Cannot delete if status is DELIVERED
+    - Cannot delete if status is DELIVERY_ALLOTTED
+    - Only SUPER_ADMIN and ADMIN can delete
+    
+    Actions:
+    - Releases reserved inventory (for PENDING orders)
+    - Deletes order items (cascade)
+    - Deletes transactions (cascade)
+    - Deletes delivery tracking (cascade)
+    - Logs deletion to activity_logs
+    """
+    try:
+        # Fetch the order
+        order = await order_manager.fetch(order_id)
+        
+        # Validation 1: Check prepaid amount
+        if order.prepaid_amount > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete order with prepaid amount (Rs {order.prepaid_amount}). Refund required first."
+            )
+        
+        # Validation 2: Check order status
+        if order.order_status == OrderStatus.DELIVERED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete DELIVERED orders. This affects sales records and accounting."
+            )
+        
+        if order.order_status == OrderStatus.DELIVERY_ALLOTTED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete DELIVERY_ALLOTTED orders. Order may be in transit."
+            )
+        
+        # Validation 3: Require deletion reason
+        if not reason or len(reason.strip()) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Deletion reason required (minimum 10 characters)"
+            )
+        
+        # Get order items before deletion (for inventory release)
+        order_items = await order_item_manager.fetch_all(
+            filters={"order_id": order_id}
+        )
+        
+        # Release reserved inventory (only for PENDING and CANCELLED orders)
+        if order.order_status in [OrderStatus.PENDING, OrderStatus.CANCELLED]:
+            for item in order_items.items:
+                try:
+                    # Find inventory record at assigned outlet
+                    inventory_items = await inventory_manager.fetch_all(
+                        filters={
+                            "product_id": item.product_id,
+                            "outlet_id": order.assigned_outlet_id
+                        }
+                    )
+                    
+                    # If not found at outlet, try warehouse
+                    if not inventory_items.items:
+                        inventory_items = await inventory_manager.fetch_all(
+                            filters={
+                                "product_id": item.product_id,
+                                "outlet_id": None
+                            }
+                        )
+                    
+                    if inventory_items.items:
+                        inventory_item = inventory_items.items[0]
+                        
+                        # Only release if order is PENDING (CANCELLED already released)
+                        if order.order_status == OrderStatus.PENDING:
+                            new_reserved = inventory_item.reserved_quantity - item.quantity
+                            
+                            await inventory_manager.update(
+                                inventory_item.uid,
+                                {
+                                    "reserved_quantity": max(0, new_reserved),
+                                    "last_updated": datetime.utcnow()
+                                }
+                            )
+                except Exception as inv_error:
+                    # Log but don't fail deletion if inventory update fails
+                    print(f"Warning: Failed to release inventory for item {item.product_id}: {inv_error}")
+        
+        # Log deletion to activity_logs (if you have ActivityLogManager)
+        try:
+            from managers import ActivityLogManager
+            activity_manager = ActivityLogManager(engine)
+            
+            # Prepare order data for logging
+            order_data = {
+                "order_number": order.order_number,
+                "customer_name": order.customer_name,
+                "customer_phone": order.customer_phone,
+                "order_status": order.order_status.value,
+                "total_amount": float(order.total_amount),
+                "prepaid_amount": float(order.prepaid_amount),
+                "items_count": len(order_items.items),
+                "deletion_reason": reason
+            }
+            
+            from managers import ActivityLogSchema
+            activity_log = ActivityLogSchema(
+                user_id=current_user_id,
+                action="ORDER_DELETED",
+                entity_type="customer_orders",
+                entity_id=order_id,
+                details=order_data,
+                ip_address=None  # Can be added if available from request
+            )
+            
+            await activity_manager.create(activity_log)
+        except Exception as log_error:
+            # Log but don't fail deletion if activity logging fails
+            print(f"Warning: Failed to log deletion activity: {log_error}")
+        
+        # Delete the order (cascade will handle related tables)
+        await order_manager.delete(order_id)
+        
+        return StatusResponse(
+            status="ok",
+            message=f"Order {order.order_number} deleted successfully. Reason: {reason}"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete order: {str(e)}"
+        )
