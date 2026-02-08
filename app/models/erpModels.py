@@ -526,7 +526,7 @@ class SystemConfigurationResponse(BaseModel):
 # ============================================================================
 
 class OutletCollectionCreateRequest(BaseModel):
-    date: date = Field(..., description="Collection date")
+    collection_date: date = Field(..., description="Collection date")
     outlet_id: str = Field(..., description="Outlet UID")
     amount: Decimal = Field(..., gt=0, description="Amount collected")
     payment_mode: OutletPaymentMode = Field(..., description="Payment mode")
@@ -541,7 +541,7 @@ class OutletCollectionStatusUpdateRequest(BaseModel):
 
 class OutletCollectionResponse(BaseModel):
     uid: str
-    date: date
+    collection_date: date
     outlet_id: str
     amount: Decimal
     payment_mode: OutletPaymentMode
