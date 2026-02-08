@@ -112,22 +112,28 @@ async def list_collections(
         if confirmation_status:
             filters["confirmation_status"] = confirmation_status
         
-        # Date range filtering - use proper SharedBackend syntax
-        if date_from and date_to:
-            # For date range, we need to use between operator
-            filters["date"] = {"between": [date_from, date_to]}
-        elif date_from:
-            filters["date"] = {">": date_from}
-        elif date_to:
-            filters["date"] = {"<": date_to}
+        # Note: Date filtering has issues with SharedBackend's filter syntax
+        # For now, we'll fetch all and filter in Python if date filters are provided
+        # This is a temporary workaround until SharedBackend filter is fixed
         
         # Fetch collections
         collections = await collection_manager.fetch_all(
-            limit=limit,
-            offset=offset,
+            limit=limit if not (date_from or date_to) else 0,  # Fetch all if date filtering
+            offset=offset if not (date_from or date_to) else 0,
             filters=filters if filters else None,
             sorts=["-date", "-created_at"]
         )
+        
+        # Apply date filtering in Python if needed
+        filtered_items = collections.items
+        if date_from or date_to:
+            filtered_items = [
+                c for c in collections.items
+                if (not date_from or c.date >= date_from) and
+                   (not date_to or c.date <= date_to)
+            ]
+            # Apply pagination after filtering
+            filtered_items = filtered_items[offset:offset + limit] if limit > 0 else filtered_items
         
         # Convert to response models
         items = [
@@ -146,10 +152,10 @@ async def list_collections(
                 created_at=c.created_at,
                 updated_at=c.updated_at
             )
-            for c in collections.items
+            for c in filtered_items
         ]
         
-        return ListResponse(items=items, count=collections.count)
+        return ListResponse(items=items, count=len(filtered_items))
         
     except Exception as e:
         raise HTTPException(
