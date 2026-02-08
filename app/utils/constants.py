@@ -59,6 +59,29 @@ class UnitOfMeasure(str, Enum):
     METER = "meter"
 
 
+class OutletPaymentMode(str, Enum):
+    CASH = "CASH"
+    BANK_DEPOSIT = "BANK_DEPOSIT"
+    ONLINE = "ONLINE"
+    UPI = "UPI"
+
+
+class OutletPaymentSubMode(str, Enum):
+    PHONEPE = "PHONEPE"
+    GOOGLEPAY = "GOOGLEPAY"
+    PAYTM = "PAYTM"
+    NEFT = "NEFT"
+    RTGS = "RTGS"
+    IMPS = "IMPS"
+    CASH = "CASH"
+
+
+class OutletCollectionStatus(str, Enum):
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    NOT_RECEIVED = "NOT_RECEIVED"
+
+
 __all__ = [
     "UserRole",
     "OrderStatus",
@@ -68,4 +91,7 @@ __all__ = [
     "InvoiceType",
     "TransferStatus",
     "UnitOfMeasure",
+    "OutletPaymentMode",
+    "OutletPaymentSubMode",
+    "OutletCollectionStatus",
 ]
