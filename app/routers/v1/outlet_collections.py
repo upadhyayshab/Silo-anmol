@@ -111,12 +111,15 @@ async def list_collections(
             filters["outlet_id"] = outlet_id
         if confirmation_status:
             filters["confirmation_status"] = confirmation_status
+        
+        # Date range filtering - use proper SharedBackend syntax
         if date_from and date_to:
-            filters["date"] = {">=": date_from, "<=": date_to}
+            # For date range, we need to use between operator
+            filters["date"] = {"between": [date_from, date_to]}
         elif date_from:
-            filters["date"] = {">=": date_from}
+            filters["date"] = {">": date_from}
         elif date_to:
-            filters["date"] = {"<=": date_to}
+            filters["date"] = {"<": date_to}
         
         # Fetch collections
         collections = await collection_manager.fetch_all(
@@ -247,10 +250,13 @@ async def update_collection_status(
             updates["confirmed_at"] = datetime.utcnow()
         
         # Update collection
-        updated_collection = await collection_manager.update(
+        await collection_manager.update(
             collection_id,
             updates
         )
+        
+        # Fetch fresh copy to avoid session detachment issues
+        updated_collection = await collection_manager.fetch(collection_id)
         
         return OutletCollectionResponse(
             uid=updated_collection.uid,
