@@ -6,7 +6,8 @@ import re
 
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
-    PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure
+    PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
+    OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus
 )
 
 
@@ -521,6 +522,43 @@ class SystemConfigurationResponse(BaseModel):
 
 
 # ============================================================================
+# OUTLET DAILY COLLECTION MODELS
+# ============================================================================
+
+class OutletCollectionCreateRequest(BaseModel):
+    date: date = Field(..., description="Collection date")
+    outlet_id: str = Field(..., description="Outlet UID")
+    amount: Decimal = Field(..., gt=0, description="Amount collected")
+    payment_mode: OutletPaymentMode = Field(..., description="Payment mode")
+    payment_sub_mode: OutletPaymentSubMode = Field(..., description="Payment sub-mode")
+    transaction_id: Optional[str] = Field(None, description="Transaction reference number")
+    remarks: Optional[str] = Field(None, description="Additional notes")
+
+
+class OutletCollectionStatusUpdateRequest(BaseModel):
+    confirmation_status: OutletCollectionStatus = Field(..., description="New confirmation status")
+
+
+class OutletCollectionResponse(BaseModel):
+    uid: str
+    date: date
+    outlet_id: str
+    amount: Decimal
+    payment_mode: OutletPaymentMode
+    payment_sub_mode: OutletPaymentSubMode
+    transaction_id: Optional[str]
+    remarks: Optional[str]
+    confirmation_status: OutletCollectionStatus
+    confirmed_by: Optional[str]
+    confirmed_at: Optional[datetime]
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -558,4 +596,8 @@ __all__ = [
     
     # System
     "SystemConfigurationUpdateRequest", "SystemConfigurationResponse",
+    
+    # Outlet Collections
+    "OutletCollectionCreateRequest", "OutletCollectionStatusUpdateRequest",
+    "OutletCollectionResponse",
 ]

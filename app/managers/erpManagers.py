@@ -8,7 +8,8 @@ from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, B
 from SharedBackend.managers.base import NESTED_JOINS
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod, 
-    PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure
+    PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
+    OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus
 )
 
 
@@ -549,6 +550,36 @@ class SystemConfigurationManager(GenericManager[SystemConfigurationSchema]):
 
 
 # ============================================================================
+# OUTLET DAILY COLLECTIONS
+# ============================================================================
+
+class OutletDailyCollectionSchema(BaseSchema):
+    """Daily payment collections from outlets"""
+    __tablename__ = "outlet_daily_collections"
+
+    date = db.Column(db.Date, nullable=False, index=True)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    payment_mode = db.Column(db.Enum(OutletPaymentMode), nullable=False)
+    payment_sub_mode = db.Column(db.Enum(OutletPaymentSubMode), nullable=False)
+    transaction_id = db.Column(db.String(255), nullable=True)
+    remarks = db.Column(db.Text, nullable=True)
+    
+    # Status tracking
+    confirmation_status = db.Column(db.Enum(OutletCollectionStatus), nullable=False, default=OutletCollectionStatus.PENDING, index=True)
+    confirmed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    confirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+    confirmer = relationship("UserSchema", foreign_keys=[confirmed_by])
+
+
+class OutletDailyCollectionManager(GenericManager[OutletDailyCollectionSchema]):
+    pass
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -589,4 +620,7 @@ __all__ = [
     "ActivityLogSchema", "ActivityLogManager",
     "NotificationSchema", "NotificationManager",
     "SystemConfigurationSchema", "SystemConfigurationManager",
+    
+    # Outlet Collections
+    "OutletDailyCollectionSchema", "OutletDailyCollectionManager",
 ]
