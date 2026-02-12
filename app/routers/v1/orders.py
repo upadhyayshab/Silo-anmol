@@ -646,6 +646,68 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         )
 
 
+@router.get("/by-phone/{phone}", response_model=ListResponse[OrderResponse])
+async def get_orders_by_phone(
+    phone: str,
+    limit: int = 50,
+    offset: int = 0,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
+        UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT
+    ))
+):
+    """
+    Get all orders for a customer by phone number
+    
+    Internal use - all staff can access for customer service
+    Returns all orders regardless of telecaller or outlet assignment
+    
+    Args:
+        phone: Customer phone number (10 digits)
+        limit: Maximum number of orders to return (default: 50)
+        offset: Pagination offset (default: 0)
+    
+    Returns:
+        List of orders with full details including order items
+    """
+    try:
+        # Validate and sanitize phone number
+        sanitized_phone = phone.strip().replace(" ", "").replace("-", "").replace("+91", "")
+        
+        # Basic validation: should be 10 digits
+        if not sanitized_phone.isdigit() or len(sanitized_phone) != 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid phone number format. Expected 10 digits."
+            )
+        
+        # Query orders by phone number (no role-based filtering)
+        orders = await order_manager.fetch_all(
+            filters={"customer_phone": sanitized_phone},
+            limit=limit,
+            offset=offset
+        )
+        
+        # Build complete order responses with items
+        order_responses = []
+        for order in orders.items:
+            order_response = await get_order_response(order.uid)
+            order_responses.append(order_response)
+        
+        # Sort by order_date descending (newest first)
+        order_responses.sort(key=lambda x: x.order_date, reverse=True)
+        
+        return ListResponse(items=order_responses, count=len(order_responses))
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch orders by phone: {str(e)}"
+        )
+
+
 # Duplicate GET /{order_id} route removed - moved to top of file
     """Get specific order details"""
     try:
