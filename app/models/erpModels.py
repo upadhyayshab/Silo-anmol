@@ -264,6 +264,10 @@ class OrderAssignRequest(BaseModel):
     assigned_outlet_id: str
 
 
+class OrderRevokeRequest(BaseModel):
+    reason: str = Field(..., min_length=10, description="Reason for revoking the order (minimum 10 characters)")
+
+
 class OrderItemResponse(BaseModel):
     uid: str
     product_id: str
