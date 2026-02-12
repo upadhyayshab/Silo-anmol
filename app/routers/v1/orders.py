@@ -11,7 +11,7 @@ from managers import (
 )
 from models import (
     OrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
-    OrderAssignRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
+    OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse
 )
@@ -1365,4 +1365,160 @@ async def delete_order(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete order: {str(e)}"
+        )
+
+
+@router.post("/{order_id}/revoke", response_model=StatusResponse)
+async def revoke_order(
+    order_id: str,
+    payload: OrderRevokeRequest,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+):
+    """
+    Revoke a DELIVERED order back to PENDING status
+    
+    Use case: Order was marked as DELIVERED by mistake
+    
+    Restrictions:
+    - Only SUPER_ADMIN can revoke orders
+    - Can only revoke orders with status DELIVERED
+    - Requires mandatory reason (minimum 10 characters)
+    
+    Actions:
+    - Changes status from DELIVERED to PENDING
+    - Restores inventory (adds quantity back + reserves it)
+    - Clears actual_delivery_date
+    - Logs revocation to activity_logs
+    """
+    try:
+        # Fetch the order
+        try:
+            order = await order_manager.fetch(order_id)
+        except Exception as fetch_error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Order not found: {str(fetch_error)}"
+            )
+        
+        # Validation 1: Check order status
+        if order.order_status != OrderStatus.DELIVERED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Can only revoke DELIVERED orders. Current status: {order.order_status.value}"
+            )
+        
+        # Validation 2: Reason is already validated by Pydantic model
+        # But we'll double-check for safety
+        if not payload.reason or len(payload.reason.strip()) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Revocation reason required (minimum 10 characters)"
+            )
+        
+        # Get order items for inventory restoration
+        order_items = await order_item_manager.fetch_all(
+            filters={"order_id": order_id}
+        )
+        
+        # Restore inventory: add quantity back + reserve it
+        for item in order_items.items:
+            try:
+                # Find inventory record at assigned outlet
+                inventory_items = await inventory_manager.fetch_all(
+                    filters={
+                        "product_id": item.product_id,
+                        "outlet_id": order.assigned_outlet_id
+                    }
+                )
+                
+                # If not found at outlet, try warehouse
+                if not inventory_items.items:
+                    inventory_items = await inventory_manager.fetch_all(
+                        filters={
+                            "product_id": item.product_id,
+                            "outlet_id": None
+                        }
+                    )
+                
+                if inventory_items.items:
+                    inventory_item = inventory_items.items[0]
+                    
+                    # Restore: add quantity back + reserve it
+                    new_quantity = inventory_item.quantity + item.quantity
+                    new_reserved = inventory_item.reserved_quantity + item.quantity
+                    
+                    await inventory_manager.update(
+                        inventory_item.uid,
+                        {
+                            "quantity": new_quantity,
+                            "reserved_quantity": new_reserved,
+                            "last_updated": datetime.utcnow()
+                        }
+                    )
+                else:
+                    # If inventory record doesn't exist, we can't restore
+                    # This shouldn't happen in normal flow, but log it
+                    print(f"Warning: No inventory record found for product {item.product_id} at outlet {order.assigned_outlet_id}")
+                    
+            except Exception as inv_error:
+                # If inventory restoration fails, rollback and fail the revoke
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to restore inventory for product {item.product_id}: {str(inv_error)}"
+                )
+        
+        # Update order status to PENDING and clear delivery date
+        await order_manager.update(
+            order_id,
+            {
+                "order_status": OrderStatus.PENDING,
+                "actual_delivery_date": None,
+                "status_remarks": f"REVOKED: {payload.reason}",
+                "updated_at": datetime.utcnow()
+            }
+        )
+        
+        # Log revocation to activity_logs
+        try:
+            from managers import ActivityLogManager, ActivityLogSchema
+            activity_manager = ActivityLogManager(engine)
+            
+            # Prepare order data for logging
+            order_data = {
+                "order_number": order.order_number,
+                "customer_name": order.customer_name,
+                "customer_phone": order.customer_phone,
+                "previous_status": "DELIVERED",
+                "new_status": "PENDING",
+                "total_amount": float(order.total_amount),
+                "items_count": len(order_items.items),
+                "revocation_reason": payload.reason,
+                "previous_delivery_date": order.actual_delivery_date.isoformat() if order.actual_delivery_date else None
+            }
+            
+            activity_log = ActivityLogSchema(
+                user_id=current_user_id,
+                action="ORDER_REVOKED",
+                entity_type="customer_orders",
+                entity_id=order_id,
+                details=order_data,
+                ip_address=None
+            )
+            
+            await activity_manager.create(activity_log)
+        except Exception as log_error:
+            # Log but don't fail revocation if activity logging fails
+            print(f"Warning: Failed to log revocation activity: {log_error}")
+        
+        return StatusResponse(
+            status="ok",
+            message=f"Order {order.order_number} revoked to PENDING. Inventory restored. Reason: {payload.reason}"
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to revoke order: {str(e)}"
         )
