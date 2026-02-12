@@ -582,7 +582,7 @@ __all__ = [
     
     # Order
     "OrderItemRequest", "OrderCreateRequest", "OrderUpdateRequest",
-    "OrderStatusUpdateRequest", "OrderAssignRequest",
+    "OrderStatusUpdateRequest", "OrderAssignRequest", "OrderRevokeRequest",
     "OrderItemResponse", "OrderResponse",
     
     # Transaction
