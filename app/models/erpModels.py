@@ -245,6 +245,10 @@ class OrderCreateRequest(BaseModel):
     items: List[OrderItemRequest]
 
 
+class ProxyOrderCreateRequest(OrderCreateRequest):
+    telecaller_id: str = Field(..., description="ID of telecaller to create order on behalf of")
+
+
 class OrderUpdateRequest(BaseModel):
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
@@ -581,7 +585,7 @@ __all__ = [
     "InventoryResponse", "StockAdjustmentRequest",
     
     # Order
-    "OrderItemRequest", "OrderCreateRequest", "OrderUpdateRequest",
+    "OrderItemRequest", "OrderCreateRequest", "ProxyOrderCreateRequest", "OrderUpdateRequest",
     "OrderStatusUpdateRequest", "OrderAssignRequest", "OrderRevokeRequest",
     "OrderItemResponse", "OrderResponse",
     

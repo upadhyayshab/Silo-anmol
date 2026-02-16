@@ -10,7 +10,7 @@ from managers import (
     CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema
 )
 from models import (
-    OrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
+    OrderCreateRequest, ProxyOrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
     OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse
@@ -336,6 +336,284 @@ async def create_order(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create order: {str(e)}"
+        )
+
+
+@router.post("/proxy", response_model=OrderResponse)
+async def create_proxy_order(
+    payload: ProxyOrderCreateRequest,
+    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+):
+    """
+    Create order on behalf of a telecaller (Admin/SuperAdmin only)
+    
+    This endpoint allows admins to create orders that appear as if
+    created by the specified telecaller. Useful for:
+    - Offline order entry
+    - Bulk order imports
+    - Order corrections
+    - Historical data migration
+    
+    The order will be attributed to the telecaller_id in payload,
+    not the current admin user.
+    
+    Access: ADMIN, SUPER_ADMIN only
+    """
+    try:
+        # Step 1: Validate telecaller exists and is valid
+        try:
+            target_telecaller = await user_manager.fetch(payload.telecaller_id)
+        except Exception as fetch_error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Telecaller not found: {payload.telecaller_id}"
+            )
+        
+        # Step 2: Verify telecaller is active
+        if not target_telecaller.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Telecaller {target_telecaller.full_name} is not active"
+            )
+        
+        # Step 3: Verify user has telecaller-compatible role
+        if target_telecaller.role not in [UserRole.TELECALLER, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User {target_telecaller.full_name} is not a telecaller (role: {target_telecaller.role.value})"
+            )
+        
+        print(f"🔄 PROXY ORDER: Admin {current_user_id} creating order as telecaller {payload.telecaller_id} ({target_telecaller.full_name})")
+        
+        # Step 4: Validate products and calculate pricing (same as regular order)
+        gross_amount = Decimal('0.00')
+        product_discount_total = Decimal('0.00')
+        total_commission = Decimal('0.00')
+        validated_items = []
+        
+        for item in payload.items:
+            try:
+                product = await product_manager.fetch(item.product_id)
+                if not product.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Product {product.product_name} is not active"
+                    )
+            except:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Product not found: {item.product_id}"
+                )
+            
+            item_gross = item.quantity * product.cost_price
+            gross_amount += item_gross
+            product_discount_total += item.product_manual_discount
+            
+            per_unit_discount = item.product_manual_discount / item.quantity if item.quantity > 0 else Decimal('0.00')
+            calculated_unit_price = product.cost_price - per_unit_discount
+            if calculated_unit_price < 0:
+                calculated_unit_price = Decimal('0.00')
+            
+            subtotal = item.quantity * calculated_unit_price
+            
+            commission_base = max(product.cost_price - per_unit_discount, Decimal('0.00'))
+            commission_per_unit = commission_base * (product.commission / 100)
+            item_commission = commission_per_unit * item.quantity
+            total_commission += item_commission
+            
+            validated_items.append({
+                "product": product,
+                "quantity": item.quantity,
+                "unit_price": calculated_unit_price,
+                "subtotal": subtotal,
+                "gross_amount": item_gross,
+                "product_manual_discount": item.product_manual_discount,
+                "commission": item_commission
+            })
+        
+        # Step 5: Calculate final pricing
+        discount_applied = product_discount_total
+        amount_after_discount = gross_amount - product_discount_total
+        final_total_amount = amount_after_discount - payload.prepaid_amount
+        
+        # Validation checks
+        if product_discount_total > gross_amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Total product discounts ({product_discount_total}) cannot exceed gross amount ({gross_amount})"
+            )
+        
+        if payload.prepaid_amount > amount_after_discount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Prepaid amount ({payload.prepaid_amount}) cannot exceed order total after discount ({amount_after_discount})"
+            )
+        
+        if final_total_amount < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Final order amount cannot be negative"
+            )
+        
+        # Step 6: Create order (attributed to telecaller, not admin)
+        order_number = generate_order_number()
+        
+        # IMPORTANT: For proxy orders, NEVER auto-assign to outlet
+        # Always use Google API assignment (assigned_outlet_id = None initially)
+        assigned_outlet_id = None
+        
+        new_order = CustomerOrderSchema(
+            order_number=order_number,
+            customer_name=payload.customer_name,
+            customer_phone=payload.customer_phone,
+            house_no=payload.house_no,
+            street=payload.street,
+            address_line=payload.address_line,
+            village=payload.village,
+            taluk=payload.taluk,
+            district=payload.district,
+            state=payload.state,
+            pincode=payload.pincode,
+            telecaller_id=payload.telecaller_id,  # Use telecaller from payload, not current_user_id
+            assigned_outlet_id=assigned_outlet_id,
+            order_status=OrderStatus.PENDING,
+            collection_type=payload.collection_type,
+            payment_method=payload.payment_method,
+            order_date=datetime.utcnow(),
+            expected_delivery_date=payload.expected_delivery_date,
+            gross_amount=gross_amount,
+            manual_discount=payload.manual_discount,
+            discount_applied=discount_applied,
+            prepaid_amount=payload.prepaid_amount,
+            total_amount=final_total_amount,
+            total_commission=total_commission
+        )
+        
+        created_order = await order_manager.create(new_order)
+        
+        # Step 7: Create order items
+        order_items = []
+        for item_data in validated_items:
+            try:
+                order_item = OrderItemSchema(
+                    order_id=created_order.uid,
+                    product_id=item_data["product"].uid,
+                    quantity=item_data["quantity"],
+                    unit_price=item_data["unit_price"],
+                    total_price=item_data["subtotal"],
+                    subtotal=item_data["subtotal"],
+                    product_manual_discount=item_data["product_manual_discount"]
+                )
+                created_item = await order_item_manager.create(order_item)
+                order_items.append(created_item)
+            except Exception as item_error:
+                print(f"❌ PROXY ORDER ITEM ERROR: {str(item_error)}")
+        
+        if not order_items and validated_items:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Order created but failed to create order items"
+            )
+        
+        # Step 8: Auto-assign outlet via Google API (always for proxy orders)
+        assigned_outlet = await auto_assign_outlet(payload.district, payload.state, payload.taluk)
+        if assigned_outlet:
+            await order_manager.update(
+                created_order.uid,
+                {"assigned_outlet_id": assigned_outlet.uid}
+            )
+            created_order.assigned_outlet_id = assigned_outlet.uid
+            assigned_outlet_id = assigned_outlet.uid
+        
+        # Step 9: Reserve stock
+        if assigned_outlet_id:
+            try:
+                await reserve_order_stock(created_order.uid, assigned_outlet_id, validated_items)
+            except Exception as e:
+                await order_manager.update(
+                    created_order.uid,
+                    {
+                        "status_remarks": f"Stock reservation failed: {str(e)}",
+                        "order_status": OrderStatus.PENDING
+                    }
+                )
+        
+        # Step 10: Log proxy order creation for audit trail
+        try:
+            from managers import ActivityLogManager, ActivityLogSchema
+            activity_manager = ActivityLogManager(engine)
+            
+            activity_log = ActivityLogSchema(
+                user_id=current_user_id,  # Admin who created it
+                action="PROXY_ORDER_CREATED",
+                entity_type="customer_orders",
+                entity_id=created_order.uid,
+                details={
+                    "order_number": created_order.order_number,
+                    "telecaller_id": payload.telecaller_id,
+                    "telecaller_name": target_telecaller.full_name,
+                    "customer_name": payload.customer_name,
+                    "customer_phone": payload.customer_phone,
+                    "total_amount": float(final_total_amount),
+                    "note": "Order created via proxy endpoint by admin"
+                },
+                ip_address=None
+            )
+            
+            await activity_manager.create(activity_log)
+        except Exception as log_error:
+            print(f"⚠️  Failed to log proxy order creation: {log_error}")
+        
+        # Step 11: Build response
+        order_items_response = []
+        for item in order_items:
+            order_items_response.append(OrderItemResponse(
+                uid=item.uid,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+                product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00'))
+            ))
+        
+        return OrderResponse(
+            uid=created_order.uid,
+            order_number=created_order.order_number,
+            customer_name=created_order.customer_name,
+            customer_phone=created_order.customer_phone,
+            house_no=created_order.house_no,
+            street=created_order.street,
+            address_line=created_order.address_line,
+            village=created_order.village,
+            taluk=created_order.taluk,
+            district=created_order.district,
+            state=created_order.state,
+            pincode=created_order.pincode,
+            telecaller_id=created_order.telecaller_id,  # Shows target telecaller
+            assigned_outlet_id=assigned_outlet_id,
+            order_status=created_order.order_status,
+            collection_type=created_order.collection_type,
+            payment_method=created_order.payment_method,
+            order_date=created_order.order_date,
+            expected_delivery_date=created_order.expected_delivery_date,
+            actual_delivery_date=created_order.actual_delivery_date,
+            status_remarks=created_order.status_remarks,
+            gross_amount=gross_amount,
+            manual_discount=payload.manual_discount,
+            discount_applied=discount_applied,
+            prepaid_amount=created_order.prepaid_amount,
+            total_amount=final_total_amount,
+            total_commission=total_commission,
+            items=order_items_response,
+            created_at=created_order.created_at
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create proxy order: {str(e)}"
         )
 
 
