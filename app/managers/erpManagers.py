@@ -292,6 +292,8 @@ class CustomerOrderSchema(BaseSchema):
     street = db.Column(db.String(255))
     address_line = db.Column(db.Text, nullable=False)
     village = db.Column(db.String(100))
+    post = db.Column(db.String(100), nullable=True)
+    hobli = db.Column(db.String(100), nullable=True)
     taluk = db.Column(db.String(100))
     district = db.Column(db.String(100), nullable=False)
     state = db.Column(db.String(100), nullable=False)

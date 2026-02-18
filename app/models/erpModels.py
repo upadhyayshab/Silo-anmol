@@ -233,6 +233,8 @@ class OrderCreateRequest(BaseModel):
     street: Optional[str] = None
     address_line: str
     village: Optional[str] = None
+    post: Optional[str] = None
+    hobli: Optional[str] = None
     taluk: Optional[str] = None
     district: str
     state: str
@@ -253,6 +255,10 @@ class OrderUpdateRequest(BaseModel):
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     address_line: Optional[str] = None
+    village: Optional[str] = None
+    post: Optional[str] = None
+    hobli: Optional[str] = None
+    taluk: Optional[str] = None
     district: Optional[str] = None
     state: Optional[str] = None
     pincode: Optional[str] = None
@@ -293,6 +299,8 @@ class OrderResponse(BaseModel):
     street: Optional[str]
     address_line: str
     village: Optional[str]
+    post: Optional[str]
+    hobli: Optional[str]
     taluk: Optional[str]
     district: str
     state: str
