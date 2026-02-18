@@ -176,6 +176,8 @@ async def create_order(
             street=payload.street,
             address_line=payload.address_line,
             village=payload.village,
+            post=payload.post,
+            hobli=payload.hobli,
             taluk=payload.taluk,
             district=payload.district,
             state=payload.state,
@@ -301,6 +303,8 @@ async def create_order(
                 street=created_order.street,
                 address_line=created_order.address_line,
                 village=created_order.village,
+                post=getattr(created_order, 'post', None),
+                hobli=getattr(created_order, 'hobli', None),
                 taluk=created_order.taluk,
                 district=created_order.district,
                 state=created_order.state,
@@ -470,6 +474,8 @@ async def create_proxy_order(
             street=payload.street,
             address_line=payload.address_line,
             village=payload.village,
+            post=payload.post,
+            hobli=payload.hobli,
             taluk=payload.taluk,
             district=payload.district,
             state=payload.state,
@@ -585,6 +591,8 @@ async def create_proxy_order(
             street=created_order.street,
             address_line=created_order.address_line,
             village=created_order.village,
+            post=getattr(created_order, 'post', None),
+            hobli=getattr(created_order, 'hobli', None),
             taluk=created_order.taluk,
             district=created_order.district,
             state=created_order.state,
@@ -1054,6 +1062,8 @@ async def get_order_response(order_id: str) -> OrderResponse:
         street=getattr(order, 'street', None),
         address_line=order.address_line,
         village=getattr(order, 'village', None),
+        post=getattr(order, 'post', None),
+        hobli=getattr(order, 'hobli', None),
         taluk=getattr(order, 'taluk', None),
         district=order.district,
         state=order.state,
@@ -1113,6 +1123,14 @@ async def update_order(
             update_data["customer_phone"] = payload.customer_phone
         if payload.address_line:
             update_data["address_line"] = payload.address_line
+        if payload.village is not None:
+            update_data["village"] = payload.village
+        if payload.post is not None:
+            update_data["post"] = payload.post
+        if payload.hobli is not None:
+            update_data["hobli"] = payload.hobli
+        if payload.taluk is not None:
+            update_data["taluk"] = payload.taluk
         if payload.district:
             update_data["district"] = payload.district
         if payload.state:
