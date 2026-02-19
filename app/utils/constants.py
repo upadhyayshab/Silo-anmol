@@ -57,6 +57,11 @@ class UnitOfMeasure(str, Enum):
     BOX = "box"
     GRAM = "gram"
     METER = "meter"
+    BAG = "bag"
+    BOTTLE = "bottle"
+    CAN = "can"
+    TABLET = "tablet"
+    SACHET = "sachet"
 
 
 class OutletPaymentMode(str, Enum):
