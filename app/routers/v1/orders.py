@@ -1733,20 +1733,28 @@ async def revoke_order(
     current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN))
 ):
     """
-    Revoke a DELIVERED order back to PENDING status
+    Revoke a DELIVERED or CANCELLED order back to PENDING status
     
-    Use case: Order was marked as DELIVERED by mistake
+    Use cases:
+    - Order was marked as DELIVERED by mistake
+    - Order was CANCELLED by mistake and needs to be reactivated
     
     Restrictions:
     - Only SUPER_ADMIN can revoke orders
-    - Can only revoke orders with status DELIVERED
+    - Can only revoke orders with status DELIVERED or CANCELLED
     - Requires mandatory reason (minimum 10 characters)
     
-    Actions:
+    Actions for DELIVERED orders:
     - Changes status from DELIVERED to PENDING
     - Restores inventory (adds quantity back + reserves it)
     - Clears actual_delivery_date
     - Logs revocation to activity_logs
+    
+    Actions for CANCELLED orders:
+    - Changes status from CANCELLED to PENDING
+    - Re-reserves inventory (increases reserved_quantity)
+    - Validates stock availability before re-reserving
+    - Logs reactivation to activity_logs
     """
     try:
         # Fetch the order
@@ -1759,10 +1767,10 @@ async def revoke_order(
             )
         
         # Validation 1: Check order status
-        if order.order_status != OrderStatus.DELIVERED:
+        if order.order_status not in [OrderStatus.DELIVERED, OrderStatus.CANCELLED]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Can only revoke DELIVERED orders. Current status: {order.order_status.value}"
+                detail=f"Can only revoke DELIVERED or CANCELLED orders. Current status: {order.order_status.value}"
             )
         
         # Validation 2: Reason is already validated by Pydantic model
@@ -1778,7 +1786,7 @@ async def revoke_order(
             filters={"order_id": order_id}
         )
         
-        # Restore inventory: add quantity back + reserve it
+        # Restore inventory based on previous order status
         for item in order_items.items:
             try:
                 # Find inventory record at assigned outlet
@@ -1801,23 +1809,52 @@ async def revoke_order(
                 if inventory_items.items:
                     inventory_item = inventory_items.items[0]
                     
-                    # Restore: add quantity back + reserve it
-                    new_quantity = inventory_item.quantity + item.quantity
-                    new_reserved = inventory_item.reserved_quantity + item.quantity
+                    # Different logic based on previous status
+                    if order.order_status == OrderStatus.DELIVERED:
+                        # DELIVERED → PENDING: Restore consumed stock + reserve it
+                        new_quantity = inventory_item.quantity + item.quantity
+                        new_reserved = inventory_item.reserved_quantity + item.quantity
+                        
+                        await inventory_manager.update(
+                            inventory_item.uid,
+                            {
+                                "quantity": new_quantity,
+                                "reserved_quantity": new_reserved,
+                                "last_updated": datetime.utcnow()
+                            }
+                        )
                     
-                    await inventory_manager.update(
-                        inventory_item.uid,
-                        {
-                            "quantity": new_quantity,
-                            "reserved_quantity": new_reserved,
-                            "last_updated": datetime.utcnow()
-                        }
-                    )
+                    elif order.order_status == OrderStatus.CANCELLED:
+                        # CANCELLED → PENDING: Re-reserve stock (quantity unchanged)
+                        # CRITICAL: Validate available stock before re-reserving
+                        available_stock = inventory_item.quantity - inventory_item.reserved_quantity
+                        
+                        if available_stock < item.quantity:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Cannot reactivate order: Insufficient stock for product {item.product_id}. "
+                                       f"Available: {available_stock}, Required: {item.quantity}. "
+                                       f"Stock may have been sold after cancellation."
+                            )
+                        
+                        # Stock is available, proceed with re-reservation
+                        new_reserved = inventory_item.reserved_quantity + item.quantity
+                        
+                        await inventory_manager.update(
+                            inventory_item.uid,
+                            {
+                                "reserved_quantity": new_reserved,
+                                "last_updated": datetime.utcnow()
+                            }
+                        )
                 else:
                     # If inventory record doesn't exist, we can't restore
                     # This shouldn't happen in normal flow, but log it
                     print(f"Warning: No inventory record found for product {item.product_id} at outlet {order.assigned_outlet_id}")
                     
+            except HTTPException:
+                # Re-raise HTTP exceptions (like insufficient stock)
+                raise
             except Exception as inv_error:
                 # If inventory restoration fails, rollback and fail the revoke
                 raise HTTPException(
@@ -1846,7 +1883,7 @@ async def revoke_order(
                 "order_number": order.order_number,
                 "customer_name": order.customer_name,
                 "customer_phone": order.customer_phone,
-                "previous_status": "DELIVERED",
+                "previous_status": order.order_status.value,  # Dynamic: DELIVERED or CANCELLED
                 "new_status": "PENDING",
                 "total_amount": float(order.total_amount),
                 "items_count": len(order_items.items),
@@ -1868,9 +1905,17 @@ async def revoke_order(
             # Log but don't fail revocation if activity logging fails
             print(f"Warning: Failed to log revocation activity: {log_error}")
         
+        # Different message based on previous status
+        if order.order_status == OrderStatus.DELIVERED:
+            message = f"Order {order.order_number} revoked from DELIVERED to PENDING. Inventory restored. Reason: {payload.reason}"
+        elif order.order_status == OrderStatus.CANCELLED:
+            message = f"Order {order.order_number} reactivated from CANCELLED to PENDING. Stock re-reserved. Reason: {payload.reason}"
+        else:
+            message = f"Order {order.order_number} revoked to PENDING. Reason: {payload.reason}"
+        
         return StatusResponse(
             status="ok",
-            message=f"Order {order.order_number} revoked to PENDING. Inventory restored. Reason: {payload.reason}"
+            message=message
         )
     
     except HTTPException:
