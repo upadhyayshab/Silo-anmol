@@ -51,12 +51,18 @@ class TransferStatus(str, Enum):
 
 
 class UnitOfMeasure(str, Enum):
+    # Standard units (lowercase)
     PIECE = "piece"
     KG = "kg"
     LITER = "liter"
     BOX = "box"
     GRAM = "gram"
     METER = "meter"
+    CM = "cm"
+    DOZEN = "dozen"
+    ML = "ml"
+    PACKET = "packet"
+    # New units (lowercase)
     BAG = "bag"
     BOTTLE = "bottle"
     CAN = "can"
