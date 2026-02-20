@@ -8,8 +8,8 @@ pipeline {
         ECS_TASK_DEFINITION_FAMILY = 'erp-backend-prod'
         ECS_SERVICE = 'erp-backend-prod'
         IMAGE_TAG = UUID.randomUUID().toString().replace('-', '')
-        CPU = "256"
-        MEMORY = "512"
+        CPU = "512"
+        MEMORY = "1024"
     }
 
     stages {
