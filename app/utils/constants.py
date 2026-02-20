@@ -51,23 +51,33 @@ class TransferStatus(str, Enum):
 
 
 class UnitOfMeasure(str, Enum):
-    # Standard units (lowercase)
-    PIECE = "piece"
-    KG = "kg"
-    LITER = "liter"
-    BOX = "box"
-    GRAM = "gram"
-    METER = "meter"
-    CM = "cm"
-    DOZEN = "dozen"
-    ML = "ml"
-    PACKET = "packet"
-    # New units (lowercase)
-    BAG = "bag"
-    BOTTLE = "bottle"
-    CAN = "can"
-    TABLET = "tablet"
-    SACHET = "sachet"
+    # UPPERCASE values (existing in database - for reading existing products)
+    PIECE_UPPER = "PIECE"
+    KG_UPPER = "KG"
+    GRAM_UPPER = "GRAM"
+    LITER_UPPER = "LITER"
+    ML_UPPER = "ML"
+    METER_UPPER = "METER"
+    CM_UPPER = "CM"
+    PACKET_UPPER = "PACKET"
+    BOX_UPPER = "BOX"
+    DOZEN_UPPER = "DOZEN"
+    # lowercase values (for new products and frontend compatibility)
+    piece = "piece"
+    kg = "kg"
+    gram = "gram"
+    liter = "liter"
+    ml = "ml"
+    meter = "meter"
+    cm = "cm"
+    packet = "packet"
+    box = "box"
+    dozen = "dozen"
+    bag = "bag"
+    bottle = "bottle"
+    can = "can"
+    tablet = "tablet"
+    sachet = "sachet"
 
 
 class OutletPaymentMode(str, Enum):
