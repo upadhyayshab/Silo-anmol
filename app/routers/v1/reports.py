@@ -121,6 +121,7 @@ async def get_outlet_orders(
                 "customer_name": order.customer_name,
                 "customer_phone": order.customer_phone,
                 "order_date": order.order_date.isoformat(),
+                "actual_delivery_date": order.actual_delivery_date.isoformat() if order.actual_delivery_date else None,
                 "collection_type": order.collection_type.value,
                 "gross_amount": float(order.gross_amount),
                 "manual_discount": float(order.manual_discount),
