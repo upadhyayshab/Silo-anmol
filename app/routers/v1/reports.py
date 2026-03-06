@@ -576,7 +576,10 @@ async def get_product_performance(
     ))
 ):
     """
-    Get product performance analytics
+    Get product performance analytics based on DELIVERED orders only
+    
+    This endpoint counts only products that have been delivered to customers,
+    using actual_delivery_date for date filtering.
     """
     try:
         if not from_date:
@@ -586,40 +589,47 @@ async def get_product_performance(
         
         current_user = await user_manager.fetch(current_user_id)
         
-        filters = {"is_cancelled": False}
+        # Build filters for DELIVERED orders only
+        filters = {"order_status": OrderStatus.DELIVERED}
         if current_user.role == UserRole.OUTLET_MANAGER:
-            filters["outlet_id"] = current_user.outlet_id
+            filters["assigned_outlet_id"] = current_user.outlet_id
         elif outlet_id:
-            filters["outlet_id"] = outlet_id
+            filters["assigned_outlet_id"] = outlet_id
         
-        invoices = await invoice_manager.fetch_all(filters=filters)
+        # Fetch all delivered orders
+        orders = await order_manager.fetch_all(filters=filters, limit=0)
         
-        # Filter by date range
-        period_invoices = [
-            inv for inv in invoices.items
-            if from_date <= inv.invoice_date <= to_date
+        # Filter by actual_delivery_date (when product was actually delivered)
+        period_orders = [
+            order for order in orders.items
+            if order.actual_delivery_date and 
+               from_date <= order.actual_delivery_date.date() <= to_date
         ]
         
-        # Get all invoice items for the period
-        from managers import SalesInvoiceItemManager
-        item_manager = SalesInvoiceItemManager(engine)
+        # Get order items for delivered orders
+        from managers import OrderItemManager
+        order_item_manager = OrderItemManager(engine)
         
         product_performance = {}
         
         # Cache for product details to avoid duplicate fetches
         product_cache = {}
         
-        for inv in period_invoices:
-            # Fetch ALL items for this invoice (limit=0 means no limit)
-            items = await item_manager.fetch_all(
-                filters={"invoice_id": inv.uid},
+        for order in period_orders:
+            # Fetch ALL items for this order (limit=0 means no limit)
+            items = await order_item_manager.fetch_all(
+                filters={"order_id": order.uid},
                 limit=0  # Fetch all items, not just default limit
             )
             
             for item in items.items:
                 # Fetch product details only once per product
                 if item.product_id not in product_cache:
-                    product_cache[item.product_id] = await product_manager.fetch(item.product_id)
+                    try:
+                        product_cache[item.product_id] = await product_manager.fetch(item.product_id)
+                    except:
+                        # Skip if product not found
+                        continue
                 
                 product = product_cache[item.product_id]
                 
@@ -638,13 +648,13 @@ async def get_product_performance(
                 # Update performance metrics
                 perf = product_performance[item.product_id]
                 perf["quantity_sold"] += item.quantity
-                perf["revenue"] += float(item.total_amount)
+                perf["revenue"] += float(item.subtotal)  # Use subtotal from order item
                 perf["transactions"] += 1
                 
                 # Calculate cost and profit
                 item_cost = float(product.cost_price) * item.quantity
                 perf["cost"] += item_cost
-                perf["profit"] += float(item.total_amount) - item_cost
+                perf["profit"] += float(item.subtotal) - item_cost
         
         # Sort by revenue and get top performers
         top_products = sorted(
