@@ -7,7 +7,8 @@ import re
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
-    OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus
+    OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
+    PayoutStatus
 )
 
 
@@ -575,6 +576,65 @@ class OutletCollectionResponse(BaseModel):
 
 
 # ============================================================================
+# OUTLET MANAGER PAYOUT MODELS
+# ============================================================================
+
+class PayoutCreateRequest(BaseModel):
+    outlet_id: str = Field(..., description="Outlet UID")
+    outlet_manager_id: str = Field(..., description="Outlet manager UID")
+    period_from: date = Field(..., description="Start date of payout period")
+    period_to: date = Field(..., description="End date of payout period")
+    amount: Decimal = Field(..., gt=0, description="Payout amount")
+    payment_method: PaymentMethod = Field(..., description="Payment method")
+    payment_date: Optional[date] = Field(None, description="Actual payment date")
+    transaction_id: Optional[str] = Field(None, description="Transaction reference")
+    remarks: Optional[str] = Field(None, description="Additional notes")
+
+    @validator('period_to')
+    def validate_period(cls, v, values):
+        if 'period_from' in values and v < values['period_from']:
+            raise ValueError('period_to must be after period_from')
+        return v
+
+
+class PayoutUpdateRequest(BaseModel):
+    amount: Optional[Decimal] = Field(None, gt=0, description="Payout amount")
+    payment_method: Optional[PaymentMethod] = Field(None, description="Payment method")
+    payment_date: Optional[date] = Field(None, description="Actual payment date")
+    transaction_id: Optional[str] = Field(None, description="Transaction reference")
+    remarks: Optional[str] = Field(None, description="Additional notes")
+
+
+class PayoutStatusUpdateRequest(BaseModel):
+    status: PayoutStatus = Field(..., description="New payout status")
+    remarks: Optional[str] = Field(None, description="Reason for status change")
+
+
+class PayoutResponse(BaseModel):
+    uid: str
+    outlet_id: str
+    outlet_manager_id: str
+    period_from: date
+    period_to: date
+    amount: Decimal
+    payment_date: Optional[date]
+    payment_method: PaymentMethod
+    transaction_id: Optional[str]
+    status: PayoutStatus
+    remarks: Optional[str]
+    created_by: str
+    approved_by: Optional[str]
+    approved_at: Optional[datetime]
+    paid_by: Optional[str]
+    paid_at: Optional[datetime]
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -616,4 +676,8 @@ __all__ = [
     # Outlet Collections
     "OutletCollectionCreateRequest", "OutletCollectionStatusUpdateRequest",
     "OutletCollectionResponse",
+    
+    # Outlet Manager Payouts
+    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest",
+    "PayoutResponse",
 ]
