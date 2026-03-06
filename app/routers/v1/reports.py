@@ -606,12 +606,25 @@ async def get_product_performance(
         
         product_performance = {}
         
+        # Cache for product details to avoid duplicate fetches
+        product_cache = {}
+        
         for inv in period_invoices:
-            items = await item_manager.fetch_all(filters={"invoice_id": inv.uid})
+            # Fetch ALL items for this invoice (limit=0 means no limit)
+            items = await item_manager.fetch_all(
+                filters={"invoice_id": inv.uid},
+                limit=0  # Fetch all items, not just default limit
+            )
             
             for item in items.items:
+                # Fetch product details only once per product
+                if item.product_id not in product_cache:
+                    product_cache[item.product_id] = await product_manager.fetch(item.product_id)
+                
+                product = product_cache[item.product_id]
+                
+                # Initialize product performance tracking
                 if item.product_id not in product_performance:
-                    product = await product_manager.fetch(item.product_id)
                     product_performance[item.product_id] = {
                         "product_name": product.product_name,
                         "sku": product.sku,
@@ -622,13 +635,13 @@ async def get_product_performance(
                         "transactions": 0
                     }
                 
+                # Update performance metrics
                 perf = product_performance[item.product_id]
                 perf["quantity_sold"] += item.quantity
                 perf["revenue"] += float(item.total_amount)
                 perf["transactions"] += 1
                 
                 # Calculate cost and profit
-                product = await product_manager.fetch(item.product_id)
                 item_cost = float(product.cost_price) * item.quantity
                 perf["cost"] += item_cost
                 perf["profit"] += float(item.total_amount) - item_cost
