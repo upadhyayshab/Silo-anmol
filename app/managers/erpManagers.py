@@ -9,7 +9,8 @@ from SharedBackend.managers.base import NESTED_JOINS
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod, 
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
-    OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus
+    OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
+    PayoutStatus
 )
 
 
@@ -582,6 +583,44 @@ class OutletDailyCollectionManager(GenericManager[OutletDailyCollectionSchema]):
 
 
 # ============================================================================
+# OUTLET MANAGER PAYOUTS
+# ============================================================================
+
+class OutletManagerPayoutSchema(BaseSchema):
+    """Monthly payouts to outlet managers"""
+    __tablename__ = "outlet_manager_payouts"
+
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    outlet_manager_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    period_from = db.Column(db.Date, nullable=False, index=True)
+    period_to = db.Column(db.Date, nullable=False, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    payment_date = db.Column(db.Date, nullable=True, index=True)
+    payment_method = db.Column(db.Enum(PaymentMethod), nullable=False)
+    transaction_id = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.Enum(PayoutStatus), nullable=False, default=PayoutStatus.PENDING, index=True)
+    remarks = db.Column(db.Text, nullable=True)
+    
+    # Audit fields
+    created_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
+    approved_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    paid_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    paid_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+    outlet_manager = relationship("UserSchema", foreign_keys=[outlet_manager_id])
+    creator = relationship("UserSchema", foreign_keys=[created_by])
+    approver = relationship("UserSchema", foreign_keys=[approved_by])
+    payer = relationship("UserSchema", foreign_keys=[paid_by])
+
+
+class OutletManagerPayoutManager(GenericManager[OutletManagerPayoutSchema]):
+    pass
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -625,4 +664,7 @@ __all__ = [
     
     # Outlet Collections
     "OutletDailyCollectionSchema", "OutletDailyCollectionManager",
+    
+    # Outlet Manager Payouts
+    "OutletManagerPayoutSchema", "OutletManagerPayoutManager",
 ]

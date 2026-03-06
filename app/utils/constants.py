@@ -103,6 +103,13 @@ class OutletCollectionStatus(str, Enum):
     NOT_RECEIVED = "NOT_RECEIVED"
 
 
+class PayoutStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    PAID = "PAID"
+    REJECTED = "REJECTED"
+
+
 __all__ = [
     "UserRole",
     "OrderStatus",
@@ -115,4 +122,5 @@ __all__ = [
     "OutletPaymentMode",
     "OutletPaymentSubMode",
     "OutletCollectionStatus",
+    "PayoutStatus",
 ]

@@ -17,6 +17,7 @@ from .notifications import router as notifications_router
 from .activity_logs import router as activity_logs_router
 from .transactions import router as transactions_router
 from .outlet_collections import router as outlet_collections_router
+from .outlet_payouts import router as outlet_payouts_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -38,6 +39,7 @@ router.include_router(notifications_router)
 router.include_router(activity_logs_router)
 router.include_router(transactions_router)
 router.include_router(outlet_collections_router)
+router.include_router(outlet_payouts_router)
 
 
 @router.get("/health-check", response_model=HealthCheckResponse)

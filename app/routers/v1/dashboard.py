@@ -330,10 +330,16 @@ async def get_outlet_manager_dashboard(
 @router.get("/telecaller/{user_id}")
 async def get_telecaller_dashboard(
     user_id: str,
+    from_date: str = None,
+    to_date: str = None,
     current_user_id: str = Depends(require_roles(UserRole.TELECALLER, UserRole.SUPER_ADMIN, UserRole.ADMIN))
 ):
     """
-    Telecaller Dashboard - Personal performance and orders
+    Telecaller Dashboard - Personal performance and orders with date filters
+    
+    Query Parameters:
+    - from_date: Filter orders from this date (format: YYYY-MM-DD)
+    - to_date: Filter orders until this date (format: YYYY-MM-DD)
     """
     try:
         # Verify user access
@@ -345,54 +351,167 @@ async def get_telecaller_dashboard(
                     detail="Access denied"
                 )
         
+        # Parse date filters
+        filter_from_date = None
+        filter_to_date = None
+        
+        if from_date:
+            try:
+                filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid from_date format. Use YYYY-MM-DD"
+                )
+        
+        if to_date:
+            try:
+                filter_to_date = datetime.strptime(to_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid to_date format. Use YYYY-MM-DD"
+                )
+        
         today = date.today()
         month_start = today.replace(day=1)
         
-        # Get telecaller's orders
+        # Get telecaller's orders with items
         my_orders = await order_manager.fetch_all(
-            filters={"telecaller_id": user_id}
+            filters={"telecaller_id": user_id},
+            joins=[["items", ["product"]]]
         )
         
-        # Calculate performance metrics
-        total_orders = len(my_orders.items)
-        today_orders = len([o for o in my_orders.items if o.order_date.date() == today])
-        month_orders = len([o for o in my_orders.items if o.order_date.date() >= month_start])
-        delivered_orders = len([o for o in my_orders.items if o.order_status == OrderStatus.DELIVERED])
+        # Apply date filters
+        filtered_orders = my_orders.items
+        if filter_from_date:
+            filtered_orders = [o for o in filtered_orders if o.order_date.date() >= filter_from_date]
+        if filter_to_date:
+            filtered_orders = [o for o in filtered_orders if o.order_date.date() <= filter_to_date]
         
-        total_revenue = sum([float(o.total_amount) for o in my_orders.items if o.order_status == OrderStatus.DELIVERED])
+        # Calculate performance metrics
+        total_orders = len(filtered_orders)
+        today_orders = len([o for o in filtered_orders if o.order_date.date() == today])
+        month_orders = len([o for o in filtered_orders if o.order_date.date() >= month_start])
+        delivered_orders = len([o for o in filtered_orders if o.order_status == OrderStatus.DELIVERED])
+        
+        total_revenue = sum([float(o.total_amount) for o in filtered_orders if o.order_status == OrderStatus.DELIVERED])
         month_revenue = sum([
-            float(o.total_amount) for o in my_orders.items 
+            float(o.total_amount) for o in filtered_orders 
             if o.order_status == OrderStatus.DELIVERED and o.order_date.date() >= month_start
         ])
         
+        # Build product-wise summary
+        product_summary = {}
+        
+        for order in filtered_orders:
+            for item in order.items:
+                product_id = item.product_id
+                
+                if product_id not in product_summary:
+                    product_summary[product_id] = {
+                        "product_id": product_id,
+                        "product_name": item.product.product_name if item.product else "Unknown",
+                        "sku": item.product.sku if item.product else "N/A",
+                        "total_quantity": 0,
+                        "total_orders": 0,
+                        "pending_orders": 0,
+                        "delivery_allotted_orders": 0,
+                        "delivered_orders": 0,
+                        "cancelled_orders": 0,
+                        "total_revenue": 0.0
+                    }
+                
+                # Update quantities
+                product_summary[product_id]["total_quantity"] += item.quantity
+                product_summary[product_id]["total_orders"] += 1
+                
+                # Update status counts
+                if order.order_status == OrderStatus.PENDING:
+                    product_summary[product_id]["pending_orders"] += 1
+                elif order.order_status == OrderStatus.DELIVERY_ALLOTTED:
+                    product_summary[product_id]["delivery_allotted_orders"] += 1
+                elif order.order_status == OrderStatus.DELIVERED:
+                    product_summary[product_id]["delivered_orders"] += 1
+                    product_summary[product_id]["total_revenue"] += float(item.subtotal)
+                elif order.order_status == OrderStatus.CANCELLED:
+                    product_summary[product_id]["cancelled_orders"] += 1
+        
+        # Build detailed orders list with product details
+        detailed_orders = []
+        for order in sorted(filtered_orders, key=lambda x: x.created_at, reverse=True):
+            order_items = []
+            for item in order.items:
+                order_items.append({
+                    "item_id": item.uid,
+                    "product_id": item.product_id,
+                    "product_name": item.product.product_name if item.product else "Unknown",
+                    "sku": item.product.sku if item.product else "N/A",
+                    "hsn_code": item.product.hsn_code if item.product else "N/A",
+                    "unit_of_measure": item.product.unit_of_measure.value if item.product else "N/A",
+                    "quantity": item.quantity,
+                    "unit_price": float(item.unit_price),
+                    "product_manual_discount": float(item.product_manual_discount),
+                    "subtotal": float(item.subtotal),
+                    "tax_rate": float(item.tax_rate),
+                    "tax_amount": float(item.tax_amount)
+                })
+            
+            detailed_orders.append({
+                "order_id": order.uid,
+                "order_number": order.order_number,
+                "customer_name": order.customer_name,
+                "customer_phone": order.customer_phone,
+                "address": {
+                    "house_no": order.house_no,
+                    "street": order.street,
+                    "address_line": order.address_line,
+                    "village": order.village,
+                    "post": order.post,
+                    "hobli": order.hobli,
+                    "taluk": order.taluk,
+                    "district": order.district,
+                    "state": order.state,
+                    "pincode": order.pincode
+                },
+                "status": order.order_status.value,
+                "collection_type": order.collection_type.value,
+                "payment_method": order.payment_method.value,
+                "assigned_outlet_id": order.assigned_outlet_id,
+                "order_date": order.order_date.isoformat(),
+                "expected_delivery_date": order.expected_delivery_date.isoformat() if order.expected_delivery_date else None,
+                "actual_delivery_date": order.actual_delivery_date.isoformat() if order.actual_delivery_date else None,
+                "gross_amount": float(order.gross_amount),
+                "discount_applied": float(order.discount_applied),
+                "prepaid_amount": float(order.prepaid_amount),
+                "total_amount": float(order.total_amount),
+                "total_commission": float(order.total_commission),
+                "status_remarks": order.status_remarks,
+                "items": order_items
+            })
+        
         return {
+            "filters": {
+                "from_date": from_date,
+                "to_date": to_date
+            },
             "performance": {
                 "total_orders": total_orders,
                 "today_orders": today_orders,
                 "month_orders": month_orders,
                 "delivered_orders": delivered_orders,
-                "delivery_rate": (delivered_orders / total_orders * 100) if total_orders > 0 else 0,
-                "total_revenue": total_revenue,
-                "month_revenue": month_revenue
+                "delivery_rate": round((delivered_orders / total_orders * 100), 2) if total_orders > 0 else 0,
+                "total_revenue": round(total_revenue, 2),
+                "month_revenue": round(month_revenue, 2)
             },
-            "recent_orders": [
-                {
-                    "order_id": order.uid,
-                    "order_number": order.order_number,
-                    "customer_name": order.customer_name,
-                    "customer_phone": order.customer_phone,
-                    "status": order.order_status.value,
-                    "total_amount": float(order.total_amount),
-                    "order_date": order.order_date.isoformat()
-                }
-                for order in sorted(my_orders.items, key=lambda x: x.created_at, reverse=True)[:10]
-            ],
+            "orders": detailed_orders,
             "status_breakdown": {
-                "pending": len([o for o in my_orders.items if o.order_status == OrderStatus.PENDING]),
-                "delivery_allotted": len([o for o in my_orders.items if o.order_status == OrderStatus.DELIVERY_ALLOTTED]),
-                "delivered": len([o for o in my_orders.items if o.order_status == OrderStatus.DELIVERED]),
-                "cancelled": len([o for o in my_orders.items if o.order_status == OrderStatus.CANCELLED])
-            }
+                "pending": len([o for o in filtered_orders if o.order_status == OrderStatus.PENDING]),
+                "delivery_allotted": len([o for o in filtered_orders if o.order_status == OrderStatus.DELIVERY_ALLOTTED]),
+                "delivered": len([o for o in filtered_orders if o.order_status == OrderStatus.DELIVERED]),
+                "cancelled": len([o for o in filtered_orders if o.order_status == OrderStatus.CANCELLED])
+            },
+            "product_summary": list(product_summary.values())
         }
     
     except HTTPException:
