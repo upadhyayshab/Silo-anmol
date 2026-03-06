@@ -118,11 +118,11 @@ async def list_users(
     is_active: bool = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER))
 ):
     """
     List all users with optional filters
-    Requires: super_admin, admin, or outlet_manager role
+    Requires: super_admin, admin, accountant, or outlet_manager role
     """
     try:
         filters = {}
