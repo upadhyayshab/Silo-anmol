@@ -600,11 +600,18 @@ async def get_product_performance(
         orders = await order_manager.fetch_all(filters=filters, limit=0)
         
         # Filter by actual_delivery_date (when product was actually delivered)
-        period_orders = [
-            order for order in orders.items
-            if order.actual_delivery_date and 
-               from_date <= order.actual_delivery_date.date() <= to_date
-        ]
+        period_orders = []
+        for order in orders.items:
+            if not order.actual_delivery_date:
+                continue
+            
+            # Handle both date and datetime objects
+            delivery_date = order.actual_delivery_date
+            if hasattr(delivery_date, 'date'):
+                delivery_date = delivery_date.date()
+            
+            if from_date <= delivery_date <= to_date:
+                period_orders.append(order)
         
         # Get order items for delivered orders
         from managers import OrderItemManager
