@@ -148,7 +148,7 @@ async def create_payout(
 async def list_payouts(
     outlet_id: Optional[str] = Query(None, description="Filter by outlet"),
     outlet_manager_id: Optional[str] = Query(None, description="Filter by outlet manager"),
-    status: Optional[PayoutStatus] = Query(None, description="Filter by status"),
+    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status (PENDING, APPROVED, PAID, REJECTED)"),
     period_from: Optional[date] = Query(None, description="Filter by period start date"),
     period_to: Optional[date] = Query(None, description="Filter by period end date"),
     payment_date_from: Optional[date] = Query(None, description="Filter by payment date from"),
@@ -183,8 +183,17 @@ async def list_payouts(
         
         if outlet_id:
             filters["outlet_id"] = outlet_id
-        if status:
-            filters["status"] = status
+        
+        # Handle status filter - convert string to enum
+        if status_filter:
+            try:
+                status_enum = PayoutStatus(status_filter)
+                filters["status"] = status_enum
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status. Must be one of: PENDING, APPROVED, PAID, REJECTED"
+                )
         
         # Fetch payouts
         payouts = await payout_manager.fetch_all(
@@ -195,7 +204,7 @@ async def list_payouts(
         )
         
         # Apply date filtering in Python if needed
-        filtered_items = payouts.items
+        filtered_items = list(payouts.items) if payouts.items else []
         
         if period_from or period_to:
             filtered_items = [
@@ -217,33 +226,41 @@ async def list_payouts(
             filtered_items = filtered_items[offset:offset + limit] if limit > 0 else filtered_items
         
         # Convert to response models
-        items = [
-            PayoutResponse(
-                uid=p.uid,
-                outlet_id=p.outlet_id,
-                outlet_manager_id=p.outlet_manager_id,
-                period_from=p.period_from,
-                period_to=p.period_to,
-                amount=p.amount,
-                payment_date=p.payment_date,
-                payment_method=p.payment_method,
-                transaction_id=p.transaction_id,
-                status=p.status,
-                remarks=p.remarks,
-                created_by=p.created_by,
-                approved_by=p.approved_by,
-                approved_at=p.approved_at,
-                paid_by=p.paid_by,
-                paid_at=p.paid_at,
-                created_at=p.created_at,
-                updated_at=p.updated_at
-            )
-            for p in filtered_items
-        ]
+        items = []
+        for p in filtered_items:
+            try:
+                items.append(PayoutResponse(
+                    uid=p.uid,
+                    outlet_id=p.outlet_id,
+                    outlet_manager_id=p.outlet_manager_id,
+                    period_from=p.period_from,
+                    period_to=p.period_to,
+                    amount=p.amount,
+                    payment_date=p.payment_date,
+                    payment_method=p.payment_method,
+                    transaction_id=p.transaction_id,
+                    status=p.status,
+                    remarks=p.remarks,
+                    created_by=p.created_by,
+                    approved_by=p.approved_by,
+                    approved_at=p.approved_at,
+                    paid_by=p.paid_by,
+                    paid_at=p.paid_at,
+                    created_at=p.created_at,
+                    updated_at=p.updated_at
+                ))
+            except Exception as item_error:
+                # Log the error but continue processing other items
+                print(f"Error processing payout {p.uid}: {str(item_error)}")
+                continue
         
-        return ListResponse(items=items, count=len(filtered_items))
+        return ListResponse(items=items, count=len(items))
         
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch payouts: {str(e)}"
