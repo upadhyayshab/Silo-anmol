@@ -378,9 +378,35 @@ async def get_telecaller_dashboard(
         
         # Get telecaller's orders with items
         my_orders = await order_manager.fetch_all(
-            filters={"telecaller_id": user_id},
-            joins=[["items", ["product"]]]
+            filters={"telecaller_id": user_id}
         )
+        
+        # Fetch items and products for each order
+        from managers import OrderItemManager, ProductManager
+        order_item_manager = OrderItemManager(engine)
+        product_manager_instance = ProductManager(engine)
+        
+        # Build a map of order items with product details
+        order_items_map = {}
+        product_cache = {}
+        
+        for order in my_orders.items:
+            items = await order_item_manager.fetch_all(filters={"order_id": order.uid})
+            order_items_with_products = []
+            
+            for item in items.items:
+                # Fetch product details (with caching)
+                if item.product_id not in product_cache:
+                    try:
+                        product_cache[item.product_id] = await product_manager_instance.fetch(item.product_id)
+                    except:
+                        product_cache[item.product_id] = None
+                
+                # Attach product to item
+                item.product = product_cache[item.product_id]
+                order_items_with_products.append(item)
+            
+            order_items_map[order.uid] = order_items_with_products
         
         # Apply date filters
         filtered_orders = my_orders.items
@@ -405,7 +431,10 @@ async def get_telecaller_dashboard(
         product_summary = {}
         
         for order in filtered_orders:
-            for item in order.items:
+            # Get items for this order from our map
+            items_for_order = order_items_map.get(order.uid, [])
+            
+            for item in items_for_order:
                 product_id = item.product_id
                 
                 if product_id not in product_summary:
@@ -441,14 +470,18 @@ async def get_telecaller_dashboard(
         detailed_orders = []
         for order in sorted(filtered_orders, key=lambda x: x.created_at, reverse=True):
             order_items = []
-            for item in order.items:
+            
+            # Get items for this order from our map
+            items_for_order = order_items_map.get(order.uid, [])
+            
+            for item in items_for_order:
                 order_items.append({
                     "item_id": item.uid,
                     "product_id": item.product_id,
                     "product_name": item.product.product_name if item.product else "Unknown",
                     "sku": item.product.sku if item.product else "N/A",
                     "hsn_code": item.product.hsn_code if item.product else "N/A",
-                    "unit_of_measure": item.product.unit_of_measure.value if item.product else "N/A",
+                    "unit_of_measure": item.product.unit_of_measure.value if item.product and item.product.unit_of_measure else "N/A",
                     "quantity": item.quantity,
                     "unit_price": float(item.unit_price),
                     "product_manual_discount": float(item.product_manual_discount),
