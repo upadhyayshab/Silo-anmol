@@ -101,8 +101,16 @@ async def create_order(
             subtotal = item.quantity * calculated_unit_price
             
             # Calculate commission for this item
-            # Commission base = cost_price - per_unit_discount
-            commission_base = max(product.cost_price - per_unit_discount, Decimal('0.00'))
+            # Check if product is Silo Fortune (margin = 0) or Non-Silo Fortune (margin > 0)
+            if product.margin > 0:
+                # Non-Silo Fortune product: Use margin as commission base
+                # Ignore product_discount for commission calculation
+                commission_base = product.margin
+            else:
+                # Silo Fortune product: Use existing logic
+                # Commission base = cost_price - product_discount
+                commission_base = max(product.cost_price - per_unit_discount, Decimal('0.00'))
+            
             # Commission percentage interpretation (product.commission is now percentage 0-100)
             commission_per_unit = commission_base * (product.commission / 100)
             item_commission = commission_per_unit * item.quantity
@@ -420,7 +428,17 @@ async def create_proxy_order(
             
             subtotal = item.quantity * calculated_unit_price
             
-            commission_base = max(product.cost_price - per_unit_discount, Decimal('0.00'))
+            # Calculate commission for this item
+            # Check if product is Silo Fortune (margin = 0) or Non-Silo Fortune (margin > 0)
+            if product.margin > 0:
+                # Non-Silo Fortune product: Use margin as commission base
+                # Ignore product_discount for commission calculation
+                commission_base = product.margin
+            else:
+                # Silo Fortune product: Use existing logic
+                # Commission base = cost_price - product_discount
+                commission_base = max(product.cost_price - per_unit_discount, Decimal('0.00'))
+            
             commission_per_unit = commission_base * (product.commission / 100)
             item_commission = commission_per_unit * item.quantity
             total_commission += item_commission

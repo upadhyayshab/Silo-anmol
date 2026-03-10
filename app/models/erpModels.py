@@ -150,6 +150,7 @@ class ProductCreateRequest(BaseModel):
     min_stock_level: int = Field(default=10, ge=0)
     commission: Decimal = Field(default=0.00, ge=0, description="Commission in rupees")
     discount: Decimal = Field(default=0.00, ge=0, description="Discount in rupees")
+    margin: Decimal = Field(default=Decimal("0.00"), ge=0, description="Margin for non-Silo Fortune products")
 
 
 class ProductUpdateRequest(BaseModel):
@@ -166,6 +167,7 @@ class ProductUpdateRequest(BaseModel):
     min_stock_level: Optional[int] = None
     commission: Optional[Decimal] = Field(None, ge=0, description="Commission in rupees")
     discount: Optional[Decimal] = Field(None, ge=0, description="Discount in rupees")
+    margin: Optional[Decimal] = Field(None, ge=0, description="Margin for non-Silo Fortune products")
     is_active: Optional[bool] = None
 
 
@@ -185,6 +187,7 @@ class ProductResponse(BaseModel):
     min_stock_level: int
     commission: Decimal
     discount: Decimal
+    margin: Decimal
     is_active: bool
     created_at: datetime
 

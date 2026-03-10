@@ -145,6 +145,7 @@ class ProductSchema(BaseSchema):
     # New fields for commission and discount (in rupees)
     commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Commission in rupees
     discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)    # Discount in rupees
+    margin = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)      # Margin for non-Silo Fortune products (in rupees)
     
     is_active = db.Column(db.Boolean, default=True, nullable=False)
 
