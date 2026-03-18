@@ -269,6 +269,26 @@ class OrderUpdateRequest(BaseModel):
     expected_delivery_date: Optional[date] = None
 
 
+class OrderFullUpdateRequest(BaseModel):
+    customer_name: str
+    customer_phone: str
+    house_no: Optional[str] = None
+    street: Optional[str] = None
+    address_line: str
+    village: Optional[str] = None
+    post: Optional[str] = None
+    hobli: Optional[str] = None
+    taluk: Optional[str] = None
+    district: str
+    state: str
+    pincode: str
+    collection_type: CollectionType
+    payment_method: PaymentMethod
+    expected_delivery_date: Optional[date] = None
+    manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
+    items: List[OrderItemRequest]
+
+
 class OrderStatusUpdateRequest(BaseModel):
     order_status: OrderStatus
     status_remarks: Optional[str] = None  # Mandatory for cancelled
@@ -475,6 +495,16 @@ class StockTransferStatusUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class TransferItemApproveRequest(BaseModel):
+    product_id: str
+    approved_quantity: int = Field(..., ge=0)
+
+
+class StockTransferApproveQuantitiesRequest(BaseModel):
+    items: List[TransferItemApproveRequest]
+    notes: Optional[str] = None
+
+
 class TransferItemResponse(BaseModel):
     uid: str
     product_id: str
@@ -657,6 +687,7 @@ __all__ = [
     
     # Order
     "OrderItemRequest", "OrderCreateRequest", "ProxyOrderCreateRequest", "OrderUpdateRequest",
+    "OrderFullUpdateRequest",
     "OrderStatusUpdateRequest", "OrderAssignRequest", "OrderRevokeRequest",
     "OrderItemResponse", "OrderResponse",
     
@@ -670,7 +701,7 @@ __all__ = [
     
     # Stock Transfer
     "TransferItemRequest", "StockTransferCreateRequest",
-    "StockTransferStatusUpdateRequest",
+    "StockTransferStatusUpdateRequest", "TransferItemApproveRequest", "StockTransferApproveQuantitiesRequest",
     "TransferItemResponse", "StockTransferResponse",
     
     # System

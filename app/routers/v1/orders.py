@@ -12,6 +12,7 @@ from managers import (
 from models import (
     OrderCreateRequest, ProxyOrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
     OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
+    OrderFullUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse
 )
@@ -830,55 +831,151 @@ async def get_order(
         )
 
 
-# Duplicate GET /{order_id}/transactions route removed - moved to top of file
-    """Get all transactions for an order"""
+@router.put("/{order_id}", response_model=OrderResponse)
+async def update_order_full(
+    order_id: str,
+    payload: OrderFullUpdateRequest,
+    current_user_id: str = Depends(require_roles(
+        UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """
+    Update order details including customer info and products.
+    Restricted to Admin and Super Admin.
+    """
     try:
-        # Verify order exists and user has access
         order = await order_manager.fetch(order_id)
         
-        current_user = await user_manager.fetch(current_user_id)
+        if order.order_status in [OrderStatus.DELIVERED, OrderStatus.CANCELLED]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot edit order with status {order.order_status}"
+            )
+
+        # Validate products and calculate pricing
+        gross_amount = Decimal('0.00')  # Total at MRP
+        product_discount_total = Decimal('0.00')
+        total_commission = Decimal('0.00')
+        validated_items = []
         
-        # Role-based access control
-        if current_user.role == UserRole.TELECALLER:
-            if order.telecaller_id != current_user_id:
+        for item in payload.items:
+            try:
+                product = await product_manager.fetch(item.product_id)
+                if not product.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Product {product.product_name} is not active"
+                    )
+            except Exception:
                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view transactions for your own orders"
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Product not found: {item.product_id}"
                 )
-        elif current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id and order.outlet_id != current_user.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view transactions for your outlet's orders"
-                )
+            
+            item_gross = item.quantity * product.cost_price
+            gross_amount += item_gross
+            product_discount_total += item.product_manual_discount
+            
+            per_unit_discount = item.product_manual_discount / item.quantity if item.quantity > 0 else Decimal('0.00')
+            calculated_unit_price = max(Decimal('0.00'), product.cost_price - per_unit_discount)
+            subtotal = item.quantity * calculated_unit_price
+            
+            if product.margin > 0:
+                commission_base = product.margin
+            else:
+                commission_base = max(Decimal('0.00'), product.cost_price - per_unit_discount)
+                
+            commission_per_unit = commission_base * (product.commission / 100)
+            item_commission = commission_per_unit * item.quantity
+            total_commission += item_commission
+            
+            validated_items.append({
+                "product": product,
+                "quantity": item.quantity,
+                "unit_price": calculated_unit_price,
+                "subtotal": subtotal,
+                "gross_amount": item_gross,
+                "product_manual_discount": item.product_manual_discount,
+                "commission": item_commission
+            })
+            
+        discount_applied = product_discount_total
+        amount_after_discount = gross_amount - product_discount_total
+        final_total_amount = amount_after_discount - order.prepaid_amount
         
-        # Get transactions
-        transactions = await transaction_manager.fetch_all(
-            filters={"order_id": order_id}
-        )
+        if product_discount_total > gross_amount:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Discounts cannot exceed gross amount")
+        if order.prepaid_amount > amount_after_discount:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prepaid amount exceeds order total after discount")
+        if final_total_amount < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Final order amount cannot be negative")
+            
+        # Update Order Fields
+        update_data = {
+            "customer_name": payload.customer_name,
+            "customer_phone": payload.customer_phone,
+            "house_no": payload.house_no,
+            "street": payload.street,
+            "address_line": payload.address_line,
+            "village": payload.village,
+            "post": payload.post,
+            "hobli": payload.hobli,
+            "taluk": payload.taluk,
+            "district": payload.district,
+            "state": payload.state,
+            "pincode": payload.pincode,
+            "collection_type": payload.collection_type,
+            "payment_method": payload.payment_method,
+            "expected_delivery_date": payload.expected_delivery_date,
+            "gross_amount": gross_amount,
+            "manual_discount": payload.manual_discount,
+            "discount_applied": discount_applied,
+            "total_amount": final_total_amount,
+            "total_commission": total_commission
+        }
+        await order_manager.update(order_id, update_data)
         
-        transaction_responses = []
-        for transaction in transactions.items:
-            transaction_responses.append(OrderTransactionResponse(
-                uid=transaction.uid,
-                order_id=transaction.order_id,
-                amount=transaction.amount,
-                payment_method=transaction.payment_method,
-                collection_type=transaction.collection_type,
-                reference_number=transaction.reference_number,
-                notes=transaction.notes,
-                created_at=transaction.created_at,
-                created_by=transaction.created_by
+        # Replace items (delete old, create new)
+        existing_items = await order_item_manager.fetch_all(filters={"order_id": order_id})
+        async with order_manager.session_factory() as session:
+            # We must delete manually to ensure consistency
+            from sqlalchemy import delete
+            await session.execute(delete(OrderItemSchema).where(OrderItemSchema.order_id == order_id))
+            await session.commit()
+            
+        for item_data in validated_items:
+            await order_item_manager.create(OrderItemSchema(
+                order_id=order_id,
+                product_id=item_data["product"].uid,
+                quantity=item_data["quantity"],
+                unit_price=item_data["unit_price"],
+                total_price=item_data["subtotal"],
+                subtotal=item_data["subtotal"],
+                product_manual_discount=item_data["product_manual_discount"]
             ))
+            
+        # Log activity
+        try:
+            from managers import ActivityLogManager, ActivityLogSchema
+            activity_manager = ActivityLogManager(engine)
+            await activity_manager.create(ActivityLogSchema(
+                user_id=current_user_id,
+                action="UPDATE_ORDER_FULL",
+                entity_type="customer_order",
+                entity_id=order_id,
+                details={"updated_fields": list(update_data.keys()), "amount": float(final_total_amount)}
+            ))
+        except Exception as log_error:
+            print(f"Warning: Failed to log activity for order update {order_id}: {log_error}")
+            
+        return await get_order_response(order_id)
         
-        return ListResponse(items=transaction_responses, count=len(transaction_responses))
-    
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch order transactions: {str(e)}"
+            detail=f"Failed to update order: {str(e)}"
         )
 
 
@@ -1578,7 +1675,6 @@ async def delete_order(
     Permanently delete an order
     
     Restrictions:
-    - Cannot delete if prepaid_amount > 0
     - Cannot delete if status is DELIVERED
     - Cannot delete if status is DELIVERY_ALLOTTED
     - Only SUPER_ADMIN and ADMIN can delete
@@ -1600,14 +1696,7 @@ async def delete_order(
                 detail=f"Order not found: {str(fetch_error)}"
             )
         
-        # Validation 1: Check prepaid amount
-        if order.prepaid_amount > 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot delete order with prepaid amount (Rs {order.prepaid_amount}). Refund required first."
-            )
-        
-        # Validation 2: Check order status
+        # Validation 1: Check order status
         if order.order_status == OrderStatus.DELIVERED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1703,31 +1792,49 @@ async def delete_order(
             # Log but don't fail deletion if activity logging fails
             print(f"Warning: Failed to log deletion activity: {log_error}")
         
-        # Delete the order (cascade will handle related tables)
-        # Note: Using direct session delete to avoid SharedBackend bug
+        # Soft delete the order (cascade will update related tables)
+        # Note: Using direct session update
         try:
             async with order_manager.session_factory() as session:
-                # Fetch the order again in this session
                 import sqlalchemy as db
-                query = db.select(CustomerOrderSchema).filter_by(uid=order_id)
-                result = await session.execute(query)
-                order_to_delete = result.scalar_one_or_none()
+                now = datetime.utcnow()
+                from managers import DeliveryTrackingSchema
                 
-                if not order_to_delete:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Order not found during deletion"
-                    )
+                # Update order
+                await session.execute(
+                    db.update(CustomerOrderSchema)
+                    .where(CustomerOrderSchema.uid == order_id)
+                    .values(deleted_at=now, order_status=OrderStatus.CANCELLED)
+                )
                 
-                # Delete the order
-                await session.delete(order_to_delete)
+                # Update items
+                await session.execute(
+                    db.update(OrderItemSchema)
+                    .where(OrderItemSchema.order_id == order_id)
+                    .values(deleted_at=now)
+                )
+                
+                # Update transactions
+                await session.execute(
+                    db.update(OrderTransactionSchema)
+                    .where(OrderTransactionSchema.order_id == order_id)
+                    .values(deleted_at=now)
+                )
+                
+                # Update delivery tracking
+                await session.execute(
+                    db.update(DeliveryTrackingSchema)
+                    .where(DeliveryTrackingSchema.order_id == order_id)
+                    .values(deleted_at=now)
+                )
+                
                 await session.commit()
         except HTTPException:
             raise
         except Exception as delete_error:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to delete order from database: {str(delete_error)}"
+                detail=f"Failed to soft delete order from database: {str(delete_error)}"
             )
         
         return StatusResponse(
