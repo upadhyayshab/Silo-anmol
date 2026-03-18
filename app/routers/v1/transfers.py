@@ -10,6 +10,7 @@ from managers import (
 )
 from models import (
     StockTransferCreateRequest, StockTransferStatusUpdateRequest,
+    StockTransferApproveQuantitiesRequest,
     StockTransferResponse, TransferItemResponse,
     ListResponse, StatusResponse
 )
@@ -624,38 +625,78 @@ async def get_transfers(
         )
 
 
-# Duplicate /{transfer_id} route removed - moved to top of file
-    """Get specific transfer details"""
+@router.put("/{transfer_id}/approve-with-quantities", response_model=StatusResponse)
+async def approve_transfer_with_quantities(
+    transfer_id: str,
+    payload: StockTransferApproveQuantitiesRequest,
+    current_user_id: str = Depends(require_roles(
+        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """
+    Approve transfer request and potentially modify requested quantities.
+    Available to warehouse managers and admins.
+    """
     try:
+        current_user = await user_manager.fetch(current_user_id)
         transfer = await transfer_manager.fetch(transfer_id)
         
-        # Check access permissions
-        current_user = await user_manager.fetch(current_user_id)
+        # Validations
+        if transfer.status != TransferStatus.PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Only PENDING transfers can be approved. Current status: {transfer.status}"
+            )
+            
+        if current_user.role == UserRole.WAREHOUSE_MANAGER and transfer.from_outlet_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Warehouse managers can only approve transfers from warehouse"
+            )
+            
+        # Map item modifications
+        items_dict = {item.product_id: item.approved_quantity for item in payload.items}
         
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            # Can only view transfers involving their outlet
-            if (current_user.outlet_id != transfer.to_outlet_id and 
-                current_user.outlet_id != transfer.from_outlet_id):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view transfers involving your outlet"
+        # Update quantities
+        import sqlalchemy as db
+        async with transfer_manager.session_factory() as session:
+            for product_id, approved_qty in items_dict.items():
+                await session.execute(
+                    db.update(TransferItemSchema)
+                    .where(
+                        db.and_(
+                            TransferItemSchema.transfer_id == transfer_id,
+                            TransferItemSchema.product_id == product_id
+                        )
+                    )
+                    .values(quantity_requested=approved_qty)
                 )
-        elif current_user.role == UserRole.WAREHOUSE_MANAGER:
-            # Can only view transfers involving warehouse
-            if transfer.from_outlet_id is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view transfers from warehouse"
+            
+            await session.execute(
+                db.update(StockTransferOrderSchema)
+                .where(StockTransferOrderSchema.uid == transfer_id)
+                .values(
+                    status=TransferStatus.APPROVED,
+                    approved_by=current_user_id,
+                    notes=db.case((payload.notes != None, payload.notes), else_=StockTransferOrderSchema.notes)
                 )
+            )
+            await session.commit()
+            
+        # Refresh and Reserve stock based on updated quantities
+        await reserve_transfer_stock(transfer_id)
         
-        return await get_transfer_response(transfer_id)
-    
+        return StatusResponse(
+            status="ok",
+            message="Transfer approved with modified quantities"
+        )
+        
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Transfer not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to approve transfer: {str(e)}"
         )
 
 
