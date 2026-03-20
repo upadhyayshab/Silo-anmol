@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query
 from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
@@ -831,18 +831,49 @@ async def get_order(
         )
 
 
-@router.put("/{order_id}", response_model=OrderResponse)
+@router.put(
+    "/{order_id}/admin", 
+    response_model=OrderResponse,
+    summary="Update Entire Order Details",
+    description="Update all editable fields of an order including customer information, delivery address, order items and their manual discounts. Recalculates gross amounts, discounts, and final totals automatically. Requires Admin or Super Admin privileges."
+)
 async def update_order_full(
-    order_id: str,
-    payload: OrderFullUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    order_id: str = Path(..., description="Unique ID of the order to update"),
+    payload: OrderFullUpdateRequest = Body(..., 
+        openapi_examples={
+            "full_update": {
+                "summary": "Full Order Update Example",
+                "description": "Example demonstrating providing new customer details and a list of new replacement items.",
+                "value": {
+                    "customer_name": "test",
+                    "customer_phone": "9876543210",
+                    "house_no": "A-12",
+                    "street": "MG Road",
+                    "address_line": "Near Metro Station",
+                    "village": "Central",
+                    "post": "GPO",
+                    "hobli": "South",
+                    "taluk": "Bangalore South",
+                    "district": "Bangalore Urban",
+                    "state": "Karnataka",
+                    "pincode": "560001",
+                    "collection_type": "DELIVERY",
+                    "payment_method": "CASH",
+                    "expected_delivery_date": "2023-12-31",
+                    "manual_discount": 0.00,
+                    "items": [
+                        {
+                            "product_id": "prod_12345",
+                            "quantity": 2,
+                            "product_manual_discount": 10.00
+                        }
+                    ]
+                }
+            }
+        }
+    ),
+    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
 ):
-    """
-    Update order details including customer info and products.
-    Restricted to Admin and Super Admin.
-    """
     try:
         order = await order_manager.fetch(order_id)
         
@@ -1665,27 +1696,29 @@ async def update_order_payment_status(
 
 
 
-@router.delete("/{order_id}", response_model=StatusResponse)
+@router.delete(
+    "/{order_id}", 
+    response_model=StatusResponse,
+    summary="Permanently Delete Order",
+    description=(
+        "Permanently delete an order.\n\n"
+        "Restrictions:\n"
+        "- Cannot delete if status is DELIVERED\n"
+        "- Cannot delete if status is DELIVERY_ALLOTTED\n"
+        "- Only SUPER_ADMIN and ADMIN can delete\n\n"
+        "Actions:\n"
+        "- Releases reserved inventory (for PENDING orders)\n"
+        "- Deletes order items (cascade)\n"
+        "- Deletes transactions (cascade)\n"
+        "- Deletes delivery tracking (cascade)\n"
+        "- Logs deletion to activity_logs"
+    )
+)
 async def delete_order(
-    order_id: str,
-    reason: str,
+    order_id: str = Path(..., description="Unique ID of the order to delete"),
+    reason: str = Query(..., min_length=10, description="Reason for deletion (minimum 10 characters)"),
     current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
 ):
-    """
-    Permanently delete an order
-    
-    Restrictions:
-    - Cannot delete if status is DELIVERED
-    - Cannot delete if status is DELIVERY_ALLOTTED
-    - Only SUPER_ADMIN and ADMIN can delete
-    
-    Actions:
-    - Releases reserved inventory (for PENDING orders)
-    - Deletes order items (cascade)
-    - Deletes transactions (cascade)
-    - Deletes delivery tracking (cascade)
-    - Logs deletion to activity_logs
-    """
     try:
         # Fetch the order
         try:
@@ -1792,49 +1825,31 @@ async def delete_order(
             # Log but don't fail deletion if activity logging fails
             print(f"Warning: Failed to log deletion activity: {log_error}")
         
-        # Soft delete the order (cascade will update related tables)
-        # Note: Using direct session update
+        # Delete the order (cascade will handle related tables)
+        # Note: Using direct session delete to avoid SharedBackend bug
         try:
             async with order_manager.session_factory() as session:
+                # Fetch the order again in this session
                 import sqlalchemy as db
-                now = datetime.utcnow()
-                from managers import DeliveryTrackingSchema
+                query = db.select(CustomerOrderSchema).filter_by(uid=order_id)
+                result = await session.execute(query)
+                order_to_delete = result.scalar_one_or_none()
                 
-                # Update order
-                await session.execute(
-                    db.update(CustomerOrderSchema)
-                    .where(CustomerOrderSchema.uid == order_id)
-                    .values(deleted_at=now, order_status=OrderStatus.CANCELLED)
-                )
+                if not order_to_delete:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Order not found during deletion"
+                    )
                 
-                # Update items
-                await session.execute(
-                    db.update(OrderItemSchema)
-                    .where(OrderItemSchema.order_id == order_id)
-                    .values(deleted_at=now)
-                )
-                
-                # Update transactions
-                await session.execute(
-                    db.update(OrderTransactionSchema)
-                    .where(OrderTransactionSchema.order_id == order_id)
-                    .values(deleted_at=now)
-                )
-                
-                # Update delivery tracking
-                await session.execute(
-                    db.update(DeliveryTrackingSchema)
-                    .where(DeliveryTrackingSchema.order_id == order_id)
-                    .values(deleted_at=now)
-                )
-                
+                # Delete the order
+                await session.delete(order_to_delete)
                 await session.commit()
         except HTTPException:
             raise
         except Exception as delete_error:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to soft delete order from database: {str(delete_error)}"
+                detail=f"Failed to delete order from database: {str(delete_error)}"
             )
         
         return StatusResponse(
