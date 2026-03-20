@@ -832,7 +832,7 @@ async def get_order(
 
 
 @router.put(
-    "/{order_id}", 
+    "/{order_id}/admin", 
     response_model=OrderResponse,
     summary="Update Entire Order Details",
     description="Update all editable fields of an order including customer information, delivery address, order items and their manual discounts. Recalculates gross amounts, discounts, and final totals automatically. Requires Admin or Super Admin privileges."
