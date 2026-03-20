@@ -1792,49 +1792,31 @@ async def delete_order(
             # Log but don't fail deletion if activity logging fails
             print(f"Warning: Failed to log deletion activity: {log_error}")
         
-        # Soft delete the order (cascade will update related tables)
-        # Note: Using direct session update
+        # Delete the order (cascade will handle related tables)
+        # Note: Using direct session delete to avoid SharedBackend bug
         try:
             async with order_manager.session_factory() as session:
+                # Fetch the order again in this session
                 import sqlalchemy as db
-                now = datetime.utcnow()
-                from managers import DeliveryTrackingSchema
+                query = db.select(CustomerOrderSchema).filter_by(uid=order_id)
+                result = await session.execute(query)
+                order_to_delete = result.scalar_one_or_none()
                 
-                # Update order
-                await session.execute(
-                    db.update(CustomerOrderSchema)
-                    .where(CustomerOrderSchema.uid == order_id)
-                    .values(deleted_at=now, order_status=OrderStatus.CANCELLED)
-                )
+                if not order_to_delete:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Order not found during deletion"
+                    )
                 
-                # Update items
-                await session.execute(
-                    db.update(OrderItemSchema)
-                    .where(OrderItemSchema.order_id == order_id)
-                    .values(deleted_at=now)
-                )
-                
-                # Update transactions
-                await session.execute(
-                    db.update(OrderTransactionSchema)
-                    .where(OrderTransactionSchema.order_id == order_id)
-                    .values(deleted_at=now)
-                )
-                
-                # Update delivery tracking
-                await session.execute(
-                    db.update(DeliveryTrackingSchema)
-                    .where(DeliveryTrackingSchema.order_id == order_id)
-                    .values(deleted_at=now)
-                )
-                
+                # Delete the order
+                await session.delete(order_to_delete)
                 await session.commit()
         except HTTPException:
             raise
         except Exception as delete_error:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to soft delete order from database: {str(delete_error)}"
+                detail=f"Failed to delete order from database: {str(delete_error)}"
             )
         
         return StatusResponse(
