@@ -73,10 +73,6 @@ async def get_outlet_orders(
         if status:
             filters["order_status"] = status
             
-        if role == "TELECALLER":
-            filters["telecaller"]["role"] = UserRole.TELECALLER.value
-        elif role == "OUTLET_MANAGER":
-            filters["telecaller"]["role"] = UserRole.OUTLET_MANAGER.value
         # Fetch all orders for this outlet
         orders_result = await order_manager.fetch_all(
             filters=filters,
@@ -111,9 +107,22 @@ async def get_outlet_orders(
             if to_date and order_date > to_date:
                 continue
             
+            # 2. Extract Creator Info
+            creator_role_value = None
             if order.telecaller:
                 order.creater_name = order.telecaller.full_name
-                order.creater_role = order.telecaller.role
+                # Assuming order.telecaller.role is an Enum or String (e.g., "TELECALLER")
+                creator_role_value = getattr(order.telecaller.role, 'value', order.telecaller.role)
+                order.is_telecaller_order = (creator_role_value == "TELECALLER")
+            else:
+                order.creater_name = "System/Unknown"
+                order.is_telecaller_order = False
+
+            # 3. ROLE FILTER LOGIC
+            # If role is provided, only keep records where creator_role matches
+            # If role is None/Empty, this block is skipped (shows all)
+            if role and creator_role_value != role:
+                continue
                 
             # Count status
             status_counts[order.order_status.value] += 1
@@ -138,6 +147,9 @@ async def get_outlet_orders(
                 "manual_discount": float(order.manual_discount),
                 "discount_applied": float(order.discount_applied),
                 "prepaid_amount": float(order.prepaid_amount),
+                "is_telecaller_order": order.is_telecaller_order,
+                "creater_name": order.creater_name,
+                "telecaller_id": order.telecaller_id if order.telecaller_id else "",
                 "total_commission": order_commission  # NEW: Commission data per order
             }
             
@@ -154,6 +166,7 @@ async def get_outlet_orders(
             "status_summary": status_counts,
             "commission_summary": commission_summary,  # NEW: Commission summary by status
             "filters_applied": {
+                "role": role if role else "All",
                 "status": status.value if status else None,
                 "from_date": from_date.isoformat() if from_date else None,
                 "to_date": to_date.isoformat() if to_date else None,
