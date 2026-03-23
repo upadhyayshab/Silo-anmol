@@ -7,7 +7,7 @@ from config import get_settings, get_engine
 from managers import (
     SalesInvoiceManager, CustomerOrderManager, InventoryManager,
     ProductManager, OutletManager, UserManager, StockTransferOrderManager,
-    ActivityLogManager
+    ActivityLogManager,CustomerOrderSchema,
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus
@@ -32,6 +32,7 @@ router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 @router.get("/dashboard-overview")
 async def get_outlet_orders(
     outlet_id: str,
+    role: Optional[str] = None,
     status: Optional[OrderStatus] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
@@ -44,6 +45,7 @@ async def get_outlet_orders(
     """
     Get all orders for a specific outlet (assigned OR walk-in)
     Returns order_id, total_amount, and status for each order
+    role : should be either "TELECALLER" or "OUTLET_MANAGER" for the filter 
     """
     try:
         # Get current user for access control
@@ -70,12 +72,17 @@ async def get_outlet_orders(
         filters = {"assigned_outlet_id": outlet_id}
         if status:
             filters["order_status"] = status
-        
+            
+        if role == "TELECALLER":
+            filters["telecaller"]["role"] = UserRole.TELECALLER.value
+        elif role == "OUTLET_MANAGER":
+            filters["telecaller"]["role"] = UserRole.OUTLET_MANAGER.value
         # Fetch all orders for this outlet
         orders_result = await order_manager.fetch_all(
             filters=filters,
             limit=limit,
-            offset=offset
+            offset=offset,
+            joins=[CustomerOrderSchema.telecaller]
         )
         
         # Process orders and apply date filtering
@@ -104,6 +111,10 @@ async def get_outlet_orders(
             if to_date and order_date > to_date:
                 continue
             
+            if order.telecaller:
+                order.creater_name = order.telecaller.full_name
+                order.creater_role = order.telecaller.role
+                
             # Count status
             status_counts[order.order_status.value] += 1
             

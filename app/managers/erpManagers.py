@@ -324,7 +324,7 @@ class CustomerOrderSchema(BaseSchema):
     total_commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total commission for order
 
     # Relationships
-    telecaller = relationship("UserSchema", back_populates="created_orders")
+    telecaller = relationship("UserSchema", back_populates="created_orders") # here we will get the telecallers and the outlet manager
     assigned_outlet = relationship("OutletSchema", back_populates="orders")
     items = relationship("OrderItemSchema", back_populates="order", cascade="all, delete-orphan")
     transactions = relationship("OrderTransactionSchema", back_populates="order", cascade="all, delete-orphan")
