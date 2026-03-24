@@ -970,11 +970,15 @@ openapi_examples={
             "discount_applied": discount_applied,
             "prepaid_amount": payload.prepaid_amount, # <--- Added here to update the row
             "total_amount": final_total_amount,
-            "total_commission": total_commission
+            "total_commission": total_commission,
+            "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
-        await order_manager.update(order_id, update_data)
-        
-        # 5. Replace items (delete old, create new)
+    
+        # Only release stock if the order status meant the stock was previously reserved (e.g. PENDING)
+        if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
+            await release_order_stock(order_id)
+
+        # 6. Replace items (delete old, create new)
         async with order_manager.session_factory() as session:
             # We must delete manually to ensure consistency
             from sqlalchemy import delete
@@ -991,8 +995,19 @@ openapi_examples={
                 subtotal=item_data["subtotal"],
                 product_manual_discount=item_data["product_manual_discount"]
             ))
+
+        # 7. Reserve Stock for New Items
+        if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
+            try:
+                await reserve_order_stock(order_id, order.assigned_outlet_id, validated_items)
+            except Exception as e:
+                # If new stock reservation fails, log it in status_remarks (similar to create_order)
+                update_data["status_remarks"] = f"Stock reservation failed after update: {str(e)}"
+                
+        # Commit order level updates to database
+        await order_manager.update(order_id, update_data)
             
-        # 6. Log activity
+        # 8. Log activity
         try:
             from managers import ActivityLogManager, ActivityLogSchema
             activity_manager = ActivityLogManager(engine)
