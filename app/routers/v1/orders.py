@@ -835,15 +835,16 @@ async def get_order(
     "/{order_id}/admin", 
     response_model=OrderResponse,
     summary="Update Entire Order Details",
-    description="Update all editable fields of an order including customer information, delivery address, order items and their manual discounts. Recalculates gross amounts, discounts, and final totals automatically. Requires Admin or Super Admin privileges."
+    description="Update all editable fields of an order including customer information, delivery address, order items, discounts, and prepaid amount. Recalculates gross amounts, discounts, and final totals automatically. Requires Admin or Super Admin privileges."
 )
 async def update_order_full(
     order_id: str = Path(..., description="Unique ID of the order to update"),
-    payload: OrderFullUpdateRequest = Body(..., 
-        openapi_examples={
+
+    payload: OrderFullUpdateRequest = Body(...,
+openapi_examples={
             "full_update": {
                 "summary": "Full Order Update Example",
-                "description": "Example demonstrating providing new customer details and a list of new replacement items.",
+                "description": "Example demonstrating providing new customer details, prepaid amount, and a list of new replacement items.",
                 "value": {
                     "customer_name": "test",
                     "customer_phone": "9876543210",
@@ -861,6 +862,7 @@ async def update_order_full(
                     "payment_method": "CASH",
                     "expected_delivery_date": "2023-12-31",
                     "manual_discount": 0.00,
+                    "prepaid_amount": 500.00,  # Added the new prepaid_amount field
                     "items": [
                         {
                             "product_id": "prod_12345",
@@ -883,7 +885,7 @@ async def update_order_full(
                 detail=f"Cannot edit order with status {order.order_status}"
             )
 
-        # Validate products and calculate pricing
+        # 1. Validate products and calculate pricing
         gross_amount = Decimal('0.00')  # Total at MRP
         product_discount_total = Decimal('0.00')
         total_commission = Decimal('0.00')
@@ -903,14 +905,17 @@ async def update_order_full(
                     detail=f"Product not found: {item.product_id}"
                 )
             
+            # Calculate grosses and discounts
             item_gross = item.quantity * product.cost_price
             gross_amount += item_gross
             product_discount_total += item.product_manual_discount
             
+            # Calculate unit price
             per_unit_discount = item.product_manual_discount / item.quantity if item.quantity > 0 else Decimal('0.00')
             calculated_unit_price = max(Decimal('0.00'), product.cost_price - per_unit_discount)
             subtotal = item.quantity * calculated_unit_price
             
+            # Calculate commissions
             if product.margin > 0:
                 commission_base = product.margin
             else:
@@ -930,18 +935,20 @@ async def update_order_full(
                 "commission": item_commission
             })
             
+        # 2. Recalculate Final Totals (Using payload.prepaid_amount)
         discount_applied = product_discount_total
         amount_after_discount = gross_amount - product_discount_total
-        final_total_amount = amount_after_discount - order.prepaid_amount
+        final_total_amount = amount_after_discount - payload.prepaid_amount
         
+        # 3. Validation checks
         if product_discount_total > gross_amount:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Discounts cannot exceed gross amount")
-        if order.prepaid_amount > amount_after_discount:
+        if payload.prepaid_amount > amount_after_discount:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Prepaid amount exceeds order total after discount")
         if final_total_amount < 0:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Final order amount cannot be negative")
             
-        # Update Order Fields
+        # 4. Update Order Fields mapping
         update_data = {
             "customer_name": payload.customer_name,
             "customer_phone": payload.customer_phone,
@@ -961,13 +968,13 @@ async def update_order_full(
             "gross_amount": gross_amount,
             "manual_discount": payload.manual_discount,
             "discount_applied": discount_applied,
+            "prepaid_amount": payload.prepaid_amount, # <--- Added here to update the row
             "total_amount": final_total_amount,
             "total_commission": total_commission
         }
         await order_manager.update(order_id, update_data)
         
-        # Replace items (delete old, create new)
-        existing_items = await order_item_manager.fetch_all(filters={"order_id": order_id})
+        # 5. Replace items (delete old, create new)
         async with order_manager.session_factory() as session:
             # We must delete manually to ensure consistency
             from sqlalchemy import delete
@@ -985,7 +992,7 @@ async def update_order_full(
                 product_manual_discount=item_data["product_manual_discount"]
             ))
             
-        # Log activity
+        # 6. Log activity
         try:
             from managers import ActivityLogManager, ActivityLogSchema
             activity_manager = ActivityLogManager(engine)

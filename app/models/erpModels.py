@@ -286,6 +286,7 @@ class OrderFullUpdateRequest(BaseModel):
     payment_method: PaymentMethod
     expected_delivery_date: Optional[date] = None
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
+    prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance") # Added field
     items: List[OrderItemRequest]
 
 
