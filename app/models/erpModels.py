@@ -378,7 +378,12 @@ class OrderTransactionResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
+class OrderTransactionUpdateRequest(BaseModel):
+    payment_method: Optional[PaymentMethod] = None
+    amount_paid: Optional[Decimal] = Field(None, gt=0)
+    transaction_reference: Optional[str] = None
+    notes: Optional[str] = None
+    
 class PaymentStatusUpdateRequest(BaseModel):
     """Request model for updating order payment status"""
     payment_status: PaymentStatus = Field(..., description="New payment status")
@@ -694,7 +699,7 @@ __all__ = [
     
     # Transaction
     "OrderTransactionCreateRequest", "OrderTransactionResponse",
-    "PaymentStatusUpdateRequest",
+    "PaymentStatusUpdateRequest","OrderTransactionUpdateRequest",
     
     # Invoice
     "InvoiceItemRequest", "InvoiceCreateRequest",

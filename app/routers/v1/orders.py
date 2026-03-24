@@ -11,7 +11,7 @@ from managers import (
 )
 from models import (
     OrderCreateRequest, ProxyOrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
-    OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,
+    OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,OrderTransactionUpdateRequest,
     OrderFullUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse
@@ -970,11 +970,15 @@ openapi_examples={
             "discount_applied": discount_applied,
             "prepaid_amount": payload.prepaid_amount, # <--- Added here to update the row
             "total_amount": final_total_amount,
-            "total_commission": total_commission
+            "total_commission": total_commission,
+            "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
-        await order_manager.update(order_id, update_data)
-        
-        # 5. Replace items (delete old, create new)
+    
+        # Only release stock if the order status meant the stock was previously reserved (e.g. PENDING)
+        if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
+            await release_order_stock(order_id)
+
+        # 6. Replace items (delete old, create new)
         async with order_manager.session_factory() as session:
             # We must delete manually to ensure consistency
             from sqlalchemy import delete
@@ -991,8 +995,19 @@ openapi_examples={
                 subtotal=item_data["subtotal"],
                 product_manual_discount=item_data["product_manual_discount"]
             ))
+
+        # 7. Reserve Stock for New Items
+        if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
+            try:
+                await reserve_order_stock(order_id, order.assigned_outlet_id, validated_items)
+            except Exception as e:
+                # If new stock reservation fails, log it in status_remarks (similar to create_order)
+                update_data["status_remarks"] = f"Stock reservation failed after update: {str(e)}"
+                
+        # Commit order level updates to database
+        await order_manager.update(order_id, update_data)
             
-        # 6. Log activity
+        # 8. Log activity
         try:
             from managers import ActivityLogManager, ActivityLogSchema
             activity_manager = ActivityLogManager(engine)
@@ -1006,7 +1021,7 @@ openapi_examples={
         except Exception as log_error:
             print(f"Warning: Failed to log activity for order update {order_id}: {log_error}")
             
-        return await get_order_response(order_id)
+        return await get_order_response_with_joins(order_id , joins=[CustomerOrderSchema.transactions])
         
     except HTTPException:
         raise
@@ -1240,6 +1255,92 @@ async def get_order_response(order_id: str) -> OrderResponse:
         created_at=order.created_at
     )
 
+async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResponse:
+    """Helper to build complete order response with items and joined relationships"""
+    
+    # 1. Fetch order with joins (ensure your manager passes 'joins' to the query)
+    order = await order_manager.fetch(order_id, joins=joins)
+    
+    # 2. Fetch items (often items are a standard join, but we pass the list anyway)
+    order_items = await order_item_manager.fetch_all(
+        filters={"order_id": order_id},
+        joins=joins
+    )
+    
+    from models import OrderItemResponse
+    
+    # 3. Build Item Responses
+    items = []
+    for item in order_items.items:
+        # Check for joined product data within the item
+        product_data = getattr(item, 'product', None)
+        
+        items.append(
+            OrderItemResponse(
+                uid=item.uid,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+                product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00')),
+                # Append product if it was joined
+                product=product_data if product_data else None
+            )
+        )
+    
+    # 4. Extract Top-Level Joins from the Order Model
+    # We map the SQLAlchemy relationship names to the response fields
+    telecaller = getattr(order, 'telecaller', None)
+    assigned_outlet = getattr(order, 'assigned_outlet', None)
+    transactions = getattr(order, 'transactions', []) if "transactions" in joins else None
+    delivery_tracking = getattr(order, 'delivery_tracking', None) if "delivery_tracking" in joins else None
+
+    # Handle backward compatibility for pricing
+    gross_amount = getattr(order, 'gross_amount', order.total_amount)
+    manual_discount = getattr(order, 'manual_discount', Decimal('0.00'))
+    discount_applied = getattr(order, 'discount_applied', Decimal('0.00'))
+    prepaid_amount = getattr(order, 'prepaid_amount', Decimal('0.00'))
+    total_commission = getattr(order, 'total_commission', Decimal('0.00'))
+    
+    return OrderResponse(
+        uid=order.uid,
+        order_number=order.order_number,
+        customer_name=order.customer_name,
+        customer_phone=order.customer_phone,
+        house_no=getattr(order, 'house_no', None),
+        street=getattr(order, 'street', None),
+        address_line=order.address_line,
+        village=getattr(order, 'village', None),
+        post=getattr(order, 'post', None),
+        hobli=getattr(order, 'hobli', None),
+        taluk=getattr(order, 'taluk', None),
+        district=order.district,
+        state=order.state,
+        pincode=order.pincode,
+        telecaller_id=order.telecaller_id,
+        assigned_outlet_id=order.assigned_outlet_id,
+        order_status=order.order_status,
+        collection_type=order.collection_type,
+        payment_method=order.payment_method,
+        order_date=order.order_date,
+        expected_delivery_date=order.expected_delivery_date,
+        actual_delivery_date=order.actual_delivery_date,
+        status_remarks=order.status_remarks,
+        gross_amount=gross_amount,
+        manual_discount=manual_discount,
+        discount_applied=discount_applied,
+        prepaid_amount=prepaid_amount,
+        total_amount=order.total_amount,
+        total_commission=total_commission,
+        items=items,
+        created_at=order.created_at,
+        
+        # --- Appended Joined Relationships ---
+        telecaller=telecaller,
+        assigned_outlet=assigned_outlet,
+        transactions=transactions,
+        delivery_tracking=delivery_tracking
+    )
 
 @router.put("/{order_id}", response_model=OrderResponse)
 async def update_order(
@@ -1592,7 +1693,56 @@ async def add_order_transaction(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to add transaction: {str(e)}"
         )
+        
+@router.patch("/{order_id}/transactions/{transaction_uid}", response_model=OrderTransactionResponse)
+async def update_order_transaction(
+    order_id: str,
+    transaction_uid: str,
+    payload: OrderTransactionUpdateRequest,
+    current_user_id: str = Depends(require_roles(
+        UserRole.ADMIN, UserRole.SUPER_ADMIN
+    ))
+):
+    """Update an existing payment transaction"""
+    try:
+        # 1. Fetch existing transaction and order
+        transaction = await transaction_manager.fetch(transaction_uid)
+        if not transaction or transaction.order_id != order_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transaction not found for this order"
+            )
 
+        order = await order_manager.fetch(order_id)
+        
+        # 2. Check permissions (Outlet Managers can only edit their own outlet's transactions)
+        current_user = await user_manager.fetch(current_user_id)
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id != order.assigned_outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only update transactions for your outlet"
+                )
+
+        # 3. Apply updates
+        update_data = payload.dict(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No update data provided"
+            )
+
+        updated_transaction = await transaction_manager.update(transaction_uid, update_data)
+        
+        return OrderTransactionResponse.from_orm(updated_transaction)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update transaction: {str(e)}"
+        )
 
 # Duplicate GET /{order_id}/transactions route removed - moved to top of file
     """Get all transactions for an order"""
