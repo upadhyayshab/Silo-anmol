@@ -1644,7 +1644,7 @@ async def add_order_transaction(
     order_id: str,
     payload: OrderTransactionCreateRequest,
     current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.TELECALLER
     ))
 ):
     """Add payment transaction to order"""
