@@ -1066,7 +1066,7 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         
         # Apply additional filters
         if transfer_status:
-            filters["order_status"] = status
+            filters["order_status"] = transfer_status
         if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
             filters["telecaller_id"] = telecaller_id
         if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
@@ -1798,7 +1798,7 @@ async def update_order_payment_status(
     order_id: str,
     payload: PaymentStatusUpdateRequest,
     current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER
     ))
 ):
     """
@@ -1815,6 +1815,12 @@ async def update_order_payment_status(
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied to this order"
+                )
+        elif current_user.role == UserRole.TELECALLER:
+            if order.telecaller_id != current_user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You can only record payments for your own orders"
                 )
         
         # Create a status update transaction record
