@@ -1663,7 +1663,7 @@ async def add_order_transaction(
         # Create transaction
         transaction = OrderTransactionSchema(
             order_id=order_id,
-            payment_status=PaymentStatus.PAID,
+            payment_status=payload.payment_status,
             payment_method=payload.payment_method,
             amount_paid=payload.amount_paid,
             transaction_reference=payload.transaction_reference,
