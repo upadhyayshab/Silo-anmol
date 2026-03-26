@@ -65,7 +65,7 @@ async def record_order_payment(
         # Create transaction record
         transaction = OrderTransactionSchema(
             order_id=payload.order_id,
-            payment_status=PaymentStatus.PAID,  # Recording actual payment received
+            payment_status=payload.payment_status,  # Recording actual payment received
             payment_method=payload.payment_method,
             amount_paid=payload.amount_paid,
             transaction_reference=payload.transaction_reference,

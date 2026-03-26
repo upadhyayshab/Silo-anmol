@@ -358,6 +358,7 @@ class OrderResponse(BaseModel):
 
 class OrderTransactionCreateRequest(BaseModel):
     order_id: str
+    payment_status: PaymentStatus
     payment_method: PaymentMethod
     amount_paid: Decimal = Field(..., gt=0)
     transaction_reference: Optional[str] = None
