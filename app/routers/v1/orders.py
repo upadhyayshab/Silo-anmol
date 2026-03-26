@@ -1731,6 +1731,35 @@ async def update_order_transaction(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No update data provided"
             )
+        if "amount_paid" in update_data:
+            new_amount = update_data["amount_paid"]
+            old_amount = transaction.amount_paid
+            
+            # The change in payment
+            diff = new_amount - old_amount
+            
+            # Correcting the Order values
+            # prepaid_amount should only increase/decrease by the DIFFERENCE
+            current_prepaid = order.prepaid_amount or Decimal('0.00')
+            new_prepaid_amount = current_prepaid + diff
+            
+            # total_amount (remaining balance) decreases by the DIFFERENCE
+            new_total_remaining = order.total_amount - diff
+
+            # VALIDATION: Ensure we don't overpay
+            # If total_amount represents the balance left to pay:
+            if new_total_remaining < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Overpayment error: New prepaid amount ({new_prepaid_amount}) "
+                           f"cannot exceed the order's value. Remaining balance was {order.total_amount}."
+                )
+
+            # Update order stats
+            await order_manager.update(order_id, {
+                "total_amount": new_total_remaining,
+                "prepaid_amount": new_prepaid_amount
+            })
 
         updated_transaction = await transaction_manager.update(transaction_uid, update_data)
         
