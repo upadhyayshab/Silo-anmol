@@ -3,13 +3,17 @@ from typing import List, Optional
 from datetime import datetime
 
 from config import get_settings, get_engine
-from managers import InventoryManager, ProductManager, OutletManager, UserManager, InventorySchema
+from managers import InventoryManager, ProductManager, OutletManager, UserManager, InventorySchema , TransferItemSchema, StockTransferOrderSchema, UserManager
 from models import (
     InventoryResponse, StockAdjustmentRequest,
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole
+from utils.constants import UserRole , TransferStatus
+
+import sqlalchemy as db
+from sqlalchemy import func, and_
+from sqlalchemy.ext.asyncio import AsyncSession
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -203,100 +207,97 @@ async def get_inventory(
     - low_stock_only: only show items below minimum stock level
     """
     try:
-        filters = {}
-        
-        # Handle outlet_id filtering properly
+        # 1. Create a Subquery to calculate 'total_received' per product & outlet
+        transfer_subq = (
+            db.select(
+                TransferItemSchema.product_id,
+                StockTransferOrderSchema.to_outlet_id,
+                func.sum(TransferItemSchema.quantity_delivered).label("total_received")
+            )
+            .join(StockTransferOrderSchema, TransferItemSchema.transfer_id == StockTransferOrderSchema.uid)
+            .where(StockTransferOrderSchema.status == TransferStatus.DELIVERED)
+            .group_by(TransferItemSchema.product_id, StockTransferOrderSchema.to_outlet_id)
+            .subquery()
+        )
+
+        # 2. Build the main query joining Inventory with the calculated Subquery
+        stmt = (
+            db.select(
+                InventorySchema,
+                func.coalesce(transfer_subq.c.total_received, 0).label("total_received")
+            )
+            .outerjoin(
+                transfer_subq,
+                and_(
+                    InventorySchema.product_id == transfer_subq.c.product_id,
+                    InventorySchema.outlet_id == transfer_subq.c.to_outlet_id
+                )
+            )
+        )
+
+        # 3. Apply Filters
         if outlet_id is not None:
-            # Convert string "null" to actual None for warehouse filtering
             if outlet_id.lower() == "null":
-                filters["outlet_id"] = None
+                stmt = stmt.where(InventorySchema.outlet_id.is_(None))
             else:
-                filters["outlet_id"] = outlet_id
-        
+                stmt = stmt.where(InventorySchema.outlet_id == outlet_id)
+                
         if product_id:
-            filters["product_id"] = product_id
-        
-        # If filtering by warehouse (outlet_id=None) and the manager doesn't handle None properly,
-        # we'll fetch all and filter manually
-        if outlet_id is not None and outlet_id.lower() == "null":
-            # Get all inventory and filter for warehouse items (outlet_id is None)
-            all_inventory = await inventory_manager.fetch_all(
-                limit=0,  # Get all to filter properly
-                offset=0
+            stmt = stmt.where(InventorySchema.product_id == product_id)
+
+        # 4. Execute the query using AsyncSession
+        async with AsyncSession(engine) as session:
+            # Get total count for pagination
+            count_stmt = db.select(func.count()).select_from(stmt.subquery())
+            total_count = await session.scalar(count_stmt)
+
+            # Apply pagination
+            if limit > 0:
+                stmt = stmt.limit(limit).offset(offset)
+
+            # Fetch results
+            result = await session.execute(stmt)
+            rows = result.all()
+
+        # 5. Process Results
+        inventory_responses = []
+        for inventory_item, total_received in rows:
+            available_quantity = inventory_item.quantity - inventory_item.reserved_quantity
+            
+            # Apply low stock filter dynamically if requested
+            if low_stock_only:
+                try:
+                    product = await product_manager.fetch(inventory_item.product_id)
+                    if available_quantity >= product.min_stock_level:
+                        continue
+                except:
+                    continue
+
+            # Calculate delivered based on your formula
+            # Failsafe: prevent negative delivery counts if manual adjustments skewed data
+            delivered = max(0, total_received - available_quantity)
+
+            inventory_responses.append(
+                InventoryResponse(
+                    uid=inventory_item.uid,
+                    product_id=inventory_item.product_id,
+                    outlet_id=inventory_item.outlet_id,
+                    quantity=inventory_item.quantity,
+                    reserved_quantity=inventory_item.reserved_quantity,
+                    available_quantity=available_quantity,
+                    last_updated=inventory_item.last_updated,
+                    total_received=int(total_received),
+                    delivered=int(delivered)
+                )
             )
             
-            # Filter for warehouse items manually
-            warehouse_items = [
-                item for item in all_inventory.items 
-                if item.outlet_id is None
-            ]
-            
-            # Apply pagination manually
-            total_count = len(warehouse_items)
-            paginated_items = warehouse_items[offset:offset + limit] if limit > 0 else warehouse_items[offset:]
-            
-            inventory_responses = []
-            for item in paginated_items:
-                available_quantity = item.quantity - item.reserved_quantity
-                
-                # Filter low stock items if requested
-                if low_stock_only:
-                    try:
-                        product = await product_manager.fetch(item.product_id)
-                        if available_quantity >= product.min_stock_level:
-                            continue
-                    except:
-                        continue
-                
-                inventory_responses.append(
-                    InventoryResponse(
-                        uid=item.uid,
-                        product_id=item.product_id,
-                        outlet_id=item.outlet_id,
-                        quantity=item.quantity,
-                        reserved_quantity=item.reserved_quantity,
-                        available_quantity=available_quantity,
-                        last_updated=item.last_updated
-                    )
-                )
-            
-            return ListResponse(items=inventory_responses, count=total_count)
-        
-        else:
-            # Use normal filtering for non-warehouse queries
-            inventory_items = await inventory_manager.fetch_all(
-                limit=limit,
-                offset=offset,
-                filters=filters if filters else None
-            )
-            
-            inventory_responses = []
-            
-            for item in inventory_items.items:
-                available_quantity = item.quantity - item.reserved_quantity
-                
-                # Filter low stock items if requested
-                if low_stock_only:
-                    try:
-                        product = await product_manager.fetch(item.product_id)
-                        if available_quantity >= product.min_stock_level:
-                            continue
-                    except:
-                        continue
-                
-                inventory_responses.append(
-                    InventoryResponse(
-                        uid=item.uid,
-                        product_id=item.product_id,
-                        outlet_id=item.outlet_id,
-                        quantity=item.quantity,
-                        reserved_quantity=item.reserved_quantity,
-                        available_quantity=available_quantity,
-                        last_updated=item.last_updated
-                    )
-                )
-            
-            return ListResponse(items=inventory_responses, count=len(inventory_responses))
+        return ListResponse(items=inventory_responses, count=total_count)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch inventory: {str(e)}"
+        )
     
     except Exception as e:
         raise HTTPException(
