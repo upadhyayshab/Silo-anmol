@@ -207,6 +207,8 @@ class InventoryResponse(BaseModel):
     reserved_quantity: int
     available_quantity: int  # Computed: quantity - reserved_quantity
     last_updated: datetime
+    total_received: int
+    delivered: int
 
     class Config:
         from_attributes = True
