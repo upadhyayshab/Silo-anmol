@@ -3,13 +3,17 @@ from typing import List, Optional
 from datetime import datetime
 
 from config import get_settings, get_engine
-from managers import InventoryManager, ProductManager, OutletManager, UserManager, InventorySchema , TransferItemSchema, StockTransferOrderSchema, UserManager
+from managers import (
+    InventoryManager, ProductManager, OutletManager, UserManager, 
+    InventorySchema, TransferItemSchema, StockTransferOrderSchema,
+    CustomerOrderSchema, OrderItemSchema
+)
 from models import (
     InventoryResponse, StockAdjustmentRequest,
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole , TransferStatus
+from utils.constants import UserRole , TransferStatus, OrderStatus
 
 import sqlalchemy as db
 from sqlalchemy import func, and_
@@ -220,17 +224,58 @@ async def get_inventory(
             .subquery()
         )
 
-        # 2. Build the main query joining Inventory with the calculated Subquery
+        # 1.5 Create a Subquery to calculate 'delivered' (sold) per product & outlet
+        orders_query = (
+            db.select(
+                OrderItemSchema.product_id,
+                CustomerOrderSchema.assigned_outlet_id,
+                func.sum(OrderItemSchema.quantity).label("total_sold")
+            )
+            .join(CustomerOrderSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
+            .where(
+                and_(
+                    CustomerOrderSchema.order_status == OrderStatus.DELIVERED,
+                    CustomerOrderSchema.actual_delivery_date.isnot(None)
+                )
+            )
+        )
+        
+        if outlet_id is not None:
+            if outlet_id.lower() == "null":
+                orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id.is_(None))
+            else:
+                orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
+                
+        if product_id:
+            orders_query = orders_query.where(OrderItemSchema.product_id == product_id)
+            
+        orders_subq = orders_query.group_by(OrderItemSchema.product_id, CustomerOrderSchema.assigned_outlet_id).subquery()
+
+        # 2. Build the main query joining Inventory with the calculated Subqueries
         stmt = (
             db.select(
                 InventorySchema,
-                func.coalesce(transfer_subq.c.total_received, 0).label("total_received")
+                func.coalesce(transfer_subq.c.total_received, 0).label("total_received"),
+                func.coalesce(orders_subq.c.total_sold, 0).label("total_sold")
             )
             .outerjoin(
                 transfer_subq,
                 and_(
                     InventorySchema.product_id == transfer_subq.c.product_id,
-                    InventorySchema.outlet_id == transfer_subq.c.to_outlet_id
+                    db.or_(
+                        InventorySchema.outlet_id == transfer_subq.c.to_outlet_id,
+                        db.and_(InventorySchema.outlet_id.is_(None), transfer_subq.c.to_outlet_id.is_(None))
+                    )
+                )
+            )
+            .outerjoin(
+                orders_subq,
+                and_(
+                    InventorySchema.product_id == orders_subq.c.product_id,
+                    db.or_(
+                        InventorySchema.outlet_id == orders_subq.c.assigned_outlet_id,
+                        db.and_(InventorySchema.outlet_id.is_(None), orders_subq.c.assigned_outlet_id.is_(None))
+                    )
                 )
             )
         )
@@ -261,8 +306,13 @@ async def get_inventory(
 
         # 5. Process Results
         inventory_responses = []
-        for inventory_item, total_received in rows:
-            available_quantity = inventory_item.quantity - inventory_item.reserved_quantity
+        for inventory_item, total_received, total_sold in rows:
+            # Set delivered exactly matching the reports logic (total sold from delivered orders)
+            delivered = int(total_sold)
+            
+            # Calculate quantity based on total received and delivered as requested
+            actual_quantity = max(0, int(total_received) - delivered)
+            available_quantity = max(0, actual_quantity - inventory_item.reserved_quantity)
             
             # Apply low stock filter dynamically if requested
             if low_stock_only:
@@ -273,16 +323,12 @@ async def get_inventory(
                 except:
                     continue
 
-            # Calculate delivered based on your formula
-            # Failsafe: prevent negative delivery counts if manual adjustments skewed data
-            delivered = max(0, total_received - available_quantity)
-
             inventory_responses.append(
                 InventoryResponse(
                     uid=inventory_item.uid,
                     product_id=inventory_item.product_id,
                     outlet_id=inventory_item.outlet_id,
-                    quantity=inventory_item.quantity,
+                    quantity=actual_quantity,
                     reserved_quantity=inventory_item.reserved_quantity,
                     available_quantity=available_quantity,
                     last_updated=inventory_item.last_updated,

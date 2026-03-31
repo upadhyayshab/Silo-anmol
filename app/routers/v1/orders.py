@@ -766,7 +766,7 @@ async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: Li
             inventory_item = inventory_items.items[0]
         
         # Check available stock
-        available = inventory_item.quantity - inventory_item.reserved_quantity
+        # available = inventory_item.quantity - inventory_item.reserved_quantity
         if available < quantity:
             raise Exception(f"Insufficient stock for {item_data['product'].product_name}. Available: {available}, Required: {quantity}")
         
@@ -1021,7 +1021,12 @@ openapi_examples={
         except Exception as log_error:
             print(f"Warning: Failed to log activity for order update {order_id}: {log_error}")
             
-        return await get_order_response_with_joins(order_id , joins=[CustomerOrderSchema.transactions])
+        return await get_order_response_with_joins(order_id,joins=[
+        CustomerOrderSchema.transactions,
+        CustomerOrderSchema.telecaller,       # <--- Add this
+        CustomerOrderSchema.assigned_outlet,  # <--- Add this
+        OrderItemSchema.product               # <--- Add this to prevent the product error!
+    ]  )
         
     except HTTPException:
         raise
@@ -1258,13 +1263,33 @@ async def get_order_response(order_id: str) -> OrderResponse:
 async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResponse:
     """Helper to build complete order response with items and joined relationships"""
     
-    # 1. Fetch order with joins (ensure your manager passes 'joins' to the query)
-    order = await order_manager.fetch(order_id, joins=joins)
+    from sqlalchemy.orm.attributes import QueryableAttribute
     
-    # 2. Fetch items (often items are a standard join, but we pass the list anyway)
+    order_joins = []
+    item_joins = []
+    join_keys = []
+    
+    for j in (joins or []):
+        if isinstance(j, QueryableAttribute):
+            join_keys.append(j.key)
+            if hasattr(j, "class_") and j.class_.__name__ == "CustomerOrderSchema":
+                order_joins.append(j)
+            elif hasattr(j, "class_") and j.class_.__name__ == "OrderItemSchema":
+                item_joins.append(j)
+            else:
+                order_joins.append(j)
+        else:
+            order_joins.append(j)
+            if isinstance(j, (list, tuple)) and len(j) > 0 and isinstance(j[0], QueryableAttribute):
+                join_keys.append(j[0].key)
+    
+    # 1. Fetch order with joins (ensure your manager passes 'joins' to the query)
+    order = await order_manager.fetch(order_id, joins=order_joins)
+    
+    # 2. Fetch items (only passing item specific joins)
     order_items = await order_item_manager.fetch_all(
         filters={"order_id": order_id},
-        joins=joins
+        joins=item_joins
     )
     
     from models import OrderItemResponse
@@ -1272,8 +1297,8 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
     # 3. Build Item Responses
     items = []
     for item in order_items.items:
-        # Check for joined product data within the item
-        product_data = getattr(item, 'product', None)
+        # Check for joined product data within the item safely without lazy loading
+        product_data = item.__dict__.get('product')
         
         items.append(
             OrderItemResponse(
@@ -1292,8 +1317,8 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
     # We map the SQLAlchemy relationship names to the response fields
     telecaller = getattr(order, 'telecaller', None)
     assigned_outlet = getattr(order, 'assigned_outlet', None)
-    transactions = getattr(order, 'transactions', []) if "transactions" in joins else None
-    delivery_tracking = getattr(order, 'delivery_tracking', None) if "delivery_tracking" in joins else None
+    transactions = getattr(order, 'transactions', []) if "transactions" in join_keys else None
+    delivery_tracking = getattr(order, 'delivery_tracking', None) if "delivery_tracking" in join_keys else None
 
     # Handle backward compatibility for pricing
     gross_amount = getattr(order, 'gross_amount', order.total_amount)
