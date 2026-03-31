@@ -1308,7 +1308,57 @@ Authorization: Bearer <access_token>
 
 ---
 
+## CRM INTEGRATION ENDPOINTS
+
+### POST /api/v1/crm/webhook
+**Description**: Webhook endpoint to receive orders from external CRM systems. Processes orders in the background, assigns them to the nearest outlet, and reserves stock.  
+**Authentication**: None (Public webhook)
+
+**Request Body**:
+```json
+{
+  "customer_name": "Jane Doe",
+  "customer_phone": "9876543210",
+  "address_line": "123 Main Street",
+  "village": "optional_village",
+  "taluk": "Mumbai",
+  "district": "Mumbai",
+  "state": "Maharashtra",
+  "pincode": "400001",
+  "items": [
+    {
+      "product_id": "product-uuid-1",
+      "quantity": 2
+    },
+    {
+      "product_id": "product-uuid-2",
+      "quantity": 1
+    }
+  ]
+}
+```
+
+**Workflow**:
+1. **Validation**: Checks for mandatory fields (name, phone, district, state, items).
+2. **Product Resolution**: Resolves each item's `product_id`. Skips invalid or inactive products.
+3. **Order Creation**: Creates a new order with `ORD-CRM-` prefix in `pending` status.
+4. **Outlet Assignment**: Automatically maps the order to an outlet using the district/state/taluk.
+5. **Stock Reservation**: Attempts to reserve stock at the assigned outlet.
+6. **Logging**: Records the ingestion in the system activity logs.
+
+**Response (200)**:
+```json
+{
+  "message": "Webhook received, processing in background"
+}
+```
+
+**Note**: Since processing happens in the background, a `200 OK` response only confirms receipt. If order creation fails (e.g., no valid products), it will be logged internally but the webhook caller will still receive a success message to prevent retries from the CRM.
+
+---
+
 ## PAYMENT TRANSACTION ENDPOINTS
+
 
 ### POST /api/v1/transactions
 **Description**: Record payment transaction for an order  
@@ -2911,11 +2961,13 @@ POST /api/auth/refresh-token
 - **Notifications**: 6
 - **Activity Logs**: 4
 - **Utility**: 1
+- **CRM Integration**: 1 (New Webhook)
 
 **🎉 Recent Updates**:
+- ✅ **CRM Webhook Ingestion**: Implemented automated order ingestion from external CRMs with background processing and stock reservation.
 - ✅ **Invoice PDF Generation**: Fully implemented with professional GST-compliant layout
 - ✅ **Print Endpoint**: Updated to redirect to PDF generation
 - ✅ **Dependencies**: Added ReportLab and Pillow to requirements
 - ✅ **Testing**: Comprehensive test scripts provided
 
-This comprehensive API documentation provides all the necessary information for frontend integration, including exact request/response structures, authentication requirements, and error handling. The invoice PDF generation is now production-ready with clean, professional output.
+This comprehensive API documentation provides all the necessary information for frontend and external integration, including exact request/response structures, authentication requirements, and error handling. The CRM webhook allows for automated order flow from external systems to the Silo ERP. The invoice PDF generation is now production-ready with clean, professional output.
