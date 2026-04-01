@@ -890,6 +890,7 @@ openapi_examples={
         product_discount_total = Decimal('0.00')
         total_commission = Decimal('0.00')
         validated_items = []
+        print(f"this is the payload - {payload}")
         
         for item in payload.items:
             try:
@@ -973,6 +974,7 @@ openapi_examples={
             "total_commission": total_commission,
             "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
+        print(update_data)
     
         # Only release stock if the order status meant the stock was previously reserved (e.g. PENDING)
         if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
@@ -1005,7 +1007,8 @@ openapi_examples={
                 update_data["status_remarks"] = f"Stock reservation failed after update: {str(e)}"
                 
         # Commit order level updates to database
-        await order_manager.update(order_id, update_data)
+        updated_order = await order_manager.update(order_id, update_data)
+        print(f"updated order from db - {updated_order.model_dump()} " )
             
         # 8. Log activity
         try:
