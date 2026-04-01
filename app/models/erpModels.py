@@ -386,6 +386,7 @@ class OrderTransactionUpdateRequest(BaseModel):
     amount_paid: Optional[Decimal] = Field(None, gt=0)
     transaction_reference: Optional[str] = None
     notes: Optional[str] = None
+    payment_status: PaymentStatus = Field(..., description="New payment status")
     
 class PaymentStatusUpdateRequest(BaseModel):
     """Request model for updating order payment status"""

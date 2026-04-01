@@ -890,7 +890,6 @@ openapi_examples={
         product_discount_total = Decimal('0.00')
         total_commission = Decimal('0.00')
         validated_items = []
-        print(f"this is the payload - {payload}")
         
         for item in payload.items:
             try:
@@ -974,7 +973,6 @@ openapi_examples={
             "total_commission": total_commission,
             "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
-        print(update_data)
     
         # Only release stock if the order status meant the stock was previously reserved (e.g. PENDING)
         if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
@@ -1008,7 +1006,6 @@ openapi_examples={
                 
         # Commit order level updates to database
         updated_order = await order_manager.update(order_id, update_data)
-        print(f"updated order from db - {updated_order.model_dump()} " )
             
         # 8. Log activity
         try:
@@ -1740,18 +1737,6 @@ async def update_order_transaction(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Transaction not found for this order"
             )
-
-        order = await order_manager.fetch(order_id)
-        
-        # 2. Check permissions (Outlet Managers can only edit their own outlet's transactions)
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != order.assigned_outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only update transactions for your outlet"
-                )
-
         # 3. Apply updates
         update_data = payload.dict(exclude_unset=True)
         if not update_data:
@@ -1759,35 +1744,6 @@ async def update_order_transaction(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No update data provided"
             )
-        if "amount_paid" in update_data:
-            new_amount = update_data["amount_paid"]
-            old_amount = transaction.amount_paid
-            
-            # The change in payment
-            diff = new_amount - old_amount
-            
-            # Correcting the Order values
-            # prepaid_amount should only increase/decrease by the DIFFERENCE
-            current_prepaid = order.prepaid_amount or Decimal('0.00')
-            new_prepaid_amount = current_prepaid + diff
-            
-            # total_amount (remaining balance) decreases by the DIFFERENCE
-            new_total_remaining = order.total_amount - diff
-
-            # VALIDATION: Ensure we don't overpay
-            # If total_amount represents the balance left to pay:
-            if new_total_remaining < 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Overpayment error: New prepaid amount ({new_prepaid_amount}) "
-                           f"cannot exceed the order's value. Remaining balance was {order.total_amount}."
-                )
-
-            # Update order stats
-            await order_manager.update(order_id, {
-                "total_amount": new_total_remaining,
-                "prepaid_amount": new_prepaid_amount
-            })
 
         updated_transaction = await transaction_manager.update(transaction_uid, update_data)
         
