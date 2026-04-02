@@ -53,7 +53,7 @@ class CRMOrderPayload(BaseModel):
 
 
 @router.post("/webhook")
-async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(..., openapi_examples={
+async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, openapi_examples={
     "new_order": {
         "summary": "New CRM Order",
         "description": "Standard payload for a new order received from external CRM.",
