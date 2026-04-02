@@ -569,12 +569,12 @@ async def get_transfers(
                         continue
                 
                 return ListResponse(items=transfer_responses, count=len(transfer_responses))
-        elif current_user.role == UserRole.WAREHOUSE_MANAGER:
-            # Warehouse managers see transfers involving warehouse (from_outlet_id = NULL)
-            filters["from_outlet_id"] = None
+        # elif current_user.role == UserRole.WAREHOUSE_MANAGER:
+        #     # Warehouse managers see transfers involving warehouse (from_outlet_id = NULL)
+        #     filters["from_outlet_id"] = None
         
         # Apply additional filters for admins or if user has broader access
-        if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN , UserRole.WAREHOUSE_MANAGER]:
             if transfer_status:
                 filters["status"] = transfer_status
             if from_outlet_id is not None:
