@@ -211,8 +211,8 @@ async def get_inventory(
     - low_stock_only: only show items below minimum stock level
     """
     try:
-        # 1. Create a Subquery to calculate 'total_received' per product & outlet
-        transfer_subq = (
+        # 1. Subquery: 'total_received' per product & to_outlet (for outlets)
+        transfer_in_subq = (
             db.select(
                 TransferItemSchema.product_id,
                 StockTransferOrderSchema.to_outlet_id,
@@ -224,7 +224,20 @@ async def get_inventory(
             .subquery()
         )
 
-        # 1.5 Create a Subquery to calculate 'delivered' (sold) per product & outlet
+        # 2. Subquery: 'total_transferred_out' per product & from_outlet (for warehouse)
+        transfer_out_subq = (
+            db.select(
+                TransferItemSchema.product_id,
+                StockTransferOrderSchema.from_outlet_id,
+                func.sum(TransferItemSchema.quantity_delivered).label("total_transferred_out")
+            )
+            .join(StockTransferOrderSchema, TransferItemSchema.transfer_id == StockTransferOrderSchema.uid)
+            .where(StockTransferOrderSchema.status == TransferStatus.DELIVERED)
+            .group_by(TransferItemSchema.product_id, StockTransferOrderSchema.from_outlet_id)
+            .subquery()
+        )
+
+        # 3. Subquery: 'total_sold' per product & assigned_outlet
         orders_query = (
             db.select(
                 OrderItemSchema.product_id,
@@ -251,20 +264,31 @@ async def get_inventory(
             
         orders_subq = orders_query.group_by(OrderItemSchema.product_id, CustomerOrderSchema.assigned_outlet_id).subquery()
 
-        # 2. Build the main query joining Inventory with the calculated Subqueries
+        # 4. Build the main query joining Inventory with the three Subqueries
         stmt = (
             db.select(
                 InventorySchema,
-                func.coalesce(transfer_subq.c.total_received, 0).label("total_received"),
-                func.coalesce(orders_subq.c.total_sold, 0).label("total_sold")
+                func.coalesce(transfer_in_subq.c.total_received, 0).label("total_received"),
+                func.coalesce(orders_subq.c.total_sold, 0).label("total_sold"),
+                func.coalesce(transfer_out_subq.c.total_transferred_out, 0).label("total_transferred_out")
             )
             .outerjoin(
-                transfer_subq,
+                transfer_in_subq,
                 and_(
-                    InventorySchema.product_id == transfer_subq.c.product_id,
+                    InventorySchema.product_id == transfer_in_subq.c.product_id,
                     db.or_(
-                        InventorySchema.outlet_id == transfer_subq.c.to_outlet_id,
-                        db.and_(InventorySchema.outlet_id.is_(None), transfer_subq.c.to_outlet_id.is_(None))
+                        InventorySchema.outlet_id == transfer_in_subq.c.to_outlet_id,
+                        db.and_(InventorySchema.outlet_id.is_(None), transfer_in_subq.c.to_outlet_id.is_(None))
+                    )
+                )
+            )
+            .outerjoin(
+                transfer_out_subq,
+                and_(
+                    InventorySchema.product_id == transfer_out_subq.c.product_id,
+                    db.or_(
+                        InventorySchema.outlet_id == transfer_out_subq.c.from_outlet_id,
+                        db.and_(InventorySchema.outlet_id.is_(None), transfer_out_subq.c.from_outlet_id.is_(None))
                     )
                 )
             )
@@ -280,7 +304,7 @@ async def get_inventory(
             )
         )
 
-        # 3. Apply Filters
+        # 5. Apply Filters
         if outlet_id is not None:
             if outlet_id.lower() == "null":
                 stmt = stmt.where(InventorySchema.outlet_id.is_(None))
@@ -290,7 +314,7 @@ async def get_inventory(
         if product_id:
             stmt = stmt.where(InventorySchema.product_id == product_id)
 
-        # 4. Execute the query using AsyncSession
+        # 6. Execute the query using AsyncSession
         async with AsyncSession(engine) as session:
             # Get total count for pagination
             count_stmt = db.select(func.count()).select_from(stmt.subquery())
@@ -304,14 +328,22 @@ async def get_inventory(
             result = await session.execute(stmt)
             rows = result.all()
 
-        # 5. Process Results
+        # 7. Process Results
         inventory_responses = []
-        for inventory_item, total_received, total_sold in rows:
-            # Set delivered exactly matching the reports logic (total sold from delivered orders)
-            delivered = int(total_sold)
+        for inventory_item, total_received, total_sold, total_transferred_out in rows:
             
-            # Calculate quantity based on total received and delivered as requested
-            actual_quantity = max(0, int(total_received) - delivered)
+            # WAREHOUSE vs OUTLET LOGIC
+            if inventory_item.outlet_id is None:
+                # Warehouse: Quantity reflects DB, Delivered reflects stock sent to outlets
+                actual_quantity = inventory_item.quantity
+                delivered = int(total_transferred_out)
+                display_received = 0  # Warehouse doesn't "receive" transfers
+            else:
+                # Outlet: Quantity reflects total received from warehouse minus total sold
+                delivered = int(total_sold)
+                actual_quantity = max(0, int(total_received) - delivered)
+                display_received = int(total_received)
+
             available_quantity = max(0, actual_quantity - inventory_item.reserved_quantity)
             
             # Apply low stock filter dynamically if requested
@@ -332,19 +364,13 @@ async def get_inventory(
                     reserved_quantity=inventory_item.reserved_quantity,
                     available_quantity=available_quantity,
                     last_updated=inventory_item.last_updated,
-                    total_received=int(total_received),
-                    delivered=int(delivered)
+                    total_received=display_received,
+                    delivered=delivered
                 )
             )
             
         return ListResponse(items=inventory_responses, count=total_count)
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch inventory: {str(e)}"
-        )
-    
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
