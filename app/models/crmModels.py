@@ -6,7 +6,7 @@ class CrmPayload:
     class Lead(BaseModel):
         customer_name:str
         customer_phone:str
-        customer_email:str
+        customer_email:Optional[str]=None
         LastName:Optional[str]=None
         Created_On:Optional[str]=None
         State:Optional[str]=None

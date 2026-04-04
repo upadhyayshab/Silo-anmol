@@ -15,9 +15,10 @@ from managers import (
     ActivityLogManager, ActivityLogSchema
 )
 from services import CRMService
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod , ActivityType
 from models import CrmPayload , OrderCreateRequest
-from enum import Enum
+
+
 settings = get_settings()
 engine = get_engine(settings.name)
 
@@ -55,16 +56,13 @@ class CRMOrderPayload(BaseModel):
     pincode: str
     items: List[CRMItem]
 
-class activity_event_code(int,Enum):
-    ORDER_STATUS = 203
-    PAYMENT_STATUS =205
-    REFUND_STATUS = 204
-    DELIVERY_STATUS = 206
-
+class Push_Activity(BaseModel):
+    order_data: OrderCreateRequest
+    activity_event: ActivityType
 
 @router.post("/test")
-async def test(payload:dict):
-    return await crm_service.build_payload(order_payload_dict = payload , lead_id="ec1142e3-c784-4e9e-9712-32177fbe3e30", activity_event_code=activity_event_code.ORDER_STATUS)
+async def test(payload:Push_Activity):
+    return await crm_service.push_activity(payload)
 
 @router.post("/webhook")
 async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, openapi_examples={
