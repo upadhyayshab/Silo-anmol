@@ -7,7 +7,7 @@ from config import get_settings, get_engine
 from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager,
-    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema
+    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,OutletSchema
 )
 from models import (
     OrderCreateRequest, ProxyOrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
@@ -17,7 +17,8 @@ from models import (
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType
+from services import CRMService
 import uuid
 
 settings = get_settings()
@@ -30,6 +31,8 @@ inventory_manager = InventoryManager(engine)
 product_manager = ProductManager(engine)
 outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
+
+crm_service = CRMService()
 
 router = APIRouter(prefix="/orders", tags=["Order Management"])
 
@@ -106,7 +109,7 @@ async def create_order(
             if product.margin > 0:
                 # Non-Silo Fortune product: Use margin as commission base
                 # Ignore product_discount for commission calculation
-                commission_base = product.margin
+                commission_base = subtotal - product.unit_price 
             else:
                 # Silo Fortune product: Use existing logic
                 # Commission base = cost_price - product_discount
@@ -1443,8 +1446,10 @@ async def update_order_status(
 ):
     """Update order status (Outlet Manager function)"""
     try:
-        order = await order_manager.fetch(order_id)
-        
+        order = await order_manager.fetch(order_id, joins=[
+            (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
+            (CustomerOrderSchema.items, OrderItemSchema.product)
+        ])
         # Check permissions
         current_user = await user_manager.fetch(current_user_id)
         if current_user.role == UserRole.OUTLET_MANAGER:
@@ -1466,11 +1471,21 @@ async def update_order_status(
             "order_status": payload.order_status,
             "status_remarks": payload.status_remarks
         }
-        
+
+        update_order = lambda order_obj, update_dict: [setattr(order_obj, k, v) for k, v in update_dict.items()]
+
         if payload.order_status == OrderStatus.DELIVERED:
             update_data["actual_delivery_date"] = datetime.utcnow()
-            # Consume reserved stock
-            await consume_order_stock(order_id)
+            
+            # Update local object so model_dump() picks it up for CRM
+            update_order(order, update_data)
+
+            # push activity to crm           
+            delivery_payload = await crm_service.push_activity({
+                "order_data": order.model_dump(),
+                "activity_event": ActivityType.DELIVERY_STATUS
+            })
+            print(delivery_payload)
         
         elif payload.order_status == OrderStatus.CANCELLED:
             if not payload.status_remarks:
@@ -1478,6 +1493,15 @@ async def update_order_status(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Status remarks required for cancelled orders"
                 )
+
+            update_order(order, update_data)
+
+            # push activity to crm           
+            cancel_payload = await crm_service.push_activity({
+                "order_data": order.model_dump(),
+                "activity_event": ActivityType.ORDER_STATUS
+            })
+            print(cancel_payload)
             # Release reserved stock
             await release_order_stock(order_id)
         

@@ -2,7 +2,7 @@ import httpx
 import asyncio
 from typing import Dict, Any, Optional
 from config import get_settings
-from utils.constants import LeadSource , LSQActivityField ,LSQProductField
+from utils.constants import LeadSource , LSQOrderStatusActivityField ,LSQProductField , ActivityType ,LSQDeliveryStatusActivityField , LSQPaymentStatusActivityField , LSQRefundStatusActivityField
 from models import CrmPayload , OrderCreateRequest
 from pydantic import BaseModel
 
@@ -27,39 +27,76 @@ class Activity:
         APPROVED = "Approved"
         REJECTED = "Rejected"
 
-class Push_Activity:
-    order_data: OrderCreateRequest
-    activity_event_code: str
-
 
 class CRMService:
     # -------------------------------------------------------------------------
     # MAPPING CONFIGURATION
     # -------------------------------------------------------------------------
     # Base mapping (Readable Key -> LeadSquared Key)
-    LEADSQUARED_ACTIVITY_MAPPING = {
-        "order_status":         LSQActivityField.ORDER_STATUS,
-        "user_id":              LSQActivityField.USER_ID,
-        "order_id":             LSQActivityField.ORDER_ID,
-        "customer_name":        LSQActivityField.CUSTOMER_NAME,
-        "customer_phone":       LSQActivityField.CUSTOMER_PHONE,
-        "customer_email":       LSQActivityField.CUSTOMER_EMAIL,
-        "address_line":         LSQActivityField.ADDRESS_LINE,
-        "city":                 LSQActivityField.CITY,
-        "state":                LSQActivityField.STATE,
-        "pincode":              LSQActivityField.PINCODE,
-        "total_amount":         LSQActivityField.TOTAL_AMOUNT,
-        "total_discount":       LSQActivityField.TOTAL_DISCOUNT,
-        "payment_method":       LSQActivityField.PAYMENT_METHOD,
-        "created_at":           LSQActivityField.CREATED_AT,
-        "invoice":              LSQActivityField.INVOICE,
-        "coupon_code_status":   LSQActivityField.COUPON_CODE_STATUS,
-        "delivery_status":      LSQActivityField.DELIVERY_STATUS,
-        "payment_status":       LSQActivityField.PAYMENT_STATUS,
-        "items":                LSQActivityField.ITEMS, 
-        "refund_status":        LSQActivityField.REFUND_STATUS,
-        "actual_delivery_date": LSQActivityField.ACTUAL_DELIVERY_DATE,
-        "coupon_code":          LSQActivityField.COUPON_CODE,
+    LEADSQUARED_PAYMENT_STATUS_ACTIVITY_MAPPING = {
+        "activity_note":        LSQPaymentStatusActivityField.ACTIVITY_EVENT_NOTE,
+        "payment_status":       LSQPaymentStatusActivityField.PAYMENT_STATUS,
+        "order_id":             LSQPaymentStatusActivityField.ORDER_ID,
+        "amount_paid":          LSQPaymentStatusActivityField.AMOUNT_PAID,
+        "transaction_reference": LSQPaymentStatusActivityField.TRANSACTION_REFERENCE,
+        "payment_date":         LSQPaymentStatusActivityField.PAYMENT_DATE,
+        "amount_payable":       LSQPaymentStatusActivityField.AMOUNT_PAYABLE,
+        "failure_reason":       LSQPaymentStatusActivityField.FAILURE_REASON,
+        "failed_at":            LSQPaymentStatusActivityField.FAILED_AT,
+    }
+
+    LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING = {
+        "activity_note":          LSQDeliveryStatusActivityField.ACTIVITY_EVENT_NOTE,
+        "order_status":           LSQDeliveryStatusActivityField.ORDER_STATUS,
+        "order_number":               LSQDeliveryStatusActivityField.ORDER_ID,
+        "assigned_outlet.outlet_name":            LSQDeliveryStatusActivityField.OUTLET_NAME,
+        "assigned_outlet.address":        LSQDeliveryStatusActivityField.OUTLET_LOCATION,
+        "assigned_outlet.phone":           LSQDeliveryStatusActivityField.OUTLET_PHONE,
+        "assigned_outlet.manager.full_name":    LSQDeliveryStatusActivityField.OUTLET_MANAGER_NAME,
+        "assigned_outlet.manager.phone":   LSQDeliveryStatusActivityField.OUTLET_MANAGER_PHONE,
+        "assigned_outlet.manager.full_name":    LSQDeliveryStatusActivityField.DELIVERY_AGENT_NAME,
+        "assigned_outlet.manager.phone":   LSQDeliveryStatusActivityField.DELIVERY_AGENT_PHONE,
+        "expected_delivery_date": LSQDeliveryStatusActivityField.EXPECTED_DELIVERY_DATE,
+        "delivery_remarks":       LSQDeliveryStatusActivityField.DELIVERY_REMARKS,
+        "assigned_at":            LSQDeliveryStatusActivityField.ASSIGNED_AT,
+        "actual_delivery_date":           LSQDeliveryStatusActivityField.DELIVERED_AT,
+        "status_remarks":         LSQDeliveryStatusActivityField.DELIVERY_NOTES,
+        "transaction_reference":  LSQDeliveryStatusActivityField.TRANSACTION_REFERENCE,
+        "payment_status":         LSQDeliveryStatusActivityField.PAYMENT_STATUS,
+        "created_at":             LSQDeliveryStatusActivityField.CREATED_AT,
+        "assignment_pending_reason":     LSQDeliveryStatusActivityField.ASSIGNMENT_PENDING_REASON,
+        "return_type":            LSQDeliveryStatusActivityField.RETURN_TYPE,
+        "return_reason":          LSQDeliveryStatusActivityField.RETURN_REASON,
+        "out_for_delivery_at":    LSQDeliveryStatusActivityField.OUT_FOR_DELIVERY_AT,
+        "returned_at":            LSQDeliveryStatusActivityField.RETURNED_AT,
+        "refund_status":          LSQDeliveryStatusActivityField.REFUND_STATUS,
+        "refund_amount":          LSQDeliveryStatusActivityField.REFUND_AMOUNT,
+    }
+
+    LEADSQUARED_ORDER_STATUS_ACTIVITY_MAPPING = {
+        "order_status":         LSQOrderStatusActivityField.ORDER_STATUS,
+        "user_id":              LSQOrderStatusActivityField.USER_ID,
+        "order_id":             LSQOrderStatusActivityField.ORDER_ID,
+        "customer_name":        LSQOrderStatusActivityField.CUSTOMER_NAME,
+        "customer_phone":       LSQOrderStatusActivityField.CUSTOMER_PHONE,
+        "customer_email":       LSQOrderStatusActivityField.CUSTOMER_EMAIL,
+        "address_line":         LSQOrderStatusActivityField.ADDRESS_LINE,
+        "city":                 LSQOrderStatusActivityField.CITY,
+        "state":                LSQOrderStatusActivityField.STATE,
+        "pincode":              LSQOrderStatusActivityField.PINCODE,
+        "total_amount":         LSQOrderStatusActivityField.TOTAL_AMOUNT,
+        "discount_applied":     LSQOrderStatusActivityField.TOTAL_DISCOUNT,
+        "payment_method":       LSQOrderStatusActivityField.PAYMENT_METHOD,
+        "created_at":           LSQOrderStatusActivityField.CREATED_AT,
+        "invoice":              LSQOrderStatusActivityField.INVOICE,
+        "coupon_code_status":   LSQOrderStatusActivityField.COUPON_CODE_STATUS,
+        "delivery_status":      LSQOrderStatusActivityField.DELIVERY_STATUS,
+        "payment_status":       LSQOrderStatusActivityField.PAYMENT_STATUS,
+        "items":                LSQOrderStatusActivityField.ITEMS, 
+        "refund_status":        LSQOrderStatusActivityField.REFUND_STATUS,
+        "actual_delivery_date": LSQOrderStatusActivityField.ACTUAL_DELIVERY_DATE,
+        "coupon_code":          LSQOrderStatusActivityField.COUPON_CODE,
+        "status_remarks":       LSQOrderStatusActivityField.REASON,
     }
 
     LEADSQUARED_PRODUCT_MAPPING = {
@@ -75,10 +112,13 @@ class CRMService:
     }
     LEADSQUARED_ACTIVITY_CODE_MAPPING = {
         "order_status": 203,
-        "payment status":205,
-        "Refund_Status":204,
-        "Delivery Status":206
+        "payment_status": 205,
+        "refund_status": 204,
+        "delivery_status": 206
     }
+
+    # SchemaName for the product custom-object container block
+    PRODUCT_OBJECT_SCHEMA = LSQOrderStatusActivityField.ITEMS
 
     def __init__(self):
         self.settings = get_settings()
@@ -107,7 +147,7 @@ class CRMService:
                     attempt += 1
                     continue
 
-                print(f"Background Task Failed: {response.status_code} | Msg: {response.text}")
+                print(f"Background Task Failed: {response.status_code} | Msg: {response}")
                 break
 
             except httpx.RequestError as e:
@@ -156,70 +196,182 @@ class CRMService:
             value = item_dict.get(item_key)
             
             if value is not None and value != "":
+                # Use .value to extract the raw string from str-Enums
+                schema_str = schema_name.value if hasattr(schema_name, "value") else str(schema_name)
+                value_str = value.value if hasattr(value, "value") else str(value)
                 custom_fields.append({
-                    "SchemaName": schema_name,
-                    "Value": str(value)
+                    "SchemaName": schema_str,
+                    "Value": value_str
                 })
                 
         return custom_fields
+    def _get_nested_value(self, data: dict, path: str):
+        """Helper to get value from nested dictionary using dot notation."""
+        for key in path.split('.'):
+            if isinstance(data, dict):
+                data = data.get(key)
+            else:
+                return None
+        return data
 
-    async def build_payload(self, order_payload_dict: dict, lead_id: str, activity_event_code: int) -> dict:
+    async def build_payload(self, payload_dict: dict, lead_id: str, activity_event_code: int) -> dict:
         fields = []
-        
-        for payload_key, schema_name in self.LEADSQUARED_ACTIVITY_MAPPING.items():
-            value = order_payload_dict.get(payload_key)
+        # print("--"*50)
+        # print(payload_dict)
+        # print("--"*50)
+
+        mapping = {}
+        if activity_event_code == 203:
+            mapping = self.LEADSQUARED_ORDER_STATUS_ACTIVITY_MAPPING
+        elif activity_event_code == 205:
+            mapping = self.LEADSQUARED_PAYMENT_STATUS_ACTIVITY_MAPPING
+        elif activity_event_code == 206:
+            mapping = self.LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING
+
+        for payload_key, schema_name in mapping.items():
+            value = self._get_nested_value(payload_dict, payload_key)
+            # Always extract the raw string from str-Enum SchemaName
+            schema_str = schema_name.value if hasattr(schema_name, "value") else str(schema_name)
             
             # Handle the specific list comprehension for 'items'
             if payload_key == "items" and isinstance(value, list) and value:
-                # Grab the first item (or loop if LeadSquared supports arrays of Custom Objects)
-                first_item = value[0] 
-                
-                inner_fields = self._build_custom_object_array(
-                    first_item, 
-                    self.LEADSQUARED_PRODUCT_MAPPING
-                )
-                
-                if inner_fields:
-                    fields.append({
-                        "SchemaName": "mx_Custom_18",  # e.g., "mx_Custom_18"
-                        "Value": "",                
-                        "Fields": inner_fields
-                    })
+                for raw_item in value:
+                    # Pull the nested product sub-dict if the join was loaded
+                    product_info = raw_item.get("product") or {}
+                    if hasattr(product_info, "__dict__"):
+                        product_info = product_info.__dict__
+
+                    # Build a flat dict that matches LEADSQUARED_PRODUCT_MAPPING keys:
+                    #   product mapping key  ←  source field
+                    #   product_name         ←  product.product_name  (product join)
+                    #   product_title        ←  product.product_name  (same; no separate title field)
+                    #   quantity             ←  item.quantity
+                    #   size                 ←  (no size field on OrderItem; leave blank)
+                    #   unit_type            ←  product.unit_of_measure
+                    #   mrp                  ←  product.unit_price  (catalogue price)
+                    #   selling_price        ←  item.unit_price     (actual charged price)
+                    #   discount             ←  item.discount_amount
+                    #   total_price          ←  item.total_price
+                    enriched_item = {
+                        "product_name":  product_info.get("product_name"),
+                        "product_title": product_info.get("product_name"),
+                        "quantity":      raw_item.get("quantity"),
+                        "size":          None, 
+                        "unit_type":     product_info.get("unit_of_measure"),
+                        "mrp":           product_info.get("cost_price") or raw_item.get("cost_price"),
+                        "selling_price": raw_item.get("subtotal"),
+                        "discount":      raw_item.get("discount_amount"),
+                        "total_price":   raw_item.get("total_price"),
+                    }
+
+                    inner_fields = self._build_custom_object_array(
+                        enriched_item,
+                        self.LEADSQUARED_PRODUCT_MAPPING
+                    )
+
+                    if inner_fields:
+                        fields.append({
+                            "SchemaName": self.PRODUCT_OBJECT_SCHEMA.value,
+                            "Value": "",
+                            "Fields": inner_fields
+                        })
                     
             # Handle numerical values that need string conversion
             elif payload_key in ["total_amount", "discount_applied"]:
                 val_str = str(value) if value is not None else "0"
-                fields.append({"SchemaName": schema_name, "Value": val_str})
+                fields.append({"SchemaName": schema_str, "Value": val_str})
                 
             # Handle standard fields
             else:
                 if value is not None and value != "":
-                    # Using str(value) ensures Enums or other types are stringified safely
-                    fields.append({"SchemaName": schema_name, "Value": str(value)})
+                    # Use .value to extract raw string from str-Enums (e.g. OrderStatus, PaymentMethod)
+                    value_str = value.value if hasattr(value, "value") else str(value)
+                    fields.append({"SchemaName": schema_str, "Value": value_str})
+
+        # Extract the string value from Enum if present
+        order_status = payload_dict.get('order_status', 'Unknown Status')
+        status_str = order_status.value if hasattr(order_status, "value") else str(order_status)
 
         return {
             "RelatedProspectId": lead_id,
             "ActivityEvent": activity_event_code,
-            "ActivityNote": f"Order processing for {order_payload_dict.get('order_number', 'Unknown Order')}",
+            "ActivityNote": f"{payload_dict.get('order_number', 'Unknown Order')} is {status_str}",
             "Fields": fields
         }
 
-    async def push_activity(self, payload: Push_Activity) -> dict:
+    async def push_activity(self, payload: dict) -> dict:
         """
         1. get or create lead
         2. push activity
+
+        example payload:
+        {
+            "order_data": {
+                "order_number": "123456789",
+                "customer_name": "John Doe",
+                "customer_phone": "1234567890",
+                "customer_email": "[EMAIL_ADDRESS]",
+                "address_line": "123 Main St",
+                "city": "New York",
+                "state": "NY",
+                "pincode": "123456",
+                "total_amount": "100",
+                "total_discount": "10",
+                "payment_method": "Credit Card",
+                "created_at": "2022-01-01T12:00:00",
+                "invoice": "123456789",
+                "coupon_code_status": "Applied",
+                "delivery_status": "Pending",
+                "payment_status": "Pending",
+                "items": [
+                    {
+                        "product_name": "Product 1",
+                        "product_title": "Product 1",
+                        "quantity": "1",
+                        "size": "M",
+                        "unit_type": "Piece",
+                        "mrp": "100",
+                        "selling_price": "100",
+                        "discount": "10",
+                        "total_price": "100"
+                    }
+                ],
+                "refund_status": "Pending",
+                "actual_delivery_date": "2022-01-01T12:00:00",
+                "coupon_code": "123456789"
+            },
+            "activity_event": "order_status"
+        }
         """
-        order_data_dict = payload.order_data.model_dump()
-        lead_id = await self.get_or_create_lead(order_data_dict)
-        activity_event_code = self.LEADSQUARED_ACTIVITY_CODE_MAPPING.get(payload.activity)
-        if not activity_event_code:
-            return {"status": "failed", "message": f"Unknown activity type: {payload.activity}"}
+        activity_data_dict = (
+            payload.get("activity_data") or 
+            payload.get("order_data") or 
+            payload.get("payment_data") or 
+            payload.get("delivery_data") or 
+            payload.get("refund_data") or
+            payload.get("data")
+        )
+        if not activity_data_dict:
+            return {"status": "failed", "message": "Activity data is missing from payload."}
+
+        activity_event = payload.get("activity_event")
+        if not activity_event:
+            return {"status": "failed", "message": "activity_event is missing from payload."}
+
+        lead_res = await self.get_or_create_lead(activity_data_dict)
+        lead_id = lead_res.get("lead_id") if lead_res.get("status") == "success" else None
         if not lead_id:
             return {"status": "failed", "message": "Lead ID (RelatedProspectId) is required."}
 
-        lsq_payload = await self.build_payload(order_data_dict, lead_id, activity_event_code)
-        endpoint = "/v2/ProspectActivity.svc/Create"
-        return await self._make_request("POST", endpoint, json=lsq_payload)
+        event_string = activity_event.value if hasattr(activity_event, "value") else str(activity_event)
+        activity_event_code = self.LEADSQUARED_ACTIVITY_CODE_MAPPING.get(event_string)       
+        if not activity_event_code:
+             return {"status": "failed", "message": f"Invalid activity type: {event_string}"}
+
+        lsq_payload = await self.build_payload(activity_data_dict, lead_id, activity_event_code)
+        # return lsq_payload
+        endpoint = "ProspectActivity.svc/Create"
+        return await self._await_request("POST", endpoint, json=lsq_payload)
     
     async def get_lead_by_phone(self, phone: str) -> dict:
         """
@@ -231,18 +383,27 @@ class CRMService:
         get_response = await self._await_request("GET", get_endpoint, params=get_params)
         return get_response
 
-    async def create_lead(self, payload: CrmPayload.Lead) -> dict:
+    async def create_lead(self, payload: dict) -> dict:
         """
         1. Creates a new Lead.
         2. Returns the ProspectID if found.
         """
-        payload = payload.model_dump()
+        try:
+            # 1. Validate the dictionary using your Pydantic model!
+            # It will strip out fields that don't belong and validate the types.
+            validated_lead = CrmPayload.Lead(**payload)
+        except Exception as e:
+            print(f"Validation failed for Lead payload: {e}")
+            return {"status": "failed", "message": "Invalid lead data format."}
+
+        # 2. Convert it back to a dictionary so we can safely use .get()
+        valid_payload = validated_lead.model_dump(exclude_none=True)
         create_endpoint = "LeadManagement.svc/Lead.Capture"
         
         # Base required data
         create_data = [
-            {"Attribute": "Phone", "Value": payload.get("customer_phone")},
-            {"Attribute": "FirstName", "Value": payload.get("customer_name", "Unknown Customer")},
+            {"Attribute": "Phone", "Value": valid_payload.get("customer_phone")},
+            {"Attribute": "FirstName", "Value": valid_payload.get("customer_name", "Unknown Customer")},
             {"Attribute": "SearchBy", "Value": "Phone"},
         ]
         
@@ -261,7 +422,7 @@ class CRMService:
         }
         
         for payload_key, attr_name in Lead_attribute_mapping.items():
-            value = payload.get(payload_key)
+            value = valid_payload.get(payload_key)
             if value:
                 create_data.append({"Attribute": attr_name, "Value": value})
 

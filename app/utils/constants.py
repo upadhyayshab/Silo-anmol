@@ -145,7 +145,60 @@ class LeadSource(str, Enum):
     ADD_TO_CART = "add to cart"
     BROWSED_3_PAGES = "browsed 3 pages"
 
-class LSQActivityField(str, Enum):
+class LSQRefundStatusActivityField(str, Enum):
+    ACTIVITY_EVENT_NOTE   = "ActivityEvent_Note"      
+    REFUND_STATUS         = "Status"
+    OWNER                 = "Owner"
+    ORDER_ID              = "mx_Custom_1"
+    PAYMENT_STATUS        = "mx_Custom_2"
+    REFUND_AMOUNT         = "mx_Custom_3"
+    REFUND_MODE           = "mx_Custom_4"
+    REFUND_REFERENCE      = "mx_Custom_5"
+    REFUND_PROCESSED_AT   = "mx_Custom_6"
+    PROCESSED_BY          = "mx_Custom_7"
+    NOTES                 = "mx_Custom_8"
+
+class LSQPaymentStatusActivityField(str, Enum):
+   ACTIVITY_EVENT_NOTE    = "ActivityEvent_Note"      
+   PAYMENT_STATUS         = "Status"
+   ORDER_ID               = "mx_Custom_1"
+   AMOUNT_PAID            = "mx_Custom_2"
+   TRANSACTION_REFERENCE  = "mx_Custom_3"
+   PAYMENT_DATE           = "mx_Custom_4"
+   AMOUNT_PAYABLE         = "mx_Custom_5"
+   FAILURE_REASON         = "mx_Custom_6"
+   FAILED_AT              = "mx_Custom_7"
+
+class LSQDeliveryStatusActivityField(str, Enum):
+    ACTIVITY_EVENT_NOTE   = "ActivityEvent_Note"      
+    STATUS                = "Status"
+    ORDER_ID              = "mx_Custom_1"
+    OUTLET_NAME           = "mx_Custom_2"
+    OUTLET_LOCATION       = "mx_Custom_3"
+    OUTLET_PHONE          = "mx_Custom_4"
+    OUTLET_MANAGER_NAME   = "mx_Custom_5"
+    OUTLET_MANAGER_PHONE  = "mx_Custom_6"
+    DELIVERY_AGENT_NAME   = "mx_Custom_7"
+    DELIVERY_AGENT_PHONE  = "mx_Custom_8"
+    EXPECTED_DELIVERY_DATE= "mx_Custom_9"
+    DELIVERY_REMARKS      = "mx_Custom_10"
+    ASSIGNED_AT           = "mx_Custom_12"
+    DELIVERED_AT          = "mx_Custom_13"
+    DELIVERY_NOTES        = "mx_Custom_14"
+    TRANSACTION_REFERENCE = "mx_Custom_15"
+    ORDER_STATUS          = "mx_Custom_16"
+    PAYMENT_STATUS        = "mx_Custom_17"
+    CREATED_AT            = "mx_Custom_18"
+    ASSIGNMENT_PENDING_REASON = "mx_Custom_19" 
+    RETURN_TYPE           = "mx_Custom_20"
+    RETURN_REASON         = "mx_Custom_21"
+    OUT_FOR_DELIVERY_AT   = "mx_Custom_22"
+    RETURNED_AT           = "mx_Custom_23"
+    REFUND_STATUS         = "mx_Custom_24"
+    REFUND_AMOUNT         = "mx_Custom_25"
+
+class LSQOrderStatusActivityField(str, Enum):
+    ACTIVITY_EVENT_NOTE   = "ActivityEvent_Note"      
     ORDER_STATUS         = "Status"
     USER_ID              = "mx_Custom_1"
     ORDER_ID             = "mx_Custom_2"
@@ -168,6 +221,7 @@ class LSQActivityField(str, Enum):
     REFUND_STATUS        = "mx_Custom_19"
     ACTUAL_DELIVERY_DATE = "mx_Custom_20"
     COUPON_CODE          = "mx_Custom_21"
+    REASON        = "mx_Custom_22"
 
 class LSQProductField(str, Enum):
     PRODUCT_NAME         = "mx_CustomObject_1"
@@ -179,3 +233,9 @@ class LSQProductField(str, Enum):
     SELLING_PRICE        = "mx_CustomObject_7"
     DISCOUNT             = "mx_CustomObject_8"
     TOTAL_PRICE          = "mx_CustomObject_9"
+
+class ActivityType(str, Enum):
+    ORDER_STATUS = "order_status"
+    PAYMENT_STATUS = "payment_status"
+    REFUND_STATUS = "refund_status"
+    DELIVERY_STATUS = "delivery_status"
