@@ -234,6 +234,32 @@ class LSQProductField(str, Enum):
     DISCOUNT             = "mx_CustomObject_8"
     TOTAL_PRICE          = "mx_CustomObject_9"
 
+class LSQCreateOrder(str, Enum):
+    NOTES           = "ActivityEvent_Note"
+    STATUS          = "Status"
+    OWNER           = "Owner"
+    ITEM_1          = "mx_Custom_1"
+    ITEM_2          = "mx_Custom_2"
+    ITEM_3          = "mx_Custom_3"
+    NO_OF_ITEMS     = "mx_Custom_4"
+    GRAND_TOTAL     = "mx_Custom_5"
+    COLLECTION_TYPE = "mx_Custom_6"
+
+class LSQItems(str, Enum):
+    DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_1"
+    PRODUCT_NAME             = "mx_CustomObject_2"
+    CATEGORY                 = "mx_CustomObject_3"
+    BRAND_NAME               = "mx_CustomObject_4"
+    SKU_CODE                 = "mx_CustomObject_5"
+    UNIT_TYPE                = "mx_CustomObject_6"
+    SIZE                     = "mx_CustomObject_7"
+    MRP                      = "mx_CustomObject_8"
+    SELLING_PRICE            = "mx_CustomObject_9"
+    QUANTITY                 = "mx_CustomObject_10"
+    TOTAL_PRICE              = "mx_CustomObject_11"
+    PRODUCT_ID               = "mx_CustomObject_12"
+    PRODUCT_DESCRIPTION      = "mx_CustomObject_81"
+
 class ActivityType(str, Enum):
     ORDER_STATUS = "order_status"
     PAYMENT_STATUS = "payment_status"

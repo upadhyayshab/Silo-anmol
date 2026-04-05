@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 import uuid
 import logging
 import httpx
+from pypinindia import get_district,get_pincode_info ,get_state
 
 from config import get_settings, get_engine
 from managers import (
@@ -15,7 +16,7 @@ from managers import (
     ActivityLogManager, ActivityLogSchema
 )
 from services import CRMService
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod , ActivityType
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod , ActivityType, LSQCreateOrder , LSQItems
 from models import CrmPayload , OrderCreateRequest
 
 
@@ -56,13 +57,10 @@ class CRMOrderPayload(BaseModel):
     pincode: str
     items: List[CRMItem]
 
-class Push_Activity(BaseModel):
-    order_data: OrderCreateRequest
-    activity_event: ActivityType
 
 @router.post("/test")
-async def test(payload:Push_Activity):
-    return await crm_service.push_activity(payload)
+async def test(payload:dict):
+    return crm_service.clean_lsq_payload(payload)
 
 @router.post("/webhook")
 async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, openapi_examples={
@@ -88,13 +86,21 @@ async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, 
     return {"message": "Webhook received, processing in background"}
 
 
-async def auto_assign_outlet(district: str, state: str, taluk: str = None) -> Optional[object]:
+async def auto_assign_outlet(district: str, pincode: str, taluk: str = None) -> Optional[object]:
     """Auto-assign outlet based on Google Sheets mapping"""
     try:
         # Google Apps Script endpoint for outlet mapping
         GOOGLE_OUTLET_API = "https://script.google.com/macros/s/AKfycbxqlS7Og-4AKNm79aweOzjVqOcmyFXHaHpy7xmfcz27i0knowG_vjEFWZ_Ha8drY4CYbA/exec"
         
+        def get_taluk_name(pincode):
+            data = get_pincode_info(pincode)
+            if data:
+                # returns the Taluk of the first post office found
+                return data[0].get('taluk') 
+            return "Not Found"
+
         # Prepare API request parameters
+        taluk = get_taluk_name(pincode)
         params = {
             "action": "getOutlet",
             "district": district,
@@ -127,12 +133,15 @@ async def auto_assign_outlet(district: str, state: str, taluk: str = None) -> Op
             if not api_outlet_name:
                 return None
             
+            print(f"🎯 API returned outlet: '{api_outlet_name}'")
+            
             # Get all active outlets from database
             outlets = await outlet_manager.fetch_all(
                 filters={"is_active": True}
             )
             
             if not outlets.items:
+                print(f"❌ No active outlets found in database")
                 return None
             
             # Match outlet using first word comparison (case-insensitive)
@@ -146,7 +155,17 @@ async def auto_assign_outlet(district: str, state: str, taluk: str = None) -> Op
                     matched_outlet = outlet
                     break
             
-            return matched_outlet
+            if matched_outlet:
+                return matched_outlet
+            
+            # Fallback: If no exact match, log available outlets and return None
+            print(f"❌ No outlet found matching '{api_outlet_name}' (first word: '{api_first_word}')")
+            print(f"📋 Available outlet first words: {[o.outlet_name.lower().split()[0] for o in outlets.items]}")
+            print(f"💡 SUGGESTION: Update Google Sheets to return one of these outlet names:")
+            for outlet in outlets.items:
+                print(f"   • '{outlet.outlet_name}' (use '{outlet.outlet_name.split()[0]}' in Google Sheets)")
+            
+            return None
             
     except Exception as e:
         print(f"❌ Error in Google outlet assignment: {str(e)}")
@@ -208,52 +227,149 @@ def generate_order_number() -> str:
 
 async def process_crm_orders(payload: dict):
     """Background task to process CRM orders"""
-    try:
-        print(f"📦 Processing CRM Order: {payload}")
+    try: 
+
+        cleaned_payload = crm_service.clean_lsq_payload(payload)
+        # print(cleaned_payload)
+        # Handle both LeadSquared webhook payload and standard test payload
+        if "Current" in cleaned_payload and "Data" in cleaned_payload:
+            products_data = cleaned_payload.get("Data")
+            customer_data = cleaned_payload.get("Current")
+
+            print(f"products_data: {products_data}")
+            print(f"customer_data: {customer_data}")
+            
+            customer_name = f'{customer_data.get("FirstName", "")} {customer_data.get("LastName", "")}'.strip()
+            customer_phone = customer_data.get("Phone")
+            address_line = customer_data.get("mx_Street1", "")
+            district = customer_data.get("mx_City", "")
+            state = customer_data.get("mx_State", "")
+            pincode = customer_data.get("mx_Zip", "560001")
+            taluk = customer_data.get("taluk")
+            
+            no_of_items = int(products_data.get(LSQCreateOrder.NO_OF_ITEMS.value, 0) or 0)
+            order_total = products_data.get(LSQCreateOrder.GRAND_TOTAL.value, 0)
+            collection_type = products_data.get(LSQCreateOrder.COLLECTION_TYPE.value)
+            items_data = []
+            item_keys = [
+                LSQCreateOrder.ITEM_1.value, 
+                LSQCreateOrder.ITEM_2.value, 
+                LSQCreateOrder.ITEM_3.value
+            ]
+            
+            for i in range(no_of_items):
+                if i >= len(item_keys):
+                    break
+                raw_item = products_data.get(item_keys[i])
+                if raw_item and isinstance(raw_item, dict):
+                    product_uid = raw_item.get(LSQItems.PRODUCT_ID.value, "")
+                    sku_code = raw_item.get(LSQItems.SKU_CODE.value, "")
+                    quantity = int(raw_item.get(LSQItems.QUANTITY.value, 1) or 1)
+                    
+                    if product_uid or sku_code:
+                        items_data.append({
+                            "product_id": product_uid,
+                            "sku_code": sku_code,
+                            "quantity": quantity,
+                            "product_name": raw_item.get(LSQItems.PRODUCT_NAME.value),
+                            "category": raw_item.get(LSQItems.CATEGORY.value),
+                            "brand_name": raw_item.get(LSQItems.BRAND_NAME.value),
+                            "unit_type": raw_item.get(LSQItems.UNIT_TYPE.value),
+                            "size": raw_item.get(LSQItems.SIZE.value),
+                            "mrp": raw_item.get(LSQItems.MRP.value),
+                            "selling_price": raw_item.get(LSQItems.SELLING_PRICE.value),
+                            "total_price": raw_item.get(LSQItems.TOTAL_PRICE.value),
+                            "subtotal": raw_item.get(LSQItems.TOTAL_PRICE.value),
+                            "discount_amount_per_unit": raw_item.get(LSQItems.DISCOUNT_AMOUNT_PER_UNIT.value),
+                            "product_description": raw_item.get(LSQItems.PRODUCT_DESCRIPTION.value)
+                        })
+        else:
+            customer_name = cleaned_payload.get("customer_name")
+            customer_phone = cleaned_payload.get("customer_phone")
+            address_line = cleaned_payload.get("address_line", "")
+            district = cleaned_payload.get("district", "")
+            state = cleaned_payload.get("state", "")
+            pincode = cleaned_payload.get("pincode", "560001")
+            taluk = cleaned_payload.get("taluk")
+            items_data = cleaned_payload.get("items", [])
         
-        # 1. Validate mandatory fields
-        customer_name = payload.get("customer_name")
-        customer_phone = payload.get("customer_phone")
-        address_line = payload.get("address_line", "")
-        district = payload.get("district")
-        state = payload.get("state")
-        pincode = payload.get("pincode")
-        items_data = payload.get("items", [])
+        if district == "":
+            district = get_district(pincode)
+        if state == "":
+            state = get_state(pincode)
+
+        # Calculate expected delivery date (7 business days)
+        days_added = 0
+        expected_delivery_date = datetime.utcnow()
+        while days_added < 7:
+            expected_delivery_date += timedelta(days=1)
+            if expected_delivery_date.weekday() < 5:  # 0-4 are Monday to Friday
+                days_added += 1
         
-        if not all([customer_name, customer_phone, district, state, items_data]):
-            print("❌ Missing mandatory fields in CRM payload")
+        if not all([customer_name, customer_phone, pincode, items_data]):
+            print("Missing mandatory fields in CRM payload")
             return
 
         # 2. Resolve items and calculate pricing
         gross_amount = Decimal('0.00')
+        product_discount_total = Decimal('0.00')
+        total_commission = Decimal('0.00')
         validated_items = []
         
+        print(f"items_data: {items_data}")
         for item in items_data:
             product_id = item.get("product_id")
-            quantity = item.get("quantity", 1)
+            quantity = int(item.get("quantity", 1) or 1)
+            sku = item.get("sku_code")
             
             try:
-                product = await product_manager.fetch(product_id)
+                product = await product_manager.fetch_one(filters={"sku": sku})
                 if not product or not product.is_active:
                     continue
             except:
                 continue
                 
-            item_gross = quantity * product.cost_price
+            discount_per_unit = Decimal(item.get("discount_amount_per_unit") or '0.00')
+            lsq_total_price = item.get("total_price") or item.get("subtotal")
+            
+            if lsq_total_price:
+                subtotal = Decimal(str(lsq_total_price))
+                calculated_unit_price = subtotal / Decimal(str(quantity)) if quantity > 0 else Decimal('0.00')
+            else:
+                calculated_unit_price = max(Decimal('0.00'), product.cost_price - discount_per_unit)
+                subtotal = Decimal(str(quantity)) * calculated_unit_price
+                
+            item_gross = Decimal(str(quantity)) * product.cost_price
             gross_amount += item_gross
+            
+            product_manual_discount = discount_per_unit * Decimal(str(quantity))
+            product_discount_total += product_manual_discount
+            
+            # Commission calculation logic
+            if product.margin > 0:
+                commission_base = subtotal - product.unit_price
+            else:
+                commission_base = max(product.cost_price - discount_per_unit, Decimal('0.00'))
+                
+            commission_per_unit = commission_base * (product.commission / Decimal('100.00'))
+            item_commission = commission_per_unit * Decimal(str(quantity))
+            total_commission += item_commission
             
             validated_items.append({
                 "product": product,
                 "quantity": quantity,
-                "unit_price": product.cost_price,
-                "subtotal": item_gross
+                "unit_price": calculated_unit_price,
+                "subtotal": subtotal,
+                "gross_amount": item_gross,
+                "product_manual_discount": product_manual_discount,
+                "commission": item_commission
             })
-            
+        print(f"Validated items: {validated_items}")
         if not validated_items:
             print("❌ No valid active products found in CRM order")
             return
 
-        # 3. Get Default Telecaller/Admin for CRM Orders
+        # 3. Get Default Telecaller/ Admin for CRM Orders
         # Find the first admin to attribute this order
         admin_users = await user_manager.fetch_all(filters={"role": UserRole.ADMIN, "is_active": True})
         telecaller_id = admin_users.items[0].uid if admin_users.items else None
@@ -266,6 +382,13 @@ async def process_crm_orders(payload: dict):
         if not telecaller_id:
             print("❌ No active user found to attribute CRM order")
             return
+
+        # Calculate final pricing aligned with orders.py
+        discount_applied = product_discount_total
+        amount_after_discount = gross_amount - product_discount_total
+        
+        # If LSQ provides GRAND_TOTAL, default to it, else use formula
+        final_total_amount = Decimal(str(order_total)) if order_total else amount_after_discount
 
         # 4. Create Order Number
         order_number = generate_order_number()
@@ -281,13 +404,16 @@ async def process_crm_orders(payload: dict):
             pincode=pincode,
             telecaller_id=telecaller_id,
             order_status=OrderStatus.PENDING,
-            collection_type=CollectionType.DELIVERY,
+            collection_type=collection_type if collection_type else CollectionType.DOORSTEP,
             payment_method=PaymentMethod.CASH,
             order_date=datetime.utcnow(),
             gross_amount=gross_amount,
-            total_amount=gross_amount,
-            status_remarks="Order received via CRM Webhook"
+            manual_discount=discount_applied,
+            discount_applied=discount_applied,
+            total_amount=final_total_amount,
+            total_commission=total_commission
         )
+        # print(new_order)
         
         created_order = await order_manager.create(new_order)
         
@@ -299,13 +425,16 @@ async def process_crm_orders(payload: dict):
                 quantity=item_data["quantity"],
                 unit_price=item_data["unit_price"],
                 total_price=item_data["subtotal"],
-                subtotal=item_data["subtotal"]
+                subtotal=item_data["subtotal"],
+                product_manual_discount=item_data["product_manual_discount"]
             )
+            print(order_item)
             await order_item_manager.create(order_item)
             
         # 7. Auto-assign Outlet
-        assigned_outlet = await auto_assign_outlet(district, state, payload.get("taluk"))
+        assigned_outlet = await auto_assign_outlet(district,pincode, customer_data.get("taluk"))
         if assigned_outlet:
+            # print(assigned_outlet.uid)
             await order_manager.update(
                 created_order.uid,
                 {"assigned_outlet_id": assigned_outlet.uid}
@@ -331,12 +460,13 @@ async def process_crm_orders(payload: dict):
                 details={
                     "order_number": created_order.order_number,
                     "customer_name": customer_name,
-                    "total_amount": float(gross_amount)
+                    "total_amount": float(gross_amount),
+                    "status_remarks": "order received via CRM"
                 }
             )
             await activity_manager.create(activity_log)
-        except:
-            pass
+        except Exception:
+            print(f"❌ Activity log creation failed")
             
         print(f"✅ CRM Order {order_number} processed successfully")
         

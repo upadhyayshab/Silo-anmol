@@ -1504,6 +1504,19 @@ async def update_order_status(
             print(cancel_payload)
             # Release reserved stock
             await release_order_stock(order_id)
+
+        elif payload.order_status == OrderStatus.DELIVERY_ALLOTTED:
+            update_data["actual_delivery_date"] = datetime.utcnow()
+            
+            # Update local object so model_dump() picks it up for CRM
+            update_order(order, update_data)
+
+            # push activity to crm           
+            delivery_payload = await crm_service.push_activity({
+                "order_data": order.model_dump(),
+                "activity_event": ActivityType.DELIVERY_STATUS
+            })
+            print(delivery_payload)
         
         await order_manager.update(order_id, update_data)
         

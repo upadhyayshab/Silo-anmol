@@ -2,9 +2,10 @@ import httpx
 import asyncio
 from typing import Dict, Any, Optional
 from config import get_settings
-from utils.constants import LeadSource , LSQOrderStatusActivityField ,LSQProductField , ActivityType ,LSQDeliveryStatusActivityField , LSQPaymentStatusActivityField , LSQRefundStatusActivityField
+from utils.constants import LeadSource , LSQOrderStatusActivityField ,LSQProductField , ActivityType ,LSQDeliveryStatusActivityField , LSQPaymentStatusActivityField , LSQRefundStatusActivityField ,LSQCreateOrder , LSQItems
 from models import CrmPayload , OrderCreateRequest
 from pydantic import BaseModel
+import json
 
 class Activity:
     class orders_status:
@@ -116,7 +117,33 @@ class CRMService:
         "refund_status": 204,
         "delivery_status": 206
     }
+    LSQCreateOrder={
+        "status_remarks"  : LSQCreateOrder.NOTES,
+        "order_status"    : LSQCreateOrder.STATUS,
+        "owner"           : LSQCreateOrder.OWNER,
+        "item_1"          : LSQCreateOrder.ITEM_1,
+        "item_2"          : LSQCreateOrder.ITEM_2,
+        "item_3"          : LSQCreateOrder.ITEM_3,
+        "no_of_items"     : LSQCreateOrder.NO_OF_ITEMS,
+        "grand_total"     : LSQCreateOrder.GRAND_TOTAL,
+        "collection_type" : LSQCreateOrder.COLLECTION_TYPE
+    }
 
+    LSQItems={
+        "discount_amount_per_unit" : LSQItems.DISCOUNT_AMOUNT_PER_UNIT,
+        "product_name"             : LSQItems.PRODUCT_NAME,
+        "category"                 : LSQItems.CATEGORY,
+        "brand_name"               : LSQItems.BRAND_NAME,
+        "sku_code"                 : LSQItems.SKU_CODE,
+        "unit_type"                : LSQItems.UNIT_TYPE,
+        "size"                     : LSQItems.SIZE,
+        "mrp"                      : LSQItems.MRP,
+        "selling_price"            : LSQItems.SELLING_PRICE,
+        "quantity"                 : LSQItems.QUANTITY,
+        "total_price"              : LSQItems.TOTAL_PRICE,
+        "product_id"               : LSQItems.PRODUCT_ID,
+        "product_description"      : LSQItems.PRODUCT_DESCRIPTION
+    }
     # SchemaName for the product custom-object container block
     PRODUCT_OBJECT_SCHEMA = LSQOrderStatusActivityField.ITEMS
 
@@ -477,3 +504,22 @@ class CRMService:
 
     async def pull_from_crm(self) -> dict:
         pass
+
+    def clean_lsq_payload(self,data):
+        if isinstance(data, dict):
+            cleaned_dict = {}
+            for k, v in data.items():
+                if v is None or v == "":
+                    continue
+                if isinstance(v, str) and v.startswith('{"'):
+                    try:
+                        v = self.clean_lsq_payload(json.loads(v))
+                    except json.JSONDecodeError:
+                        pass
+                elif isinstance(v, dict):
+                    v = self.clean_lsq_payload(v)
+                cleaned_dict[k] = v
+            return cleaned_dict
+        elif isinstance(data, list):
+            return [self.clean_lsq_payload(item) for item in data if item is not None]
+        return data
