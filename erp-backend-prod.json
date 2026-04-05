@@ -70,6 +70,18 @@
                 {
                     "name": "JWT_SECRET_KEY",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/JWT_SECRET_KEY"
+                },
+                {
+                    "name": "CRM_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/CRM_URL"
+                },
+                {
+                    "name": "CRM_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/CRM_API_KEY"
+                },
+                {
+                    "name": "CRM_SECRET_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/CRM_SECRET_KEY"
                 }
             ],
             "logConfiguration": {
