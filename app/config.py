@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     # Security Configuration (from environment)
     master_api_key: str = os.getenv("MASTER_API_KEY", "")
     jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "")
+
+    # CRM Configuration (from environment)
+    crm_url: str = os.getenv("CRM_URL", "")
+    crm_api_key: str = os.getenv("CRM_API_KEY", "")
+    crm_secret_key: str = os.getenv("CRM_SECRET_KEY", "")
     
     # =============================================================================
     # COMPUTED PROPERTIES

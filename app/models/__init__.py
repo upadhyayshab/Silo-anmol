@@ -5,6 +5,7 @@ from .generateApiKeyModels import *
 from .healthCheckModels import *
 from .erpModels import *
 from .authModels import *
+from .crmModels import *
 
 
 class ListResponse[ModelType: BaseModel](BaseModel):

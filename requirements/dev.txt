@@ -16,3 +16,6 @@ pydantic-settings~=2.0.0
 aiosqlite~=0.20.0
 python-multipart~=0.0.6
 httpx~=0.25.2
+
+# pincode data
+pypinindia~=0.1.15
