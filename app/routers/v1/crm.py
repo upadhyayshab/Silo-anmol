@@ -373,9 +373,11 @@ async def process_crm_orders(payload: dict):
         # 3. Get Default Telecaller/ Admin for CRM Orders
         # Find the first admin to attribute this order
         try:
-            telecaller_id = await user_manager.fetch_one(filters={"uid": order_owner, "is_active": True})
+            telecaller_record = await user_manager.fetch_one(filters={"uid": order_owner, "is_active": True})
+            telecaller_id = telecaller_record.uid
         except:
-            telecaller_id = None
+            admin_record = await user_manager.fetch_one(filters={"role": "admin", "is_active": True})
+            telecaller_id = admin_record.uid
 
         if not telecaller_id:
             print("❌ No active user found to attribute CRM order")
