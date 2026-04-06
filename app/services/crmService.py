@@ -48,16 +48,13 @@ class CRMService:
 
     LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING = {
         "activity_note":          LSQDeliveryStatusActivityField.ACTIVITY_EVENT_NOTE,
-        "order_status":           LSQDeliveryStatusActivityField.STATUS,
-        "order_status":           LSQDeliveryStatusActivityField.ORDER_STATUS,
+        "order_status":           (LSQDeliveryStatusActivityField.STATUS, LSQDeliveryStatusActivityField.ORDER_STATUS),
         "order_number":               LSQDeliveryStatusActivityField.ORDER_ID,
         "assigned_outlet.outlet_name":            LSQDeliveryStatusActivityField.OUTLET_NAME,
         "assigned_outlet.address":        LSQDeliveryStatusActivityField.OUTLET_LOCATION,
         "assigned_outlet.phone":           LSQDeliveryStatusActivityField.OUTLET_PHONE,
-        "assigned_outlet.manager.full_name":    LSQDeliveryStatusActivityField.OUTLET_MANAGER_NAME,
-        "assigned_outlet.manager.phone":   LSQDeliveryStatusActivityField.OUTLET_MANAGER_PHONE,
-        "assigned_outlet.manager.full_name":    LSQDeliveryStatusActivityField.DELIVERY_AGENT_NAME,
-        "assigned_outlet.manager.phone":   LSQDeliveryStatusActivityField.DELIVERY_AGENT_PHONE,
+        "assigned_outlet.manager.full_name":    (LSQDeliveryStatusActivityField.OUTLET_MANAGER_NAME, LSQDeliveryStatusActivityField.DELIVERY_AGENT_NAME),
+        "assigned_outlet.manager.phone":   (LSQDeliveryStatusActivityField.OUTLET_MANAGER_PHONE, LSQDeliveryStatusActivityField.DELIVERY_AGENT_PHONE),
         "expected_delivery_date": LSQDeliveryStatusActivityField.EXPECTED_DELIVERY_DATE,
         "delivery_remarks":       LSQDeliveryStatusActivityField.DELIVERY_REMARKS,
         "assigned_at":            LSQDeliveryStatusActivityField.ASSIGNED_AT,
@@ -256,18 +253,24 @@ class CRMService:
         elif activity_event_code == 206:
             mapping = self.LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING
 
-        for payload_key, schema_name in mapping.items():
+        for payload_key, schema_names in mapping.items():
             value = self._get_nested_value(payload_dict, payload_key)
-            # Always extract the raw string from str-Enum SchemaName
-            schema_str = schema_name.value if hasattr(schema_name, "value") else str(schema_name)
             
-            # Handle the specific list comprehension for 'items'
-            if payload_key == "items" and isinstance(value, list) and value:
-                for raw_item in value:
-                    # Pull the nested product sub-dict if the join was loaded
-                    product_info = raw_item.get("product") or {}
-                    if hasattr(product_info, "__dict__"):
-                        product_info = product_info.__dict__
+            # Normalize to resolve single or multi-field mappings
+            if not isinstance(schema_names, (list, tuple)):
+                schema_names = [schema_names]
+                
+            for schema_name in schema_names:
+                # Always extract the raw string from str-Enum SchemaName
+                schema_str = schema_name.value if hasattr(schema_name, "value") else str(schema_name)
+                
+                # Handle the specific list comprehension for 'items'
+                if payload_key == "items" and isinstance(value, list) and value:
+                    for raw_item in value:
+                        # Pull the nested product sub-dict if the join was loaded
+                        product_info = raw_item.get("product") or {}
+                        if hasattr(product_info, "__dict__"):
+                            product_info = product_info.__dict__
 
                     # Build a flat dict that matches LEADSQUARED_PRODUCT_MAPPING keys:
                     #   product mapping key  ←  source field
@@ -280,41 +283,41 @@ class CRMService:
                     #   selling_price        ←  item.unit_price     (actual charged price)
                     #   discount             ←  item.discount_amount
                     #   total_price          ←  item.total_price
-                    enriched_item = {
-                        "product_name":  product_info.get("product_name"),
-                        "product_title": product_info.get("product_name"),
-                        "quantity":      raw_item.get("quantity"),
-                        "size":          None, 
-                        "unit_type":     product_info.get("unit_of_measure"),
-                        "mrp":           product_info.get("cost_price") or raw_item.get("cost_price"),
-                        "selling_price": raw_item.get("subtotal"),
-                        "discount":      raw_item.get("discount_amount"),
-                        "total_price":   raw_item.get("total_price"),
-                    }
+                        enriched_item = {
+                            "product_name":  product_info.get("product_name"),
+                            "product_title": product_info.get("product_name"),
+                            "quantity":      raw_item.get("quantity"),
+                            "size":          None, 
+                            "unit_type":     product_info.get("unit_of_measure"),
+                            "mrp":           product_info.get("cost_price") or raw_item.get("cost_price"),
+                            "selling_price": raw_item.get("subtotal"),
+                            "discount":      raw_item.get("discount_amount"),
+                            "total_price":   raw_item.get("total_price"),
+                        }
 
-                    inner_fields = self._build_custom_object_array(
-                        enriched_item,
-                        self.LEADSQUARED_PRODUCT_MAPPING
-                    )
+                        inner_fields = self._build_custom_object_array(
+                            enriched_item,
+                            self.LEADSQUARED_PRODUCT_MAPPING
+                        )
 
-                    if inner_fields:
-                        fields.append({
-                            "SchemaName": self.PRODUCT_OBJECT_SCHEMA.value,
-                            "Value": "",
-                            "Fields": inner_fields
-                        })
+                        if inner_fields:
+                            fields.append({
+                                "SchemaName": self.PRODUCT_OBJECT_SCHEMA.value,
+                                "Value": "",
+                                "Fields": inner_fields
+                            })
+                        
+                # Handle numerical values that need string conversion
+                elif payload_key in ["total_amount", "discount_applied"]:
+                    val_str = str(value) if value is not None else "0"
+                    fields.append({"SchemaName": schema_str, "Value": val_str})
                     
-            # Handle numerical values that need string conversion
-            elif payload_key in ["total_amount", "discount_applied"]:
-                val_str = str(value) if value is not None else "0"
-                fields.append({"SchemaName": schema_str, "Value": val_str})
-                
-            # Handle standard fields
-            else:
-                if value is not None and value != "":
-                    # Use .value to extract raw string from str-Enums (e.g. OrderStatus, PaymentMethod)
-                    value_str = value.value if hasattr(value, "value") else str(value)
-                    fields.append({"SchemaName": schema_str, "Value": value_str})
+                # Handle standard fields
+                else:
+                    if value is not None and value != "":
+                        # Use .value to extract raw string from str-Enums (e.g. OrderStatus, PaymentMethod)
+                        value_str = value.value if hasattr(value, "value") else str(value)
+                        fields.append({"SchemaName": schema_str, "Value": value_str})
 
         # Extract the string value from Enum if present
         order_status = payload_dict.get('order_status', 'Unknown Status')

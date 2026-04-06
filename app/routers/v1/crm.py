@@ -408,12 +408,13 @@ async def process_crm_orders(payload: dict):
             payment_method=PaymentMethod.CASH,
             order_date=datetime.utcnow(),
             gross_amount=gross_amount,
+            expected_delivery_date=expected_delivery_date,
             manual_discount=discount_applied,
             discount_applied=discount_applied,
             total_amount=final_total_amount,
             total_commission=total_commission
         )
-        # print(new_order)
+        # print(new_order.model_dump())
         
         created_order = await order_manager.create(new_order)
         
