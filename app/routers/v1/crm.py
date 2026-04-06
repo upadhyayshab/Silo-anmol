@@ -242,9 +242,9 @@ async def process_crm_orders(payload: dict):
             customer_name = f'{customer_data.get("FirstName", "")} {customer_data.get("LastName", "")}'.strip()
             customer_phone = customer_data.get("Phone")
             address_line = customer_data.get("mx_Street1", "")
-            district = customer_data.get("mx_City", "")
-            state = customer_data.get("mx_State", "")
-            pincode = customer_data.get("mx_Zip", "560001")
+            # district = customer_data.get("mx_City", "")
+            # state = customer_data.get("mx_State", "")
+            pincode = product_data.get(LSQCreateOrder.PINCODE.value, "")
             taluk = customer_data.get("taluk")
             
             no_of_items = int(products_data.get(LSQCreateOrder.NO_OF_ITEMS.value, 0) or 0)
