@@ -48,6 +48,7 @@ class CRMService:
 
     LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING = {
         "activity_note":          LSQDeliveryStatusActivityField.ACTIVITY_EVENT_NOTE,
+        "order_status":           LSQDeliveryStatusActivityField.STATUS,
         "order_status":           LSQDeliveryStatusActivityField.ORDER_STATUS,
         "order_number":               LSQDeliveryStatusActivityField.ORDER_ID,
         "assigned_outlet.outlet_name":            LSQDeliveryStatusActivityField.OUTLET_NAME,

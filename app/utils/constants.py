@@ -244,6 +244,7 @@ class LSQCreateOrder(str, Enum):
     NO_OF_ITEMS     = "mx_Custom_4"
     GRAND_TOTAL     = "mx_Custom_5"
     COLLECTION_TYPE = "mx_Custom_6"
+    PINCODE         = "mx_Custom_7"
 
 class LSQItems(str, Enum):
     DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_1"
