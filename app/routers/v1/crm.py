@@ -376,7 +376,7 @@ async def process_crm_orders(payload: dict):
             telecaller_record = await user_manager.fetch_one(filters={"uid": order_owner, "is_active": True})
             telecaller_id = telecaller_record.uid
         except:
-            admin_record = await user_manager.fetch_one(filters={"role": "admin", "is_active": True})
+            admin_record = await user_manager.fetch_one(filters={"role": UserRole.ADMIN, "is_active": True})
             telecaller_id = admin_record.uid
 
         if not telecaller_id:
