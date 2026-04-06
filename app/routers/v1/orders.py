@@ -109,7 +109,7 @@ async def create_order(
             if product.margin > 0:
                 # Non-Silo Fortune product: Use margin as commission base
                 # Ignore product_discount for commission calculation
-                commission_base = subtotal - product.unit_price 
+                commission_base = calculated_unit_price - product.unit_price 
             else:
                 # Silo Fortune product: Use existing logic
                 # Commission base = cost_price - product_discount
