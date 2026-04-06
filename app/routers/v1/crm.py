@@ -244,6 +244,7 @@ async def process_crm_orders(payload: dict):
             address_line = customer_data.get("mx_Street1", "")
             # district = customer_data.get("mx_City", "")
             # state = customer_data.get("mx_State", "")
+            order_owner = products_data.get(LSQCreateOrder.OWNER.value, "")
             pincode = product_data.get(LSQCreateOrder.PINCODE.value, "")
             taluk = customer_data.get("taluk")
             
@@ -371,13 +372,10 @@ async def process_crm_orders(payload: dict):
 
         # 3. Get Default Telecaller/ Admin for CRM Orders
         # Find the first admin to attribute this order
-        admin_users = await user_manager.fetch_all(filters={"role": UserRole.ADMIN, "is_active": True})
-        telecaller_id = admin_users.items[0].uid if admin_users.items else None
-        
-        if not telecaller_id:
-            # Fallback to any active user if no admin found
-            all_users = await user_manager.fetch_all(filters={"is_active": True})
-            telecaller_id = all_users.items[0].uid if all_users.items else None
+        try:
+            telecaller_id = await user_manager.fetch_one(filters={"uid": order_owner, "is_active": True})
+        except:
+            telecaller_id = None
 
         if not telecaller_id:
             print("❌ No active user found to attribute CRM order")
