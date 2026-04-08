@@ -437,7 +437,7 @@ async def create_proxy_order(
             if product.margin > 0:
                 # Non-Silo Fortune product: Use margin as commission base
                 # Ignore product_discount for commission calculation
-                commission_base = product.margin
+                commission_base = calculated_unit_price - product.unit_price
             else:
                 # Silo Fortune product: Use existing logic
                 # Commission base = cost_price - product_discount
@@ -920,7 +920,7 @@ openapi_examples={
             
             # Calculate commissions
             if product.margin > 0:
-                commission_base = product.margin
+                commission_base = calculated_unit_price - product.unit_price
             else:
                 commission_base = max(Decimal('0.00'), product.cost_price - per_unit_discount)
                 
