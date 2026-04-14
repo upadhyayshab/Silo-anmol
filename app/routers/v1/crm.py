@@ -316,6 +316,7 @@ async def process_crm_orders(payload: dict):
             order_owner = products_data.get(LSQCreateOrder.OWNER.value, "")
             pincode = products_data.get(LSQCreateOrder.PINCODE.value, "")
             taluk = customer_data.get("taluk")
+            crm_order_id = products_data.get("mx_Custom_8") # this will come form medusa 
             
             no_of_items = int(products_data.get(LSQCreateOrder.NO_OF_ITEMS.value, 0) or 0)
             order_total = products_data.get(LSQCreateOrder.GRAND_TOTAL.value, 0)
@@ -362,6 +363,7 @@ async def process_crm_orders(payload: dict):
             pincode = cleaned_payload.get("pincode", "560001")
             taluk = cleaned_payload.get("taluk")
             items_data = cleaned_payload.get("items", [])
+            crm_order_id = cleaned_payload.get("mx_Custom_8")
         
         if district == "":
             district = get_district(pincode)
@@ -463,7 +465,7 @@ async def process_crm_orders(payload: dict):
         order_number = generate_order_number()
         
         # 5. Create Order Schema
-        new_order = CustomerOrderSchema(
+        order_kwargs = dict(
             order_number=order_number,
             customer_name=customer_name,
             customer_phone=customer_phone,
@@ -483,6 +485,11 @@ async def process_crm_orders(payload: dict):
             total_amount=final_total_amount,
             total_commission=total_commission
         )
+        
+        if crm_order_id:
+            order_kwargs["uid"] = str(crm_order_id)
+            
+        new_order = CustomerOrderSchema(**order_kwargs)
         # print(new_order.model_dump())
         
         created_order = await order_manager.create(new_order)

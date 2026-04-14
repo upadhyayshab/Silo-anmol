@@ -245,6 +245,7 @@ class LSQCreateOrder(str, Enum):
     GRAND_TOTAL     = "mx_Custom_5"
     COLLECTION_TYPE = "mx_Custom_6"
     PINCODE         = "mx_Custom_7"
+    ORDER_ID        = "mx_Custom_8"
 
 class LSQItems(str, Enum):
     DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_1"
