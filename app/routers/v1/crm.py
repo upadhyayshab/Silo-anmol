@@ -189,6 +189,7 @@ async def push_outlet_not_assigned(order_id: str, district: str, pincode: str, r
         )
         unassigned_dump = unassigned_order.model_dump()
         unassigned_dump["assigned_at"] = None
+        unassigned_dump["order_status"] = "Not Assigned"
         unassigned_dump["outlet_assignment_error"] = (
             f"No outlet found for district='{district}', pincode='{pincode}'"
             + (f": {reason}" if reason else "")
@@ -202,7 +203,7 @@ async def push_outlet_not_assigned(order_id: str, district: str, pincode: str, r
         print(f"⚠️ CRM push_activity (outlet not assigned) failed: {str(crm_err)}")
 
 
-async def push_outlet_assigned(order_id: str):
+async def push_outlet_assigned(order_id: str, *args, **kwargs):
     """Push a DELIVERY_STATUS activity to CRM indicating outlet was assigned."""
     try:
         order_with_outlet = await order_manager.fetch(
@@ -214,6 +215,7 @@ async def push_outlet_assigned(order_id: str):
         )
         order_dump = order_with_outlet.model_dump()
         order_dump["assigned_at"] = datetime.utcnow().isoformat()
+        order_dump["order_status"] = "Assigned"
         crm_result = await crm_service.push_activity({
             "delivery_data": order_dump,
             "activity_event": ActivityType.DELIVERY_STATUS
@@ -283,7 +285,7 @@ async def order_creation_success_activity(order_id: str):
             joins=[(CustomerOrderSchema.items, OrderItemSchema.product)]
         )
         order_dump = created_order.model_dump()
-        order_dump["order_status"] = OrderStatus.PENDING
+        order_dump["order_status"] = "confirmed"
         order_dump["city"] = order_dump.get("district")
         crm_result = await crm_service.push_activity({
             "order_data": order_dump,
