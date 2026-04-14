@@ -124,7 +124,9 @@ class CRMService:
         "item_3"          : LSQCreateOrder.ITEM_3,
         "no_of_items"     : LSQCreateOrder.NO_OF_ITEMS,
         "grand_total"     : LSQCreateOrder.GRAND_TOTAL,
-        "collection_type" : LSQCreateOrder.COLLECTION_TYPE
+        "collection_type" : LSQCreateOrder.COLLECTION_TYPE,
+        "order_id"        : LSQCreateOrder.ORDER_ID,
+        "pincode"         : LSQCreateOrder.PINCODE
     }
 
     LSQItems={
