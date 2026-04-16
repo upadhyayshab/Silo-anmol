@@ -278,9 +278,9 @@ class CRMService:
                     value_str = value.value if hasattr(value, "value") else str(value)
                     fields.append({"SchemaName": schema_str, "Value": value_str})
 
-        # Explicitly handle items using item_1, item_2, item_3 logic mapping
+        # Explicitly handle items using item_1, item_2, item_3 logic mapping for ORDER_STATUS only
         items_val = self._get_nested_value(payload_dict, "items")
-        if isinstance(items_val, list) and items_val:
+        if activity_event_code == 203 and isinstance(items_val, list) and items_val:
             item_enums = [
                 LSQOrderStatusActivityField.PRODUCT_1,
                 LSQOrderStatusActivityField.PRODUCT_2,
