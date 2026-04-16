@@ -18,7 +18,7 @@ from models import (
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType
-from services import CRMService
+from services import CRMService , storeService
 import uuid
 
 settings = get_settings()
@@ -33,6 +33,7 @@ outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
 
 crm_service = CRMService()
+store_service = storeService()
 
 router = APIRouter(prefix="/orders", tags=["Order Management"])
 
@@ -1479,6 +1480,9 @@ async def update_order_status(
             
             # Update local object so model_dump() picks it up for CRM
             update_order(order, update_data)
+            
+            # push the order status to store 
+            await store_service.order_delivered(order_id)
 
             # push activity to crm           
             delivery_payload = await crm_service.push_activity({
@@ -1495,6 +1499,9 @@ async def update_order_status(
                 )
 
             update_order(order, update_data)
+            
+            # push the order status to store 
+            await store_service.order_cancelled(order_id)
 
             # push activity to crm           
             cancel_payload = await crm_service.push_activity({
@@ -1510,6 +1517,9 @@ async def update_order_status(
             
             # Update local object so model_dump() picks it up for CRM
             update_order(order, update_data)
+
+            # push the order status to store 
+            await store_service.order_fulfilled(order_id)
 
             # push activity to crm           
             delivery_payload = await crm_service.push_activity({
