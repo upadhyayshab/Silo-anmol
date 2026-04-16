@@ -59,8 +59,22 @@ class CRMOrderPayload(BaseModel):
 
 
 @router.post("/test")
-async def test(payload:dict):
-    return crm_service.clean_lsq_payload(payload)
+async def test(pincode: str ):
+    district = get_district(pincode)
+    print(district)
+    outlet = await auto_assign_outlet("customer_orders_f95dd28b-3eab-47af-a084-9c58b8b50269", district, pincode)
+    outlet_dict = outlet.model_dump()
+    outlet_dict["lib_dictrict"] = district
+    return outlet_dict
+    # outlet = await order_manager.fetch(
+    #         pincode,
+    #         joins=[
+    #             (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
+    #             (CustomerOrderSchema.items, OrderItemSchema.product)
+    #         ]
+    #     )
+    # return outlet.model_dump()
+    # await order_creation_success_activity(order_id)
 
 @router.post("/webhook")
 async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, openapi_examples={
@@ -162,7 +176,6 @@ async def auto_assign_outlet(order_id: str,district: str, pincode: str, taluk: s
             
             if matched_outlet:
                 # Push outlet-ASSIGNED activity to CRM
-                await push_outlet_assigned(order_id, district, pincode, reason=f"Assigned outlet '{matched_outlet.outlet_name}' matched with API response '{api_outlet_name}'")
                 return matched_outlet
             
             # Fallback: If no exact match, log available outlets and return None
@@ -206,16 +219,17 @@ async def push_outlet_not_assigned(order_id: str, district: str, pincode: str, r
 async def push_outlet_assigned(order_id: str, *args, **kwargs):
     """Push a DELIVERY_STATUS activity to CRM indicating outlet was assigned."""
     try:
-        order_with_outlet = await order_manager.fetch(
+        outlet = await order_manager.fetch(
             order_id,
             joins=[
                 (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
                 (CustomerOrderSchema.items, OrderItemSchema.product)
             ]
         )
-        order_dump = order_with_outlet.model_dump()
+        order_dump = outlet.model_dump()
         order_dump["assigned_at"] = datetime.utcnow().isoformat()
         order_dump["order_status"] = "Assigned"
+        # print(order_dump)
         crm_result = await crm_service.push_activity({
             "delivery_data": order_dump,
             "activity_event": ActivityType.DELIVERY_STATUS
@@ -319,10 +333,13 @@ async def process_crm_orders(payload: dict):
             pincode = products_data.get(LSQCreateOrder.PINCODE.value, "")
             taluk = customer_data.get("taluk")
             crm_order_id = products_data.get("mx_Custom_8") # this will come form medusa 
+            payment_method_raw = (products_data.get(LSQCreateOrder.PAYMENT_METHOD.value) or "").strip().lower()
+            prepaid_amount_raw = products_data.get(LSQCreateOrder.PREPAID_AMOUNT.value)
             
             no_of_items = int(products_data.get(LSQCreateOrder.NO_OF_ITEMS.value, 0) or 0)
             order_total = products_data.get(LSQCreateOrder.GRAND_TOTAL.value, 0)
             collection_type = products_data.get(LSQCreateOrder.COLLECTION_TYPE.value)
+            
             items_data = []
             item_keys = [
                 LSQCreateOrder.ITEM_1.value, 
@@ -366,6 +383,8 @@ async def process_crm_orders(payload: dict):
             taluk = cleaned_payload.get("taluk")
             items_data = cleaned_payload.get("items", [])
             crm_order_id = cleaned_payload.get("mx_Custom_8")
+            payment_method_raw = (cleaned_payload.get("payment_method") or "").strip().lower()
+            prepaid_amount_raw = cleaned_payload.get("prepaid_amount")
         
         if district == "":
             district = get_district(pincode)
@@ -461,7 +480,18 @@ async def process_crm_orders(payload: dict):
         amount_after_discount = gross_amount - product_discount_total
         
         # If LSQ provides GRAND_TOTAL, default to it, else use formula
-        final_total_amount = Decimal(str(order_total)) if order_total else amount_after_discount
+        base_total_amount = Decimal(str(order_total)) if order_total else amount_after_discount
+        
+        # Process prepaid amount
+        prepaid_amt_dec = Decimal('0.00')
+        if payment_method_raw == "online" and prepaid_amount_raw is not None:
+            try:
+                prepaid_amt_dec = Decimal(str(prepaid_amount_raw))
+            except Exception:
+                print(f"⚠️ Could not parse prepaid_amount '{prepaid_amount_raw}', defaulting to 0")
+        
+        # Calculate final total amount (remaining amount to be paid)
+        final_total_amount = max(Decimal('0.00'), base_total_amount - prepaid_amt_dec)
 
         # 4. Create Order Number
         order_number = generate_order_number()
@@ -478,7 +508,7 @@ async def process_crm_orders(payload: dict):
             telecaller_id=telecaller_id,
             order_status=OrderStatus.PENDING,
             collection_type=collection_type if collection_type else CollectionType.DOORSTEP,
-            payment_method=PaymentMethod.CASH,
+            payment_method=PaymentMethod.ONLINE if payment_method_raw == "online" else PaymentMethod.CASH,
             order_date=datetime.utcnow(),
             gross_amount=gross_amount,
             expected_delivery_date=expected_delivery_date,
@@ -487,6 +517,10 @@ async def process_crm_orders(payload: dict):
             total_amount=final_total_amount,
             total_commission=total_commission
         )
+        
+        # For online/prepaid orders, attach the prepaid amount
+        if payment_method_raw == "online" and prepaid_amt_dec > 0:
+            order_kwargs["prepaid_amount"] = prepaid_amt_dec
         
         if crm_order_id:
             order_kwargs["uid"] = str(crm_order_id)
@@ -510,7 +544,25 @@ async def process_crm_orders(payload: dict):
             print(order_item)
             await order_item_manager.create(order_item)
             
-        # 7. Auto-assign Outlet
+        # 7. Create Prepaid Transaction if Online
+        if payment_method_raw == "online" and prepaid_amt_dec > 0:
+            try:
+                transaction = OrderTransactionSchema(
+                    order_id=created_order.uid,
+                    payment_status=PaymentStatus.PAID,
+                    payment_method=PaymentMethod.ONLINE,
+                    amount_paid=prepaid_amt_dec,
+                    transaction_reference=f"CRM_PREPAID_{created_order.order_number}",
+                    payment_date=datetime.utcnow(),
+                    received_by=telecaller_id,
+                    notes="Prepaid amount recorded from CRM webhook"
+                )
+                await transaction_manager.create(transaction)
+                print(f"✅ Created prepaid transaction for {prepaid_amt_dec}")
+            except Exception as txn_err:
+                print(f"⚠️ Failed to create prepaid transaction: {str(txn_err)}")
+
+        # 8. Auto-assign Outlet
         assigned_outlet = await auto_assign_outlet(created_order.uid,district,pincode, customer_data.get("taluk"))
         if assigned_outlet:
             # print(assigned_outlet.uid)
@@ -519,7 +571,7 @@ async def process_crm_orders(payload: dict):
                 {"assigned_outlet_id": assigned_outlet.uid}
             )
             
-            # 8. Reserve Stock
+            # 9. Reserve Stock
             try:
                 await reserve_crm_stock(created_order.uid, assigned_outlet.uid, validated_items)
             except Exception as e:
@@ -529,10 +581,11 @@ async def process_crm_orders(payload: dict):
                     {"status_remarks": f"Order received via CRM, but stock reservation failed: {str(e)}"}
                 )
                 
-        # 9. Push order-confirmed (ORDER_STATUS) activity to CRM 
+        # 10. Push order-confirmed (ORDER_STATUS) activity to CRM
+        await push_outlet_assigned(created_order.uid, district, pincode)
         await order_creation_success_activity(created_order.uid)
             
-        # 10. Log Activity
+        # 11. Log Activity
         try:
             activity_log = ActivityLogSchema(
                 user_id=telecaller_id,

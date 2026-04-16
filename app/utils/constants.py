@@ -217,11 +217,13 @@ class LSQOrderStatusActivityField(str, Enum):
     COUPON_CODE_STATUS   = "mx_Custom_15"
     DELIVERY_STATUS      = "mx_Custom_16"
     PAYMENT_STATUS       = "mx_Custom_17"
-    ITEMS                = "mx_Custom_18" 
+    PRODUCT_1            = "mx_Custom_18" 
     REFUND_STATUS        = "mx_Custom_19"
     ACTUAL_DELIVERY_DATE = "mx_Custom_20"
     COUPON_CODE          = "mx_Custom_21"
-    REASON        = "mx_Custom_22"
+    REASON               = "mx_Custom_22"
+    PRODUCT_2            = "mx_Custom_23"
+    PRODUCT_3            = "mx_Custom_24"
 
 class LSQProductField(str, Enum):
     PRODUCT_NAME         = "mx_CustomObject_1"
@@ -246,6 +248,8 @@ class LSQCreateOrder(str, Enum):
     COLLECTION_TYPE = "mx_Custom_6"
     PINCODE         = "mx_Custom_7"
     ORDER_ID        = "mx_Custom_8"
+    PREPAID_AMOUNT  = "mx_Custom_9"
+    PAYMENT_METHOD  = "mx_Custom_10"
 
 class LSQItems(str, Enum):
     DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_1"
