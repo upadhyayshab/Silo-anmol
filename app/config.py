@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     crm_url: str = os.getenv("CRM_URL", "")
     crm_api_key: str = os.getenv("CRM_API_KEY", "")
     crm_secret_key: str = os.getenv("CRM_SECRET_KEY", "")
+
+    # Medusa webhook
+    store_url:str = os.getenv("STORE_URL","https://store-backend.gausampurna.co")
     
     # =============================================================================
     # COMPUTED PROPERTIES
