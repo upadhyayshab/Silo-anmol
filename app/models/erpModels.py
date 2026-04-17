@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 from decimal import Decimal
 import re
@@ -499,6 +499,23 @@ class StockTransferCreateRequest(BaseModel):
     items: List[TransferItemRequest]
     notes: Optional[str] = None
 
+class TransferItemRequestBulk(BaseModel):
+    sku: str
+    quantity_requested: int = Field(..., gt=0)
+
+
+class StockTransferCreateRequestBulk(BaseModel):
+    from_outlet_name: Optional[str] = None  # NULL for warehouse
+    to_outlet_name: str
+    scheduled_date: Optional[date] = None
+    items: List[TransferItemRequestBulk]
+    notes: Optional[str] = None
+
+class BulkTransferResponse(BaseModel):
+    successful_count: int
+    failed_count: int
+    successful_transfer_ids: List[str]
+    errors: List[Dict[str, Any]]
 
 class StockTransferStatusUpdateRequest(BaseModel):
     status: TransferStatus
@@ -712,7 +729,7 @@ __all__ = [
     # Stock Transfer
     "TransferItemRequest", "StockTransferCreateRequest",
     "StockTransferStatusUpdateRequest", "TransferItemApproveRequest", "StockTransferApproveQuantitiesRequest",
-    "TransferItemResponse", "StockTransferResponse",
+    "TransferItemResponse", "StockTransferResponse","BulkTransferResponse" , "StockTransferCreateRequestBulk",
     
     # System
     "SystemConfigurationUpdateRequest", "SystemConfigurationResponse",

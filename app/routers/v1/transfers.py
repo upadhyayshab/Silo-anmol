@@ -12,7 +12,7 @@ from models import (
     StockTransferCreateRequest, StockTransferStatusUpdateRequest,
     StockTransferApproveQuantitiesRequest,
     StockTransferResponse, TransferItemResponse,
-    ListResponse, StatusResponse
+    ListResponse, StatusResponse , BulkTransferResponse , StockTransferCreateRequestBulk
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, TransferStatus
@@ -175,12 +175,135 @@ async def create_transfer_request(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create transfer request: {str(e)}"
         )
+@router.post("/mass-upload", response_model=BulkTransferResponse)
+async def mass_upload_transfer_requests(
+    payload: List[StockTransferCreateRequestBulk],
+    current_user_id: str = Depends(require_roles(
+        UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.WAREHOUSE_MANAGER
+    ))
+):
+    """
+    Mass upload stock transfer requests.
+    - Restricted to Admins, Super Admins, Warehouse Managers.
+    - Processes the batch and returns a summary of successes and failures.
+    """
+    # Fetch current user once for the whole batch
+    current_user = await user_manager.fetch(current_user_id)
+    
+    successful_transfers = []
+    errors = []
 
+    for index, transfer_req in enumerate(payload):
+        try:
+            # 1. Validate Source Outlet (if provided)
+            from_outlet_id = None
+            if transfer_req.from_outlet_name:
+                try:
+                    from_outlets = await outlet_manager.fetch_all(filters={"outlet_name": transfer_req.from_outlet_name})
+                    if not from_outlets.items:
+                        raise ValueError(f"Source outlet '{transfer_req.from_outlet_name}' not found")
+                    from_outlet = from_outlets.items[0]
+                    if not from_outlet.is_active:
+                        raise ValueError(f"Source outlet '{transfer_req.from_outlet_name}' is not active")
+                    from_outlet_id = from_outlet.uid
+                except Exception as e:
+                    raise ValueError(str(e))
+            
+            # 2. Validate Destination Outlet
+            try:
+                to_outlets = await outlet_manager.fetch_all(filters={"outlet_name": transfer_req.to_outlet_name})
+                if not to_outlets.items:
+                    raise ValueError(f"Destination outlet '{transfer_req.to_outlet_name}' not found")
+                to_outlet = to_outlets.items[0]
+                if not to_outlet.is_active:
+                    raise ValueError(f"Destination outlet '{transfer_req.to_outlet_name}' is not active")
+                to_outlet_id = to_outlet.uid
+            except Exception as e:
+                raise ValueError(str(e))
+
+            # 3. Validate Products and Check Availability
+            validated_items = []
+            for item in transfer_req.items:
+                # Verify product exists by SKU
+                try:
+                    product_search = await product_manager.fetch_all(filters={"sku": item.sku})
+                    if not product_search.items:
+                        raise ValueError(f"Product with SKU '{item.sku}' not found")
+                    product = product_search.items[0]
+                    if not product.is_active:
+                        raise ValueError(f"Product {product.product_name} (SKU: {item.sku}) is not active")
+                except Exception as e:
+                    raise ValueError(str(e))
+                
+                # Check stock availability at source location
+                source_inventory = await inventory_manager.fetch_all(
+                    filters={
+                        "product_id": product.uid,
+                        "outlet_id": from_outlet_id
+                    }
+                )
+                
+                if not source_inventory.items:
+                    raise ValueError(f"No stock available for {product.product_name} at source location")
+                
+                inventory_item = source_inventory.items[0]
+                available_stock = inventory_item.quantity - inventory_item.reserved_quantity
+                
+                if available_stock < item.quantity_requested:
+                    raise ValueError(
+                        f"Insufficient stock for {product.product_name}. "
+                        f"Available: {available_stock}, Requested: {item.quantity_requested}"
+                    )
+                
+                validated_items.append({
+                    "product": product,
+                    "quantity_requested": item.quantity_requested
+                })
+
+            # 4. Create Transfer Order
+            new_transfer = StockTransferOrderSchema(
+                transfer_number=generate_transfer_number(),
+                from_outlet_id=from_outlet_id,
+                to_outlet_id=to_outlet_id,
+                status=TransferStatus.PENDING,
+                requested_by=current_user_id,
+                scheduled_date=transfer_req.scheduled_date,
+                notes=transfer_req.notes
+            )
+            
+            created_transfer = await transfer_manager.create(new_transfer)
+            
+            # 5. Create Transfer Items
+            for item_data in validated_items:
+                transfer_item = TransferItemSchema(
+                    transfer_id=created_transfer.uid,
+                    product_id=item_data["product"].uid,
+                    quantity_requested=item_data["quantity_requested"],
+                    quantity_delivered=0
+                )
+                await transfer_item_manager.create(transfer_item)
+            
+            successful_transfers.append(created_transfer.uid)
+
+        except Exception as batch_error:
+            # Catch errors for this specific row so the rest of the batch can continue
+            errors.append({
+                "to_outlet_name": transfer_req.to_outlet_name,
+                "error_detail": str(batch_error)
+            })
+
+    # Return the summary report
+    return BulkTransferResponse(
+        successful_count=len(successful_transfers),
+        failed_count=len(errors),
+        successful_transfer_ids=successful_transfers,
+        errors=errors
+    )
 
 @router.get("/test-deployment")
 async def test_deployment():
-    """Test endpoint to verify deployment"""
-    return {"message": "Code updated successfully", "timestamp": "2026-01-22-06:55"}
+    """Test endpoint to verify deployment """
+    return {"message": "Code updated successfully", "timestamp": datetime.now()}
 
 
 @router.get("/pending-approvals", response_model=ListResponse[StockTransferResponse])
