@@ -622,6 +622,25 @@ class OutletManagerPayoutManager(GenericManager[OutletManagerPayoutSchema]):
 
 
 # ============================================================================
+# LSQ Telecallers Mapping
+# ============================================================================
+
+class LSQTelecallerMappingSchema(BaseSchema):
+    """LSQ Telecaller Mapping"""
+    __tablename__ = "lsq_telecaller_mapping"
+
+    lsq_id = db.Column(db.String, nullable=False, index=True)
+    telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    lsq_email = db.Column(db.String, nullable=False)
+    
+    # Relationships
+    telecaller = relationship("UserSchema", foreign_keys=[telecaller_id])
+
+
+class LSQTelecallerMappingManager(GenericManager[LSQTelecallerMappingSchema]):
+    pass
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -668,4 +687,7 @@ __all__ = [
     
     # Outlet Manager Payouts
     "OutletManagerPayoutSchema", "OutletManagerPayoutManager",
+
+    # LSQ Telecaller Mapping
+    "LSQTelecallerMappingSchema", "LSQTelecallerMappingManager",
 ]

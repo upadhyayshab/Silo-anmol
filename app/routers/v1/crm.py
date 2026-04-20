@@ -13,7 +13,7 @@ from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager,
     CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,
-    ActivityLogManager, ActivityLogSchema, OutletSchema
+    ActivityLogManager, ActivityLogSchema, OutletSchema , LSQTelecallerMappingSchema , LSQTelecallerMappingManager
 )
 from services import CRMService
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod , ActivityType, LSQCreateOrder , LSQItems
@@ -31,6 +31,7 @@ product_manager = ProductManager(engine)
 outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
 activity_manager = ActivityLogManager(engine)
+lsq_telecaller_manager = LSQTelecallerMappingManager(engine)
 
 crm_service = CRMService()
 
@@ -107,11 +108,14 @@ async def auto_assign_outlet(order_id: str,district: str, pincode: str, taluk: s
         GOOGLE_OUTLET_API = "https://script.google.com/macros/s/AKfycbxqlS7Og-4AKNm79aweOzjVqOcmyFXHaHpy7xmfcz27i0knowG_vjEFWZ_Ha8drY4CYbA/exec"
         
         def get_taluk_name(pincode):
-            data = get_pincode_info(pincode)
-            if data:
-                # returns the Taluk of the first post office found
-                return data[0].get('taluk') 
-            return "Not Found"
+            try:
+                data = get_pincode_info(pincode)
+                if data:
+                    # returns the Taluk of the first post office found
+                    return data[0].get('taluk') 
+            except Exception:
+                pass
+            return None
 
         # Prepare API request parameters
         taluk = get_taluk_name(pincode)
@@ -386,10 +390,19 @@ async def process_crm_orders(payload: dict):
             payment_method_raw = (cleaned_payload.get("payment_method") or "").strip().lower()
             prepaid_amount_raw = cleaned_payload.get("prepaid_amount")
         
-        if district == "":
-            district = get_district(pincode)
-        if state == "":
-            state = get_state(pincode)
+        try:
+            if not district:
+                district = get_district(pincode)
+            if not state:
+                state = get_state(pincode)
+        except Exception as e:
+            logging.error(f"Error looking up pincode {pincode}: {e}")
+            
+        # Default fallbacks if lookups failed or district/state still missing
+        if not district:
+            district = "Hassan"
+        if not state:
+            state = "karnataka"
 
         # Calculate expected delivery date (7 business days)
         days_added = 0
@@ -465,7 +478,8 @@ async def process_crm_orders(payload: dict):
         # 3. Get Default Telecaller/ Admin for CRM Orders
         # Find the first admin to attribute this order
         try:
-            telecaller_record = await user_manager.fetch_one(filters={"uid": order_owner, "is_active": True})
+            lsq_telecaller_record = await lsq_telecaller_manager.fetch_one(filters={"lsq_id": order_owner}, joins = {LSQTelecallerMappingSchema.telecaller})
+            telecaller_record = await user_manager.fetch_one(filters={"uid": lsq_telecaller_record.telecaller.uid, "is_active": True})
             telecaller_id = telecaller_record.uid
         except:
             admin_record = await user_manager.fetch_one(filters={"role": UserRole.ADMIN, "is_active": True})
