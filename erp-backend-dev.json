@@ -82,6 +82,10 @@
                 {
                     "name": "CRM_SECRET_KEY",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/CRM_SECRET_KEY"
+                },
+                {
+                    "name": "STORE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/STORE_URL"
                 }
             ],
             "logConfiguration": {
