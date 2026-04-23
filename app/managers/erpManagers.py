@@ -322,10 +322,12 @@ class CustomerOrderSchema(BaseSchema):
     prepaid_amount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Amount already paid
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Final net amount
     total_commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total commission for order
+    delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True, index=True)
 
     # Relationships
-    telecaller = relationship("UserSchema", back_populates="created_orders") # here we will get the telecallers and the outlet manager
+    telecaller = relationship("UserSchema", back_populates="created_orders", foreign_keys=[telecaller_id]) # here we will get the telecallers and the outlet manager
     assigned_outlet = relationship("OutletSchema", back_populates="orders")
+    delivery_person = relationship("UserSchema", foreign_keys=[delivery_person_id])
     items = relationship("OrderItemSchema", back_populates="order", cascade="all, delete-orphan")
     transactions = relationship("OrderTransactionSchema", back_populates="order", cascade="all, delete-orphan")
     delivery_tracking = relationship("DeliveryTrackingSchema", back_populates="order", cascade="all, delete-orphan")
@@ -641,6 +643,26 @@ class LSQTelecallerMappingManager(GenericManager[LSQTelecallerMappingSchema]):
     pass
 
 # ============================================================================
+# DELIVERY GUYS MANAGEMENT
+# ============================================================================
+
+class DeliveryGuySchema(BaseSchema):
+    """Delivery guys for order and transfer assignments"""
+    __tablename__ = "delivery_guys"
+
+    user_id = db.Column(db.String, db.ForeignKey("users.uid"), unique=True, nullable=False, index=True)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    is_active_for_delivery = db.Column(db.Boolean, default=True, nullable=False)
+    is_deleted = db.Column(db.Boolean, default=False, nullable=False)
+
+    # Relationships
+    user = relationship("UserSchema", foreign_keys=[user_id])
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+
+class DeliveryGuyManager(GenericManager[DeliveryGuySchema]):
+    pass
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -690,4 +712,7 @@ __all__ = [
 
     # LSQ Telecaller Mapping
     "LSQTelecallerMappingSchema", "LSQTelecallerMappingManager",
+
+    # Delivery Guys
+    "DeliveryGuySchema", "DeliveryGuyManager",
 ]

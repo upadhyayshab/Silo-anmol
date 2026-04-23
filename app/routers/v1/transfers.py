@@ -1125,56 +1125,6 @@ async def release_transfer_stock(transfer_id: str):
                 )
 
 
-@router.put("/{transfer_id}/assign-delivery", response_model=StatusResponse)
-async def assign_delivery_person(
-    transfer_id: str,
-    delivery_person_id: str,
-    _: str = Depends(require_roles(UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN))
-):
-    """Assign delivery person to approved transfer"""
-    try:
-        transfer = await transfer_manager.fetch(transfer_id)
-        
-        if transfer.status != TransferStatus.APPROVED:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Can only assign delivery person to approved transfers"
-            )
-        
-        # Verify delivery person exists and has appropriate role
-        try:
-            delivery_person = await user_manager.fetch(delivery_person_id)
-            if not delivery_person.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Delivery person is not active"
-                )
-        except:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Delivery person not found"
-            )
-        
-        await transfer_manager.update(
-            transfer_id,
-            {"delivery_person_id": delivery_person_id}
-        )
-        
-        return StatusResponse(
-            status="ok",
-            message=f"Delivery person assigned to transfer"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to assign delivery person: {str(e)}"
-        )
-
-
-# Duplicate /reports/transfer-summary route removed - moved to top of file
     """
     Get transfer summary report
     """

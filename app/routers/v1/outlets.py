@@ -67,10 +67,10 @@ async def list_outlets(
     state: str = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, 
-        UserRole.WAREHOUSE_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER
-    ))
+    # _: str = Depends(require_roles(
+    #     UserRole.SUPER_ADMIN, UserRole.ADMIN, 
+    #     UserRole.WAREHOUSE_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER
+    # ))
 ):
     """
     List all outlets with optional filters

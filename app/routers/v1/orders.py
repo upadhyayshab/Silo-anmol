@@ -6,7 +6,7 @@ from decimal import Decimal
 from config import get_settings, get_engine
 from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
-    InventoryManager, ProductManager, OutletManager, UserManager,
+    InventoryManager, ProductManager, OutletManager, UserManager, DeliveryGuyManager,
     CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,OutletSchema
 )
 from models import (
@@ -14,7 +14,7 @@ from models import (
     OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,OrderTransactionUpdateRequest,
     OrderFullUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
-    ListResponse, StatusResponse
+    ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType
@@ -31,6 +31,7 @@ inventory_manager = InventoryManager(engine)
 product_manager = ProductManager(engine)
 outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
+delivery_guy_manager = DeliveryGuyManager(engine)
 
 crm_service = CRMService()
 store_service = storeService()
@@ -784,6 +785,69 @@ async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: Li
             }
         )
 
+@router.post("/bulk/assign-delivery", response_model=BulkAssignmentResponse)
+async def bulk_assign_delivery_guy_to_orders(
+    payload: BulkOrderDeliveryAssignmentRequest,
+    current_user_id: str = Depends(get_current_user_id),
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+):
+    """Bulk assign a delivery guy to multiple orders"""
+    try:
+        # 1. Validate delivery guy once
+        try:
+            dg = await delivery_guy_manager.fetch(payload.delivery_guy_id)
+            user = await user_manager.fetch(dg.user_id)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Delivery guy not found")
+            
+        if user.role != UserRole.DELIVERY_GUY:
+            raise HTTPException(status_code=400, detail="Assigned user is not a delivery guy")
+            
+        if not dg.is_active_for_delivery:
+            raise HTTPException(status_code=400, detail="Delivery guy is not active for delivery")
+            
+        results = []
+        successful_count = 0
+        failed_count = 0
+        
+        for order_id in payload.order_ids:
+            try:
+                order = await order_manager.fetch(order_id)
+                
+                # Check outlet matching
+                if dg.outlet_id != order.assigned_outlet_id:
+                     results.append(BulkAssignmentResult(
+                        order_id=order_id,
+                        status="failed",
+                        message="Delivery guy outlet does not match order assigned outlet"
+                    ))
+                     failed_count += 1
+                     continue
+                
+                await order_manager.update(order_id, {"delivery_person_id": user.uid})
+                results.append(BulkAssignmentResult(order_id=order_id, status="success"))
+                successful_count += 1
+                
+            except Exception as e:
+                results.append(BulkAssignmentResult(
+                    order_id=order_id,
+                    status="failed",
+                    message=str(e)
+                ))
+                failed_count += 1
+                
+        return BulkAssignmentResponse(
+            successful_count=successful_count,
+            failed_count=failed_count,
+            results=results
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to bulk assign delivery guy: {str(e)}"
+        )
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 
@@ -1490,6 +1554,9 @@ async def update_order_status(
                 "activity_event": ActivityType.DELIVERY_STATUS
             })
             print(delivery_payload)
+            
+            # Consume stock from inventory
+            await consume_order_stock(order_id)
         
         elif payload.order_status == OrderStatus.CANCELLED:
             if not payload.status_remarks:
@@ -1547,8 +1614,9 @@ async def update_order_status(
 def is_valid_status_transition(current_status: OrderStatus, new_status: OrderStatus) -> bool:
     """Validate order status transitions"""
     valid_transitions = {
-        OrderStatus.PENDING: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED],
-        OrderStatus.DELIVERY_ALLOTTED: [OrderStatus.DELIVERED, OrderStatus.CANCELLED],
+        OrderStatus.PENDING: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED, OrderStatus.POSTPONED],
+        OrderStatus.DELIVERY_ALLOTTED: [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.POSTPONED],
+        OrderStatus.POSTPONED: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED],
         OrderStatus.DELIVERED: [],  # Final state
         OrderStatus.CANCELLED: []   # Final state
     }

@@ -49,12 +49,12 @@ class UserResponse(BaseModel):
     email: str
     full_name: str
     role: UserRole
-    phone: Optional[str]
-    outlet_id: Optional[str]
+    phone: Optional[str] = None
+    outlet_id: Optional[str] = None
     is_active: bool
-    last_login: Optional[datetime]
+    last_login: Optional[datetime] = None
     created_at: datetime
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -103,11 +103,11 @@ class OutletResponse(BaseModel):
     state: str
     pincode: str
     phone: str
-    email: Optional[str]
+    email: Optional[str] = None
     gstin: str
     state_code: str
     pan: str
-    manager_id: Optional[str]
+    manager_id: Optional[str] = None
     is_active: bool
     created_at: datetime
 
@@ -127,7 +127,7 @@ class ProductCategoryCreateRequest(BaseModel):
 class ProductCategoryResponse(BaseModel):
     uid: str
     category_name: str
-    description: Optional[str]
+    description: Optional[str] = None
     is_active: bool
     created_at: datetime
 
@@ -175,15 +175,15 @@ class ProductResponse(BaseModel):
     uid: str
     sku: str
     product_name: str
-    description: Optional[str]
+    description: Optional[str] = None
     category_id: str
     hsn_code: str
     tax_rate: Decimal
     unit_price: Decimal
     cost_price: Decimal
     unit_of_measure: UnitOfMeasure
-    barcode: Optional[str]
-    image_url: Optional[str]
+    barcode: Optional[str] = None
+    image_url: Optional[str] = None
     min_stock_level: int
     commission: Decimal
     discount: Decimal
@@ -202,7 +202,7 @@ class ProductResponse(BaseModel):
 class InventoryResponse(BaseModel):
     uid: str
     product_id: str
-    outlet_id: Optional[str]
+    outlet_id: Optional[str] = None
     quantity: int
     reserved_quantity: int
     available_quantity: int  # Computed: quantity - reserved_quantity
@@ -322,31 +322,32 @@ class OrderResponse(BaseModel):
     order_number: str
     customer_name: str
     customer_phone: str
-    house_no: Optional[str]
-    street: Optional[str]
+    house_no: Optional[str] = None
+    street: Optional[str] = None
     address_line: str
-    village: Optional[str]
-    post: Optional[str]
-    hobli: Optional[str]
-    taluk: Optional[str]
+    village: Optional[str] = None
+    post: Optional[str] = None
+    hobli: Optional[str] = None
+    taluk: Optional[str] = None
     district: str
     state: str
     pincode: str
     telecaller_id: str
-    assigned_outlet_id: Optional[str]
+    assigned_outlet_id: Optional[str] = None
     order_status: OrderStatus
     collection_type: CollectionType
     payment_method: PaymentMethod
     order_date: datetime
-    expected_delivery_date: Optional[date]
-    actual_delivery_date: Optional[datetime]
-    status_remarks: Optional[str]
+    expected_delivery_date: Optional[date] = None
+    actual_delivery_date: Optional[datetime] = None
+    status_remarks: Optional[str] = None
     gross_amount: Decimal  # Total before manual discount
     manual_discount: Decimal  # Manual discount applied (legacy field, kept for compatibility)
     discount_applied: Decimal  # Total discount (product manual discounts)
     prepaid_amount: Decimal  # Amount already paid
     total_amount: Decimal  # Final net amount
     total_commission: Decimal  # Total commission for the order
+    delivery_person_id: Optional[str] = None
     items: List[OrderItemResponse] = []
     created_at: datetime
 
@@ -373,10 +374,10 @@ class OrderTransactionResponse(BaseModel):
     payment_status: PaymentStatus
     payment_method: PaymentMethod
     amount_paid: Decimal
-    transaction_reference: Optional[str]
+    transaction_reference: Optional[str] = None
     payment_date: datetime
     received_by: str
-    notes: Optional[str]
+    notes: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -450,12 +451,12 @@ class InvoiceResponse(BaseModel):
     uid: str
     invoice_number: str
     outlet_id: str
-    customer_name: Optional[str]
-    customer_phone: Optional[str]
-    customer_email: Optional[str]
-    customer_address: Optional[str]
-    customer_gstin: Optional[str]
-    customer_state_code: Optional[str]
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    customer_email: Optional[str] = None
+    customer_address: Optional[str] = None
+    customer_gstin: Optional[str] = None
+    customer_state_code: Optional[str] = None
     invoice_date: date
     invoice_type: InvoiceType
     payment_method: PaymentMethod
@@ -472,9 +473,9 @@ class InvoiceResponse(BaseModel):
     balance_amount: Decimal
     prepaid_amount: Decimal  # New field
     paid_at_outlet: Decimal  # New field
-    notes: Optional[str]
+    notes: Optional[str] = None
     is_cancelled: bool
-    cancelled_reason: Optional[str]
+    cancelled_reason: Optional[str] = None
     created_by: str
     items: List[InvoiceItemResponse] = []
     created_at: datetime
@@ -544,15 +545,15 @@ class TransferItemResponse(BaseModel):
 
 class StockTransferResponse(BaseModel):
     uid: str
-    from_outlet_id: Optional[str]
+    from_outlet_id: Optional[str] = None
     to_outlet_id: str
     status: TransferStatus
     requested_by: str
-    approved_by: Optional[str]
-    delivery_person_id: Optional[str]
-    scheduled_date: Optional[date]
-    delivered_date: Optional[datetime]
-    notes: Optional[str]
+    approved_by: Optional[str] = None
+    delivery_person_id: Optional[str] = None
+    scheduled_date: Optional[date] = None
+    delivered_date: Optional[datetime] = None
+    notes: Optional[str] = None
     items: List[TransferItemResponse] = []
     created_at: datetime
 
@@ -584,15 +585,15 @@ class SystemConfigurationResponse(BaseModel):
     company_address: str
     company_gstin: str
     company_pan: str
-    company_logo_url: Optional[str]
-    invoice_terms: Optional[str]
-    invoice_footer: Optional[str]
+    company_logo_url: Optional[str] = None
+    invoice_terms: Optional[str] = None
+    invoice_footer: Optional[str] = None
     cgst_default_rate: Decimal
     sgst_default_rate: Decimal
     igst_default_rate: Decimal
     price_includes_tax: bool
     created_at: datetime
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -623,13 +624,13 @@ class OutletCollectionResponse(BaseModel):
     amount: Decimal
     payment_mode: OutletPaymentMode
     payment_sub_mode: OutletPaymentSubMode
-    transaction_id: Optional[str]
-    remarks: Optional[str]
+    transaction_id: Optional[str] = None
+    remarks: Optional[str] = None
     confirmation_status: OutletCollectionStatus
-    confirmed_by: Optional[str]
-    confirmed_at: Optional[datetime]
+    confirmed_by: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
     created_at: datetime
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -677,21 +678,64 @@ class PayoutResponse(BaseModel):
     period_from: date
     period_to: date
     amount: Decimal
-    payment_date: Optional[date]
+    payment_date: Optional[date] = None
     payment_method: PaymentMethod
-    transaction_id: Optional[str]
+    transaction_id: Optional[str] = None
     status: PayoutStatus
-    remarks: Optional[str]
+    remarks: Optional[str] = None
     created_by: str
-    approved_by: Optional[str]
-    approved_at: Optional[datetime]
-    paid_by: Optional[str]
-    paid_at: Optional[datetime]
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    paid_by: Optional[str] = None
+    paid_at: Optional[datetime] = None
     created_at: datetime
-    updated_at: Optional[datetime]
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+# ============================================================================
+# DELIVERY GUY MODELS
+# ============================================================================
+
+class DeliveryGuyCreateRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    phone: Optional[str] = None
+    outlet_id: str
+
+class DeliveryGuyUpdateRequest(BaseModel):
+    is_active_for_delivery: Optional[bool] = None
+    outlet_id: Optional[str] = None
+    is_deleted: Optional[bool] = None
+
+class DeliveryGuyResponse(BaseModel):
+    uid: str
+    user_id: str
+    outlet_id: str
+    is_active_for_delivery: bool
+    is_deleted: bool
+    created_at: datetime
+    user: Optional[UserResponse] = None
+    outlet: Optional[OutletResponse] = None
+
+    class Config:
+        from_attributes = True
+
+class BulkOrderDeliveryAssignmentRequest(BaseModel):
+    order_ids: List[str]
+    delivery_guy_id: str
+
+class BulkAssignmentResult(BaseModel):
+    order_id: str
+    status: str
+    message: Optional[str] = None
+
+class BulkAssignmentResponse(BaseModel):
+    successful_count: int
+    failed_count: int
+    results: List[BulkAssignmentResult]
 
 
 # ============================================================================
@@ -741,4 +785,8 @@ __all__ = [
     # Outlet Manager Payouts
     "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest",
     "PayoutResponse",
+
+    # Delivery Guys
+    "DeliveryGuyCreateRequest", "DeliveryGuyUpdateRequest", "DeliveryGuyResponse",
+    "BulkOrderDeliveryAssignmentRequest", "BulkAssignmentResult", "BulkAssignmentResponse",
 ]
