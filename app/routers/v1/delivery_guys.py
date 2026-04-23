@@ -21,7 +21,7 @@ router = APIRouter(prefix="/delivery-guys", tags=["Delivery Guy Management"])
 @router.get("/{delivery_guy_id}", response_model=DeliveryGuyResponse)
 async def get_delivery_guy(
     delivery_guy_id: str,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
 ):
     try:
         delivery_guy = await delivery_guy_manager.fetch(delivery_guy_id)
@@ -61,7 +61,7 @@ async def list_delivery_guys(
     is_deleted: Optional[bool] = False,
     limit: int = 50,
     offset: int = 0,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
 ):
     try:
         filters = {}
@@ -109,7 +109,7 @@ async def list_delivery_guys(
 @router.post("", response_model=DeliveryGuyResponse, status_code=status.HTTP_201_CREATED)
 async def create_delivery_guy(
     payload: DeliveryGuyCreateRequest,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
         # 1. Check if user already exists
@@ -179,7 +179,7 @@ async def create_delivery_guy(
 async def update_delivery_guy(
     delivery_guy_id: str,
     payload: DeliveryGuyUpdateRequest,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
         updates = payload.dict(exclude_unset=True)
@@ -225,7 +225,7 @@ async def update_delivery_guy(
 @router.delete("/{delivery_guy_id}", response_model=StatusResponse)
 async def delete_delivery_guy(
     delivery_guy_id: str,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
         await delivery_guy_manager.update(delivery_guy_id, {"is_deleted": True, "is_active_for_delivery": False})

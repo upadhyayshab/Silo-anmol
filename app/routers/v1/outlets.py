@@ -22,7 +22,7 @@ router = APIRouter(prefix="/outlets", tags=["Outlet Management"])
 @router.get("/{outlet_id}", response_model=OutletResponse)
 async def get_outlet(
     outlet_id: str,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
 ):
     """Get specific outlet details"""
     try:
@@ -67,10 +67,11 @@ async def list_outlets(
     state: str = None,
     limit: int = 50,
     offset: int = 0,
-    # _: str = Depends(require_roles(
-    #     UserRole.SUPER_ADMIN, UserRole.ADMIN, 
-    #     UserRole.WAREHOUSE_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER
-    # ))
+    _: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, 
+        UserRole.WAREHOUSE_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER,
+        allowed_scopes=["delivery:read"]
+    ))
 ):
     """
     List all outlets with optional filters

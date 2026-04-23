@@ -789,7 +789,7 @@ async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: Li
 async def bulk_assign_delivery_guy_to_orders(
     payload: BulkOrderDeliveryAssignmentRequest,
     current_user_id: str = Depends(get_current_user_id),
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:work"]))
 ):
     """Bulk assign a delivery guy to multiple orders"""
     try:
@@ -855,29 +855,31 @@ async def bulk_assign_delivery_guy_to_orders(
 async def get_order(
     order_id: str,
     current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
+        allowed_scopes=["delivery:read"]
     ))
 ):
     """Get specific order details"""
     try:
         order = await order_manager.fetch(order_id)
         
-        # Check access permissions
-        current_user = await user_manager.fetch(current_user_id)
-        
-        # Role-based access control
-        if current_user.role == UserRole.TELECALLER:
-            if order.telecaller_id != current_user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view your own orders"
-                )
-        elif current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id and order.assigned_outlet_id != current_user.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view orders for your outlet"
-                )
+        if current_user_id != "microservice":
+            # Check access permissions
+            current_user = await user_manager.fetch(current_user_id)
+            
+            # Role-based access control
+            if current_user.role == UserRole.TELECALLER:
+                if order.telecaller_id != current_user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied: You can only view your own orders"
+                    )
+            elif current_user.role == UserRole.OUTLET_MANAGER:
+                if current_user.outlet_id and order.assigned_outlet_id != current_user.outlet_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Access denied: You can only view orders for your outlet"
+                    )
         
         # Get order items
         order_items = await order_item_manager.fetch_all(
@@ -1117,7 +1119,8 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     limit: int = 50,
     offset: int = 0,
     current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
+        allowed_scopes=["delivery:read"]
     ))
 ):
     """
@@ -1125,27 +1128,38 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     Telecallers see only their orders, managers see outlet orders
     """
     try:
-        # Get current user to determine access level
-        current_user = await user_manager.fetch(current_user_id)
-        
         filters = {}
         
-        # Role-based filtering
-        if current_user.role == UserRole.TELECALLER:
-            filters["telecaller_id"] = current_user_id
-        elif current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id:
-                filters["assigned_outlet_id"] = current_user.outlet_id
-        
-        # Apply additional filters
-        if transfer_status:
-            filters["order_status"] = transfer_status
-        if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-            filters["telecaller_id"] = telecaller_id
-        if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-            filters["assigned_outlet_id"] = outlet_id
-        if customer_phone:
-            filters["customer_phone"] = customer_phone
+        if current_user_id != "microservice":
+            # Get current user to determine access level
+            current_user = await user_manager.fetch(current_user_id)
+            
+            # Role-based filtering
+            if current_user.role == UserRole.TELECALLER:
+                filters["telecaller_id"] = current_user_id
+            elif current_user.role == UserRole.OUTLET_MANAGER:
+                if current_user.outlet_id:
+                    filters["assigned_outlet_id"] = current_user.outlet_id
+            
+            # Apply additional filters
+            if transfer_status:
+                filters["order_status"] = transfer_status
+            if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                filters["telecaller_id"] = telecaller_id
+            if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                filters["assigned_outlet_id"] = outlet_id
+            if customer_phone:
+                filters["customer_phone"] = customer_phone
+        else:
+            # Microservice gets full access, just apply the provided filters
+            if transfer_status:
+                filters["order_status"] = transfer_status
+            if telecaller_id:
+                filters["telecaller_id"] = telecaller_id
+            if outlet_id:
+                filters["assigned_outlet_id"] = outlet_id
+            if customer_phone:
+                filters["customer_phone"] = customer_phone
         
         orders = await order_manager.fetch_all(
             filters=filters,
@@ -1180,7 +1194,8 @@ async def get_orders_by_phone(
     offset: int = 0,
     current_user_id: str = Depends(require_roles(
         UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT
+        UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT,
+        allowed_scopes=["delivery:read"]
     ))
 ):
     """

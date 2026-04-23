@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, UTC
 from typing import Optional
 import jwt
 import bcrypt
-from fastapi import HTTPException, Depends, status
+from fastapi import HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from config import get_settings
@@ -18,7 +18,7 @@ ALGORITHM = settings.jwt_algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.jwt_access_token_expire_minutes
 REFRESH_TOKEN_EXPIRE_DAYS = settings.jwt_refresh_token_expire_days
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -88,8 +88,17 @@ def decode_token(token: str) -> dict:
         )
 
 
-async def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    """Extract user ID from JWT token"""
+async def get_current_user_id(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> str:
+    """Extract user ID from JWT token or allow microservice API Key"""
+    if not credentials:
+        if getattr(request.state, "scopes", None) is not None:
+            return "microservice"
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
     token = credentials.credentials
     payload = decode_token(token)
     
@@ -103,9 +112,22 @@ async def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depend
     return user_id
 
 
-def require_roles(*allowed_roles: UserRole):
-    """Dependency to check if user has required role"""
-    async def role_checker(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+def require_roles(*allowed_roles: UserRole, allowed_scopes: list[str] = None):
+    """Dependency to check if user has required role or API key has required scope"""
+    async def role_checker(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> str:
+        # Check API Key first
+        if allowed_scopes and getattr(request.state, "scopes", None) is not None:
+            if set(allowed_scopes).intersection(request.state.scopes):
+                return "microservice"
+                
+        # If no API key or invalid scope, fallback to JWT
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            
         token = credentials.credentials
         payload = decode_token(token)
         
