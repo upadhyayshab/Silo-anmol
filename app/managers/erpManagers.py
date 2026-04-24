@@ -642,6 +642,27 @@ class LSQTelecallerMappingSchema(BaseSchema):
 class LSQTelecallerMappingManager(GenericManager[LSQTelecallerMappingSchema]):
     pass
 
+
+# ============================================================================
+# OUTLET MAPPING (replaces Google Sheets auto-assign logic)
+# ============================================================================
+class OutletMappingSchema(BaseSchema):
+    """Outlet mapping for district/taluk to outlet assignment"""
+    __tablename__ = "outlet_mappings"
+
+    state = db.Column(db.String(100), nullable=False, index=True)
+    district = db.Column(db.String(100), nullable=False, index=True)
+    taluk = db.Column(db.String(100), nullable=True, index=True)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+    # Relationships
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+
+
+class OutletMappingManager(GenericManager[OutletMappingSchema]):
+    pass
+
 # ============================================================================
 # DELIVERY GUYS MANAGEMENT
 # ============================================================================
@@ -712,6 +733,9 @@ __all__ = [
 
     # LSQ Telecaller Mapping
     "LSQTelecallerMappingSchema", "LSQTelecallerMappingManager",
+
+    # Outlet Mapping (auto-assign)
+    "OutletMappingSchema", "OutletMappingManager",
 
     # Delivery Guys
     "DeliveryGuySchema", "DeliveryGuyManager",
