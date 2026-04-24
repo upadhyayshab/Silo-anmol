@@ -11,7 +11,7 @@ Available routes:
 - POST /outlet-mappings/bulk - Bulk create/update mappings
 """
 from fastapi import APIRouter, HTTPException, Depends, status, Query
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from config import get_settings, get_engine
@@ -23,6 +23,84 @@ settings = get_settings()
 engine = get_engine(settings.name)
 outlet_mapping_manager = OutletMappingManager(engine)
 outlet_manager = OutletManager(engine)
+
+# Lazily initialised; loads pypinindia's dataset once on first call.
+_pinindia = None
+
+def _get_pinindia():
+    global _pinindia
+    if _pinindia is None:
+        from pypinindia import PincodeData
+        _pinindia = PincodeData()
+    return _pinindia
+
+
+def _validate_location(
+    state: str,
+    district: str,
+    taluk: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Validate state / district / taluk against the pypinindia dataset.
+
+    Returns None when everything is valid.
+    Returns a dict with ``valid`` values and ``suggestions`` when something
+    doesn't match, so the caller can include that in the HTTP error response.
+    """
+    pd = _get_pinindia()
+
+    # --- state ---
+    valid_states = [s.upper() for s in pd.get_states()]
+    if state.upper() not in valid_states:
+        suggestions = pd.suggest_states(state, n=5)
+        return {
+            "field": "state",
+            "provided": state,
+            "message": f"'{state}' is not a recognised state.",
+            "suggestions": suggestions,
+        }
+
+    # pypinindia stores states in uppercase; look up the canonical casing for
+    # downstream calls.
+    canonical_state = next(s for s in pd.get_states() if s.upper() == state.upper())
+
+    # --- district ---
+    valid_districts_lower = {d.lower(): d for d in pd.get_districts(state_name=canonical_state)}
+    if district.lower() not in valid_districts_lower:
+        suggestions = pd.suggest_districts(district, state_name=canonical_state, n=5)
+        return {
+            "field": "district",
+            "provided": district,
+            "message": f"'{district}' is not a recognised district in {canonical_state}.",
+            "valid_districts": sorted(valid_districts_lower.values()),
+            "suggestions": suggestions,
+        }
+
+    canonical_district = valid_districts_lower[district.lower()]
+
+    # --- taluk (optional) ---
+    if taluk:
+        valid_taluks_lower = {
+            t.lower(): t
+            for t in pd.get_unique_taluks(
+                state_name=canonical_state,
+                district_name=canonical_district,
+            )
+            if t and t != "nan"
+        }
+        if taluk.lower() not in valid_taluks_lower:
+            return {
+                "field": "taluk",
+                "provided": taluk,
+                "message": (
+                    f"'{taluk}' is not a recognised taluk in "
+                    f"{canonical_district}, {canonical_state}."
+                ),
+                "valid_taluks": sorted(valid_taluks_lower.values()),
+            }
+
+    return None  # all good
+
 
 router = APIRouter(prefix="/outlet-mappings", tags=["Outlet Mappings"])
 
@@ -175,13 +253,24 @@ async def get_mapping(uid: str):
     return map_to_response(mapping, outlet.outlet_name if outlet else None)
 
 
-@router.post("", response_model=OutletMappingResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create_mapping(
     payload: OutletMappingCreate,
     current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
 ):
-    """Create a new outlet mapping"""
-    # Verify outlet exists
+    """
+    Create a new outlet mapping.
+
+    State, district, and taluk are validated against the pypinindia dataset.
+    If any value is invalid the response will be HTTP 422 and include
+    valid values / suggestions so the client can correct the input.
+    """
+    # --- geographic validation ---
+    location_error = _validate_location(payload.state, payload.district, payload.taluk)
+    if location_error:
+        raise HTTPException(status_code=422, detail=location_error)
+
+    # --- outlet exists ---
     outlet = await outlet_manager.fetch(payload.outlet_id)
     if not outlet:
         raise HTTPException(status_code=400, detail="Outlet not found")
