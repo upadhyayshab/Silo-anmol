@@ -19,6 +19,8 @@ from .transactions import router as transactions_router
 from .outlet_collections import router as outlet_collections_router
 from .outlet_payouts import router as outlet_payouts_router
 from .crm import router as crm_router
+from .delivery_guys import router as delivery_guys_router
+from .outlet_mappings import router as outlet_mappings_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -42,6 +44,8 @@ router.include_router(transactions_router)
 router.include_router(outlet_collections_router)
 router.include_router(outlet_payouts_router)
 router.include_router(crm_router)
+router.include_router(delivery_guys_router)
+router.include_router(outlet_mappings_router)
 
 
 @router.get("/health-check", response_model=HealthCheckResponse)

@@ -5,19 +5,19 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 import uuid
 import logging
-import httpx
-from pypinindia import get_district,get_pincode_info ,get_state
+from pypinindia import get_district, get_pincode_info, get_state
 
 from config import get_settings, get_engine
 from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager,
     CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,
-    ActivityLogManager, ActivityLogSchema, OutletSchema , LSQTelecallerMappingSchema , LSQTelecallerMappingManager
+    ActivityLogManager, ActivityLogSchema, OutletSchema, LSQTelecallerMappingSchema, LSQTelecallerMappingManager
 )
 from services import CRMService
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod , ActivityType, LSQCreateOrder , LSQItems
-from models import CrmPayload , OrderCreateRequest
+from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod, ActivityType, LSQCreateOrder, LSQItems
+from models import CrmPayload, OrderCreateRequest
 
 
 settings = get_settings()
@@ -60,11 +60,37 @@ class CRMOrderPayload(BaseModel):
 
 
 @router.post("/test")
-async def test(pincode: str ):
-    district = get_district(pincode)
-    print(district)
-    outlet = await auto_assign_outlet("customer_orders_f95dd28b-3eab-47af-a084-9c58b8b50269", district, pincode)
+async def test(district: Optional[str] = None, pincode: Optional[str] = None, taluk: Optional[str] = None):
+    # Validate that either pincode or (district AND taluk) are provided
+    if not (pincode or (district and taluk)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either pincode or both district and taluk must be provided"
+        )
+    
+    # Call auto_assign_outlet with dynamic parameters
+    # Note: state is required for the unified function but can be empty string or None
+    outlet = await auto_assign_outlet(
+        "customer_orders_f95dd28b-3eab-47af-a084-9c58b8b50269",
+        district=district,
+        pincode=pincode,
+        state=None,  # Can be None, will be resolved from pincode if needed
+        taluk=taluk
+    )
+    
+    if not outlet:
+        raise HTTPException(status_code=404, detail="No outlet could be assigned for the given location")
+
     outlet_dict = outlet.model_dump()
+    
+    # For response info, try to resolve district if it was missing
+    if not district and pincode:
+        try:
+            resolved_district = get_district(pincode)
+            district = resolved_district[0] if isinstance(resolved_district, list) and resolved_district else resolved_district
+        except:
+            pass
+            
     outlet_dict["lib_dictrict"] = district
     return outlet_dict
     # outlet = await order_manager.fetch(
@@ -100,147 +126,6 @@ async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, 
     background_tasks.add_task(process_crm_orders, payload)
     return {"message": "Webhook received, processing in background"}
 
-
-async def auto_assign_outlet(order_id: str,district: str, pincode: str, taluk: str = None) -> Optional[object]:
-    """Auto-assign outlet based on Google Sheets mapping"""
-    try:
-        # Google Apps Script endpoint for outlet mapping
-        GOOGLE_OUTLET_API = "https://script.google.com/macros/s/AKfycbxqlS7Og-4AKNm79aweOzjVqOcmyFXHaHpy7xmfcz27i0knowG_vjEFWZ_Ha8drY4CYbA/exec"
-        
-        def get_taluk_name(pincode):
-            try:
-                data = get_pincode_info(pincode)
-                if data:
-                    # returns the Taluk of the first post office found
-                    return data[0].get('taluk') 
-            except Exception:
-                pass
-            return None
-
-        # Prepare API request parameters
-        taluk = get_taluk_name(pincode)
-        params = {
-            "action": "getOutlet",
-            "district": district,
-            "taluk": taluk or ""  # Use empty string if taluk is None
-        }
-        
-        print(f"🔍 DEBUG: Calling Google Outlet API with district='{district}', taluk='{taluk}'")
-        
-        # Call Google Apps Script API with redirect following
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(GOOGLE_OUTLET_API, params=params)
-            
-            print(f"📡 DEBUG: API response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"❌ Google API error: {response.status_code}")
-                await push_outlet_not_assigned(order_id, district, pincode, reason=f"Google API error {response.status_code}")
-                return None
-            
-            try:
-                api_data = response.json()
-            except Exception as json_error:
-                print(f"❌ JSON parsing error: {json_error}")
-                await  push_outlet_not_assigned(order_id, district, pincode, reason=f"JSON parse error: {json_error}")
-                return None
-            
-            if not api_data.get("success"):
-                await push_outlet_not_assigned(order_id, district, pincode, reason="API returned success=false")
-                return None
-            
-            # Get outlet name from API response
-            api_outlet_name = api_data.get("outlet", "").strip()
-            if not api_outlet_name:
-                await push_outlet_not_assigned(order_id, district, pincode, reason="API returned empty outlet name")
-                return None
-            
-            print(f"🎯 API returned outlet: '{api_outlet_name}'")
-            
-            # Get all active outlets from database
-            outlets = await outlet_manager.fetch_all(
-                filters={"is_active": True}
-            )
-            
-            if not outlets.items:
-                print(f"❌ No active outlets found in database")
-                await push_outlet_not_assigned(order_id, district, pincode, reason="No active outlets in DB")
-                return None
-            
-            # Match outlet using first word comparison (case-insensitive)
-            api_first_word = api_outlet_name.lower().split()[0] if api_outlet_name else ""
-            
-            matched_outlet = None
-            for outlet in outlets.items:
-                outlet_first_word = outlet.outlet_name.lower().split()[0] if outlet.outlet_name else ""
-                
-                if api_first_word == outlet_first_word:
-                    matched_outlet = outlet
-                    break
-            
-            if matched_outlet:
-                # Push outlet-ASSIGNED activity to CRM
-                return matched_outlet
-            
-            # Fallback: If no exact match, log available outlets and return None
-            print(f"❌ No outlet found matching '{api_outlet_name}' (first word: '{api_first_word}')")
-            print(f"📋 Available outlet first words: {[o.outlet_name.lower().split()[0] for o in outlets.items]}")
-            print(f"💡 SUGGESTION: Update Google Sheets to return one of these outlet names:")
-            for outlet in outlets.items:
-                print(f"   • '{outlet.outlet_name}' (use '{outlet.outlet_name.split()[0]}' in Google Sheets)")
-            await push_outlet_not_assigned(order_id, district, pincode, reason=f"No DB outlet matched '{api_outlet_name}'")
-            return None
-            
-    except Exception as e:
-        print(f"❌ Error in Google outlet assignment: {str(e)}")
-        await push_outlet_not_assigned(order_id, district, pincode, reason=str(e))
-        return None
-
-
-async def push_outlet_not_assigned(order_id: str, district: str, pincode: str, reason: str = ""):
-    """Push a DELIVERY_STATUS activity to CRM indicating no outlet was assigned."""
-    try:
-        unassigned_order = await order_manager.fetch(
-            order_id,
-            joins=[(CustomerOrderSchema.items, OrderItemSchema.product)]
-        )
-        unassigned_dump = unassigned_order.model_dump()
-        unassigned_dump["assigned_at"] = None
-        unassigned_dump["order_status"] = "Not Assigned"
-        unassigned_dump["outlet_assignment_error"] = (
-            f"No outlet found for district='{district}', pincode='{pincode}'"
-            + (f": {reason}" if reason else "")
-        )
-        crm_result = await crm_service.push_activity({
-            "delivery_data": unassigned_dump,
-            "activity_event": ActivityType.DELIVERY_STATUS
-        })
-        print(f"📤 CRM outlet-not-assigned activity: {crm_result}")
-    except Exception as crm_err:
-        print(f"⚠️ CRM push_activity (outlet not assigned) failed: {str(crm_err)}")
-
-
-async def push_outlet_assigned(order_id: str, *args, **kwargs):
-    """Push a DELIVERY_STATUS activity to CRM indicating outlet was assigned."""
-    try:
-        outlet = await order_manager.fetch(
-            order_id,
-            joins=[
-                (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
-                (CustomerOrderSchema.items, OrderItemSchema.product)
-            ]
-        )
-        order_dump = outlet.model_dump()
-        order_dump["assigned_at"] = datetime.utcnow().isoformat()
-        order_dump["order_status"] = "Assigned"
-        # print(order_dump)
-        crm_result = await crm_service.push_activity({
-            "delivery_data": order_dump,
-            "activity_event": ActivityType.DELIVERY_STATUS
-        })
-        print(f"📤 CRM outlet-assigned activity: {crm_result}")
-    except Exception as crm_err:
-        print(f"⚠️ CRM push_activity (outlet assigned) failed: {str(crm_err)}")
 
 
 async def reserve_crm_stock(order_id: str, outlet_id: str, validated_items: List[dict]):
@@ -577,7 +462,14 @@ async def process_crm_orders(payload: dict):
                 print(f"⚠️ Failed to create prepaid transaction: {str(txn_err)}")
 
         # 8. Auto-assign Outlet
-        assigned_outlet = await auto_assign_outlet(created_order.uid,district,pincode, customer_data.get("taluk"))
+        assigned_outlet = await auto_assign_outlet(
+            engine,
+            created_order.uid,
+            district,
+            pincode,
+            state,  # Pass state from customer_data
+            customer_data.get("taluk")  # Pass taluk from customer_data
+        )
         if assigned_outlet:
             # print(assigned_outlet.uid)
             await order_manager.update(
@@ -596,7 +488,7 @@ async def process_crm_orders(payload: dict):
                 )
                 
         # 10. Push order-confirmed (ORDER_STATUS) activity to CRM
-        await push_outlet_assigned(created_order.uid, district, pincode)
+        await push_outlet_assigned(engine, created_order.uid, district, pincode)
         await order_creation_success_activity(created_order.uid)
             
         # 11. Log Activity

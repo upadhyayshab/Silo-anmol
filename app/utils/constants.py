@@ -8,6 +8,7 @@ class UserRole(str, Enum):
     OUTLET_MANAGER = "OUTLET_MANAGER"
     TELECALLER = "TELECALLER"
     ACCOUNTANT = "ACCOUNTANT"
+    DELIVERY_GUY = "DELIVERY_GUY"
 
 
 class OrderStatus(str, Enum):
@@ -15,6 +16,7 @@ class OrderStatus(str, Enum):
     DELIVERY_ALLOTTED = "delivery_allotted"
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
+    POSTPONED = "postponed"
 
 
 class CollectionType(str, Enum):
