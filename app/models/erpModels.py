@@ -76,6 +76,7 @@ class OutletCreateRequest(BaseModel):
     gstin: str = Field(..., max_length=15)
     state_code: str = Field(..., max_length=2)
     pan: str = Field(..., max_length=10)
+    lat_lon: Optional[List[Decimal]] = None
     manager_id: Optional[str] = None
 
 
@@ -90,6 +91,7 @@ class OutletUpdateRequest(BaseModel):
     gstin: Optional[str] = None
     state_code: Optional[str] = None
     pan: Optional[str] = None
+    lat_lon: Optional[List[Decimal]] = None
     manager_id: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -107,6 +109,7 @@ class OutletResponse(BaseModel):
     gstin: str
     state_code: str
     pan: str
+    lat_lon: Optional[List[Decimal]] = None
     manager_id: Optional[str] = None
     is_active: bool
     created_at: datetime
@@ -245,6 +248,7 @@ class OrderCreateRequest(BaseModel):
     district: str
     state: str
     pincode: str
+    lat_lon: Optional[List[Decimal]] = None
     collection_type: CollectionType
     payment_method: PaymentMethod
     expected_delivery_date: Optional[date] = None
@@ -268,6 +272,7 @@ class OrderUpdateRequest(BaseModel):
     district: Optional[str] = None
     state: Optional[str] = None
     pincode: Optional[str] = None
+    lat_lon: Optional[List[Decimal]] = None
     expected_delivery_date: Optional[date] = None
 
 
@@ -284,6 +289,7 @@ class OrderFullUpdateRequest(BaseModel):
     district: str
     state: str
     pincode: str
+    lat_lon: Optional[List[Decimal]] = None
     collection_type: CollectionType
     payment_method: PaymentMethod
     expected_delivery_date: Optional[date] = None
@@ -332,6 +338,7 @@ class OrderResponse(BaseModel):
     district: str
     state: str
     pincode: str
+    lat_lon: Optional[List[Decimal]] = None
     telecaller_id: str
     assigned_outlet_id: Optional[str] = None
     order_status: OrderStatus
