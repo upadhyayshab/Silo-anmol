@@ -71,10 +71,10 @@ async def test(district: Optional[str] = None, pincode: Optional[str] = None, ta
     # Call auto_assign_outlet with dynamic parameters
     # Note: state is required for the unified function but can be empty string or None
     outlet = await auto_assign_outlet(
-        "customer_orders_f95dd28b-3eab-47af-a084-9c58b8b50269",
+        engine,
         district=district,
         pincode=pincode,
-        state=None,  # Can be None, will be resolved from pincode if needed
+        state=None,
         taluk=taluk
     )
     
