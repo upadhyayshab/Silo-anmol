@@ -86,6 +86,7 @@ class OutletSchema(BaseSchema):
     gstin = db.Column(db.String(15), nullable=False)
     state_code = db.Column(db.String(2), nullable=False)
     pan = db.Column(db.String(10), nullable=False)
+    lat_lon = db.Column(db.JSON, nullable=True) # [lat, lon]
     manager_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
 
@@ -300,6 +301,7 @@ class CustomerOrderSchema(BaseSchema):
     district = db.Column(db.String(100), nullable=False)
     state = db.Column(db.String(100), nullable=False)
     pincode = db.Column(db.String(10), nullable=False)
+    lat_lon = db.Column(db.JSON, nullable=True) # [lat, lon]
     
     # Order management
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
