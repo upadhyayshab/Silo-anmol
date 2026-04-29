@@ -13,7 +13,7 @@ from models import (
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole , TransferStatus, OrderStatus
+from utils.constants import UserRole , TransferStatus, OrderStatus, HASSAN_OUTLET_ID
 
 import sqlalchemy as db
 from sqlalchemy import func, and_
@@ -25,6 +25,13 @@ inventory_manager = InventoryManager(engine)
 product_manager = ProductManager(engine)
 outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
+
+
+
+def is_hassan_outlet(outlet_id: Optional[str]) -> bool:
+    """Check if the outlet is the Hassan outlet (coupled with warehouse)"""
+    return outlet_id == HASSAN_OUTLET_ID
+
 
 router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
 
@@ -253,9 +260,24 @@ async def get_inventory(
             )
         )
         
+        # Warehouse-Hassan coupling: treat both as one pool for order-based sales counting
         if outlet_id is not None:
             if outlet_id.lower() == "null":
-                orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id.is_(None))
+                # Warehouse view: count sales from both warehouse-assigned and Hassan-assigned orders
+                orders_query = orders_query.where(
+                    db.or_(
+                        CustomerOrderSchema.assigned_outlet_id.is_(None),
+                        CustomerOrderSchema.assigned_outlet_id == HASSAN_OUTLET_ID
+                    )
+                )
+            elif is_hassan_outlet(outlet_id):
+                # Hassan view: same combined pool as warehouse
+                orders_query = orders_query.where(
+                    db.or_(
+                        CustomerOrderSchema.assigned_outlet_id.is_(None),
+                        CustomerOrderSchema.assigned_outlet_id == HASSAN_OUTLET_ID
+                    )
+                )
             else:
                 orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
                 
@@ -304,10 +326,24 @@ async def get_inventory(
             )
         )
 
-        # 5. Apply Filters
+        # 5. Apply Filters with warehouse-Hassan coupling
         if outlet_id is not None:
             if outlet_id.lower() == "null":
-                stmt = stmt.where(InventorySchema.outlet_id.is_(None))
+                # Warehouse request: include both warehouse (NULL) and Hassan outlet
+                stmt = stmt.where(
+                    db.or_(
+                        InventorySchema.outlet_id.is_(None),
+                        InventorySchema.outlet_id == HASSAN_OUTLET_ID
+                    )
+                )
+            elif is_hassan_outlet(outlet_id):
+                # Hassan request: same combined view as warehouse
+                stmt = stmt.where(
+                    db.or_(
+                        InventorySchema.outlet_id.is_(None),
+                        InventorySchema.outlet_id == HASSAN_OUTLET_ID
+                    )
+                )
             else:
                 stmt = stmt.where(InventorySchema.outlet_id == outlet_id)
                 
@@ -331,15 +367,22 @@ async def get_inventory(
         # 7. Process Results
         inventory_responses = []
         for inventory_item, total_received, total_sold, total_transferred_out in rows:
-            
+
             # WAREHOUSE vs OUTLET LOGIC
+            # Note: When coupled, Hassan outlet is treated as part of warehouse inventory
             if inventory_item.outlet_id is None:
-                # Warehouse: Quantity reflects DB, Delivered reflects stock sent to outlets
+                # Warehouse: Quantity reflects DB, Delivered reflects stock sent to outlets (excluding Hassan)
                 actual_quantity = inventory_item.quantity
                 delivered = int(total_transferred_out)
                 display_received = 0  # Warehouse doesn't "receive" transfers
+            elif is_hassan_outlet(inventory_item.outlet_id):
+                # Hassan outlet: Combined with warehouse, so no separate delivery tracking
+                # Hassan receives stock from warehouse, sells some, but we track as one pool
+                actual_quantity = inventory_item.quantity
+                delivered = int(total_sold)
+                display_received = int(total_received)
             else:
-                # Outlet: Quantity reflects total received from warehouse minus total sold
+                # Other outlets: Quantity reflects total received from warehouse minus total sold
                 delivered = int(total_sold)
                 actual_quantity = max(0, int(total_received) - delivered)
                 display_received = int(total_received)

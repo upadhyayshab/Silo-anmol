@@ -111,6 +111,7 @@ class PayoutStatus(str, Enum):
     PAID = "PAID"
     REJECTED = "REJECTED"
 
+HASSAN_OUTLET_ID = "outlets_1bd14da6-954e-4f7d-bbf9-dafa4a6c3cf2"
 
 __all__ = [
     "UserRole",
@@ -125,6 +126,7 @@ __all__ = [
     "OutletPaymentSubMode",
     "OutletCollectionStatus",
     "PayoutStatus",
+    "HASSAN_OUTLET_ID"
 ]
 
 class LeadSource(str, Enum):
@@ -252,6 +254,8 @@ class LSQCreateOrder(str, Enum):
     ORDER_ID        = "mx_Custom_8"
     PREPAID_AMOUNT  = "mx_Custom_9"
     PAYMENT_METHOD  = "mx_Custom_10"
+    LAT_LON         = "mx_Custom_11"
+    SOURCE          = "mx_Custom_12"
 
 class LSQItems(str, Enum):
     DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_1"
@@ -273,3 +277,4 @@ class ActivityType(str, Enum):
     PAYMENT_STATUS = "payment_status"
     REFUND_STATUS = "refund_status"
     DELIVERY_STATUS = "delivery_status"
+    CREATE_ORDER = "create_order"

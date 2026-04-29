@@ -10,6 +10,8 @@ from datetime import datetime
 from config import get_engine
 
 from managers import OutletManager, OutletMappingManager
+from utils.crm_utils import sync_order_to_crm
+from utils.constants import ActivityType
 
 # Mirrors the aliases used in seed_outlet_mappings.py so raw order values
 # (which may use xlsx/local spellings) resolve to the same canonical names
@@ -174,40 +176,41 @@ async def auto_assign_outlet(
     outlet_mapping_manager = OutletMappingManager(engine)
 
     try:
-        # Resolve district from pincode if not provided
-        if not district and pincode:
-            try:
-                from pypinindia import get_district
-                resolved_district = get_district(pincode)
-                district = resolved_district[0] if isinstance(resolved_district, list) and resolved_district else resolved_district
-            except Exception:
-                pass
-
-        # Resolve taluk from pincode if not provided
-        if not taluk and pincode:
+        # Resolve district/taluk/state from pincode if provided
+        # Pincode is considered the strongest indicator of the physical location
+        if pincode:
             try:
                 from pypinindia import get_pincode_info
-                data = get_pincode_info(pincode)
-                if data:
-                    taluk = data[0].get('taluk')
+                pin_data = get_pincode_info(pincode)
+                if pin_data and isinstance(pin_data, list) and len(pin_data) > 0:
+                    # Prefer pincode-resolved location if provided ones are missing 
+                    # or if they mismatch the pincode's data (common with default LSQ data)
+                    res_district = pin_data[0].get('districtname') or pin_data[0].get('district')
+                    res_taluk = pin_data[0].get('taluk')
+                    res_state = pin_data[0].get('statename')
+
+                    if not district or (res_district and district.lower() != res_district.lower()):
+                        district = res_district
+                    
+                    if not taluk or (res_taluk and taluk.lower() != res_taluk.lower()):
+                        taluk = res_taluk
+                        
+                    if not state or (res_state and state.lower() != res_state.lower()):
+                        state = res_state
             except Exception:
                 pass
 
-        # Resolve district from taluk if we have taluk but not district
+        # Fallback: Resolve district from taluk if still missing (e.g. if pincode lookup failed)
         if taluk and not district:
             try:
-                from pypinindia import get_pincode_info
-                data = get_pincode_info(pincode) if pincode else None
-                if data and isinstance(data, list) and len(data) > 0:
-                    taluk_info = next((t for t in data if t.get('taluk', '').lower() == taluk.lower()), None)
-                    if taluk_info:
-                        district = taluk_info.get('district')
+                # If we have a taluk but no district, it might be because the pincode lookup failed
+                # or was skipped. We don't have a direct taluk->district lookup without a pincode
+                # in this library, but we've already done our best with the pincode above.
+                pass 
             except Exception:
                 pass
 
-        # Normalize inputs for database matching — apply alias tables so that
-        # raw order spellings (e.g. "Bengaluru Urban", "Chikkmagaluru") resolve
-        # to the canonical names stored during seeding.
+        # Normalize inputs for database matching
         state = (state or "karnataka").lower()
         district, taluk = normalize_location(district, taluk)
 
@@ -297,63 +300,13 @@ async def push_outlet_not_assigned(engine, order_id: str, district: Optional[str
     """
     Push a DELIVERY_STATUS activity to CRM indicating no outlet was assigned.
     """
-    from managers import CustomerOrderManager, CustomerOrderSchema, OrderItemManager, OrderItemSchema
-    from utils.constants import ActivityType
-    from services import CRMService
-
-    crm_service = CRMService()
-    order_manager = CustomerOrderManager(engine)
-    order_item_manager = OrderItemManager(engine)
-
-    try:
-        unassigned_order = await order_manager.fetch(
-            order_id,
-            joins=[(CustomerOrderSchema.items, OrderItemSchema.manager)]
-        )
-        unassigned_dump = unassigned_order.model_dump()
-        unassigned_dump["assigned_at"] = None
-        unassigned_dump["order_status"] = "Not Assigned"
-        unassigned_dump["outlet_assignment_error"] = (
-            f"No outlet found for district='{district}', pincode='{pincode}'"
-            + (f": {reason}" if reason else "")
-        )
-        crm_result = await crm_service.push_activity({
-            "delivery_data": unassigned_dump,
-            "activity_event": ActivityType.DELIVERY_STATUS
-        })
-        print(f"CRM: CRM outlet-not-assigned activity: {crm_result}")
-    except Exception as crm_err:
-        print(f"FALLBACK: CRM push_activity (outlet not assigned) failed: {str(crm_err)}")
+    # Use consolidated sync logic
+    await sync_order_to_crm(engine, order_id, ActivityType.DELIVERY_STATUS)
 
 
 async def push_outlet_assigned(engine, order_id: str, district: Optional[str], pincode: Optional[str]):
     """
     Push a DELIVERY_STATUS activity to CRM indicating outlet was assigned.
     """
-    from managers import CustomerOrderManager, CustomerOrderSchema, OrderItemManager, OrderItemSchema, OutletManager, OutletSchema
-    from utils.constants import ActivityType
-    from services import CRMService
-
-    crm_service = CRMService()
-    order_manager = CustomerOrderManager(engine)
-    order_item_manager = OrderItemManager(engine)
-    outlet_manager = OutletManager(engine)
-
-    try:
-        order = await order_manager.fetch(
-            order_id,
-            joins=[
-                (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
-                (CustomerOrderSchema.items, OrderItemSchema.manager)
-            ]
-        )
-        order_dump = order.model_dump()
-        order_dump["assigned_at"] = datetime.utcnow().isoformat()
-        order_dump["order_status"] = "Assigned"
-        crm_result = await crm_service.push_activity({
-            "delivery_data": order_dump,
-            "activity_event": ActivityType.DELIVERY_STATUS
-        })
-        print(f"CRM: CRM outlet-assigned activity: {crm_result}")
-    except Exception as crm_err:
-        print(f"FALLBACK: CRM push_activity (outlet assigned) failed: {str(crm_err)}")
+    # Use consolidated sync logic
+    await sync_order_to_crm(engine, order_id, ActivityType.DELIVERY_STATUS)
