@@ -111,6 +111,7 @@ class PayoutStatus(str, Enum):
     PAID = "PAID"
     REJECTED = "REJECTED"
 
+HASSAN_OUTLET_ID = "outlets_1bd14da6-954e-4f7d-bbf9-dafa4a6c3cf2"
 
 __all__ = [
     "UserRole",
@@ -125,6 +126,7 @@ __all__ = [
     "OutletPaymentSubMode",
     "OutletCollectionStatus",
     "PayoutStatus",
+    "HASSAN_OUTLET_ID"
 ]
 
 class LeadSource(str, Enum):
