@@ -151,6 +151,7 @@ class ProductCreateRequest(BaseModel):
     barcode: Optional[str] = None
     image_url: Optional[str] = None
     min_stock_level: int = Field(default=10, ge=0)
+    lsq_display_name: Optional[str] = Field(None, description="Display name for LeadSquared")
     commission: Decimal = Field(default=0.00, ge=0, description="Commission in rupees")
     discount: Decimal = Field(default=0.00, ge=0, description="Discount in rupees")
     margin: Decimal = Field(default=Decimal("0.00"), ge=0, description="Margin for non-Silo Fortune products")
@@ -168,6 +169,7 @@ class ProductUpdateRequest(BaseModel):
     barcode: Optional[str] = None
     image_url: Optional[str] = None
     min_stock_level: Optional[int] = None
+    lsq_display_name: Optional[str] = Field(None, description="Display name for LeadSquared")
     commission: Optional[Decimal] = Field(None, ge=0, description="Commission in rupees")
     discount: Optional[Decimal] = Field(None, ge=0, description="Discount in rupees")
     margin: Optional[Decimal] = Field(None, ge=0, description="Margin for non-Silo Fortune products")
@@ -188,6 +190,7 @@ class ProductResponse(BaseModel):
     barcode: Optional[str] = None
     image_url: Optional[str] = None
     min_stock_level: int
+    lsq_display_name: Optional[str] = None
     commission: Decimal
     discount: Decimal
     margin: Decimal

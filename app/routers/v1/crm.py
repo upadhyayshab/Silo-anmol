@@ -16,6 +16,7 @@ from managers import (
 )
 from services import CRMService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
+from utils.crm_utils import sync_order_to_crm
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod, ActivityType, LSQCreateOrder, LSQItems, HASSAN_OUTLET_ID
 from models import CrmPayload, OrderCreateRequest
 
@@ -185,21 +186,7 @@ def generate_order_number() -> str:
 
 async def order_creation_success_activity(order_id: str):
     """Push an ORDER_STATUS activity to CRM indicating order was created successfully."""
-    try:
-        created_order = await order_manager.fetch(
-            order_id,
-            joins=[(CustomerOrderSchema.items, OrderItemSchema.product)]
-        )
-        order_dump = created_order.model_dump()
-        order_dump["order_status"] = "confirmed"
-        order_dump["city"] = order_dump.get("district")
-        crm_result = await crm_service.push_activity({
-            "order_data": order_dump,
-            "activity_event": ActivityType.ORDER_STATUS
-        })
-        print(f"📤 CRM order-confirmed activity: {crm_result}")
-    except Exception as crm_err:
-        print(f"⚠️ CRM push_activity (order confirmed) failed: {str(crm_err)}")
+    await sync_order_to_crm(engine, order_id, ActivityType.ORDER_STATUS)
 
 
 async def process_crm_orders(payload: dict):
@@ -275,14 +262,30 @@ async def process_crm_orders(payload: dict):
             taluk = cleaned_payload.get("taluk")
             items_data = cleaned_payload.get("items", [])
             crm_order_id = cleaned_payload.get("mx_Custom_8")
+        
+        # Deduplication check: If crm_order_id is provided, check if it already exists in ERP
+        if crm_order_id:
+            try:
+                existing_order = await order_manager.fetch(str(crm_order_id))
+                if existing_order:
+                    print(f"⚠️ CRM order {crm_order_id} already exists in ERP. Skipping duplicate creation.")
+                    return
+            except Exception as e:
+                # If fetch fails (e.g. order not found), continue with creation
+                pass
             payment_method_raw = (cleaned_payload.get("payment_method") or "").strip().lower()
             prepaid_amount_raw = cleaned_payload.get("prepaid_amount")
         
         try:
-            if not district:
-                district = get_district(pincode)
-            if not state:
-                state = get_state(pincode)
+            if pincode:
+                # Use pincode as the primary source of truth for location
+                res_district = get_district(pincode)
+                if res_district:
+                    district = res_district[0] if isinstance(res_district, list) and res_district else res_district
+                
+                res_state = get_state(pincode)
+                if res_state:
+                    state = res_state
         except Exception as e:
             logging.error(f"Error looking up pincode {pincode}: {e}")
             

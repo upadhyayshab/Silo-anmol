@@ -8,15 +8,20 @@ from pydantic import BaseModel
 import json
 
 class Activity:
+    class order_create:
+        ACTIVE = "Active"
+        INACTIVE = "Inactive"
     class orders_status:
-        CONFIRMED = "Confirmed"
-        COMPLETED = "Completed"
-        CANCELLED = "Cancelled"
+        CONFIRMED = "confirmed"
+        COMPLETED = "completed"
+        CANCELLED = "cancelled"
     class delivery_status:
-        NOT_ASSIGNED = "Not Assigned"
+        DELIVERY_ALLOTTED = "delivery_allotted"
+        DELIVERED = "delivered"
+        NOT_ASSIGNED = "NOT_ASSIGNED"
+        RETURNED = "Returned"
         ASSIGNED = "Assigned"
-        DELIVERED = "Delivered"
-        OUT_FOR_DELIVERY = "Out For Delivery"
+        OUT_FOR_DELIVERY = "Out for delivery"
         CANCELLED = "Cancelled"
     class payment_status:
         PENDING = "Pending"
@@ -48,7 +53,7 @@ class CRMService:
 
     LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING = {
         "activity_note":          LSQDeliveryStatusActivityField.ACTIVITY_EVENT_NOTE,
-        "order_status":           (LSQDeliveryStatusActivityField.STATUS, LSQDeliveryStatusActivityField.ORDER_STATUS),
+        "delivery_status":        (LSQDeliveryStatusActivityField.STATUS, LSQDeliveryStatusActivityField.ORDER_STATUS),
         "order_number":               LSQDeliveryStatusActivityField.ORDER_ID,
         "assigned_outlet.outlet_name":            LSQDeliveryStatusActivityField.OUTLET_NAME,
         "assigned_outlet.address":        LSQDeliveryStatusActivityField.OUTLET_LOCATION,
@@ -112,9 +117,10 @@ class CRMService:
         "order_status": 203,
         "payment_status": 205,
         "refund_status": 204,
-        "delivery_status": 206
+        "delivery_status": 206,
+        "create_order": 209
     }
-    LSQCreateOrder={
+    LEADSQUARED_ORDER_CREATE_ACTIVITY_MAPPING={
         "status_remarks"  : LSQCreateOrder.NOTES,
         "order_status"    : LSQCreateOrder.STATUS,
         "owner"           : LSQCreateOrder.OWNER,
@@ -127,7 +133,9 @@ class CRMService:
         "order_id"        : LSQCreateOrder.ORDER_ID,
         "pincode"         : LSQCreateOrder.PINCODE,
         "prepaid_amount"  : LSQCreateOrder.PREPAID_AMOUNT,
-        "payment_method"  : LSQCreateOrder.PAYMENT_METHOD
+        "payment_method"  : LSQCreateOrder.PAYMENT_METHOD,
+        "lat_lon"         : LSQCreateOrder.LAT_LON,
+        "source"          : LSQCreateOrder.SOURCE
     }
 
     LSQItems={
@@ -242,6 +250,60 @@ class CRMService:
                 return None
         return data
 
+    def _map_lsq_status(self, key: str, value: str, activity_event_code: int = None) -> str:
+        """Maps internal system statuses to LeadSquared accepted dropdown values."""
+        if not value:
+            return value
+            
+        val_lower = value.lower()
+        
+        if key == "order_status":
+            if activity_event_code == 209:
+                if val_lower == "cancelled":
+                    return Activity.order_create.INACTIVE
+                return Activity.order_create.ACTIVE
+            else:
+                if val_lower in ["pending", "delivery_allotted", "postponed"]:
+                    return Activity.orders_status.CONFIRMED
+                elif val_lower == "delivered":
+                    return Activity.orders_status.COMPLETED
+                elif val_lower == "cancelled":
+                    return Activity.orders_status.CANCELLED
+                
+        elif key == "payment_status":
+            if val_lower == "pending":
+                return Activity.payment_status.PENDING
+            elif val_lower == "paid":
+                return Activity.payment_status.PAID
+            elif val_lower == "partially_paid":
+                return Activity.payment_status.PARTIALLY_PAID
+            elif val_lower in ["failed", "refunded"]:
+                return Activity.payment_status.FAILED
+                
+        elif key == "delivery_status":
+            if val_lower in ["pending", "not_assigned"]:
+                return Activity.delivery_status.NOT_ASSIGNED
+            elif val_lower in ["assigned", "delivery_allotted"]:
+                return Activity.delivery_status.ASSIGNED
+            elif val_lower == "out_for_delivery":
+                return Activity.delivery_status.OUT_FOR_DELIVERY
+            elif val_lower == "delivered":
+                return Activity.delivery_status.DELIVERED
+            elif val_lower == "returned":
+                return Activity.delivery_status.RETURNED
+            elif val_lower == "cancelled":
+                return Activity.delivery_status.CANCELLED
+                
+        elif key == "refund_status":
+            if val_lower == "processing":
+                return Activity.refund_status.PROCESSING
+            elif val_lower == "approved":
+                return Activity.refund_status.APPROVED
+            elif val_lower == "rejected":
+                return Activity.refund_status.REJECTED
+                
+        return value
+
     async def build_payload(self, payload_dict: dict, lead_id: str, activity_event_code: int) -> dict:
         fields = []
         # print("--"*50)
@@ -255,6 +317,8 @@ class CRMService:
             mapping = self.LEADSQUARED_PAYMENT_STATUS_ACTIVITY_MAPPING
         elif activity_event_code == 206:
             mapping = self.LEADSQUARED_DELIVERY_STATUS_ACTIVITY_MAPPING
+        elif activity_event_code == 209:
+            mapping = self.LEADSQUARED_ORDER_CREATE_ACTIVITY_MAPPING
 
         for payload_key, schema_names in mapping.items():
             value = self._get_nested_value(payload_dict, payload_key)
@@ -276,16 +340,28 @@ class CRMService:
                 elif value is not None and value != "":
                     # Use .value to extract raw string from str-Enums (e.g. OrderStatus, PaymentMethod)
                     value_str = value.value if hasattr(value, "value") else str(value)
+                    
+                    if payload_key in ["order_status", "payment_status", "delivery_status", "refund_status"]:
+                        value_str = self._map_lsq_status(payload_key, value_str, activity_event_code)
+                        
                     fields.append({"SchemaName": schema_str, "Value": value_str})
 
-        # Explicitly handle items using item_1, item_2, item_3 logic mapping for ORDER_STATUS only
+        # Explicitly handle items using item_1, item_2, item_3 logic mapping
         items_val = self._get_nested_value(payload_dict, "items")
-        if activity_event_code == 203 and isinstance(items_val, list) and items_val:
-            item_enums = [
-                LSQOrderStatusActivityField.PRODUCT_1,
-                LSQOrderStatusActivityField.PRODUCT_2,
-                LSQOrderStatusActivityField.PRODUCT_3
-            ]
+        if (activity_event_code == 203 or activity_event_code == 209) and isinstance(items_val, list) and items_val:
+            if activity_event_code == 203:
+                item_enums = [
+                    LSQOrderStatusActivityField.PRODUCT_1,
+                    LSQOrderStatusActivityField.PRODUCT_2,
+                    LSQOrderStatusActivityField.PRODUCT_3
+                ]
+            else: # code 209
+                item_enums = [
+                    LSQCreateOrder.ITEM_1,
+                    LSQCreateOrder.ITEM_2,
+                    LSQCreateOrder.ITEM_3
+                ]
+                
             for idx, raw_item in enumerate(items_val):
                 if idx >= len(item_enums):
                     break
@@ -295,8 +371,8 @@ class CRMService:
                     product_info = product_info.__dict__
 
                 enriched_item = {
-                    "product_name":  product_info.get("product_name"),
-                    "product_title": product_info.get("product_name"),
+                    "product_name":  product_info.get("lsq_display_name") or product_info.get("product_name"),
+                    "product_title": product_info.get("lsq_display_name") or product_info.get("product_name"),
                     "quantity":      raw_item.get("quantity"),
                     "size":          None, 
                     "unit_type":     product_info.get("unit_of_measure"),
@@ -308,7 +384,7 @@ class CRMService:
                 
                 inner_fields = self._build_custom_object_array(
                     enriched_item,
-                    self.LEADSQUARED_PRODUCT_MAPPING
+                    self.LSQItems
                 )
                         
                 if inner_fields:
@@ -319,9 +395,20 @@ class CRMService:
                         "Fields": inner_fields
                     })
 
-        # Extract the string value from Enum if present
-        order_status = payload_dict.get('order_status', 'Unknown Status')
-        status_str = order_status.value if hasattr(order_status, "value") else str(order_status)
+        # Extract the correct status field based on activity_event_code
+        status_key = 'order_status'
+        if activity_event_code == 206:
+            status_key = 'delivery_status'
+        elif activity_event_code == 205:
+            status_key = 'payment_status'
+        elif activity_event_code == 204:
+            status_key = 'refund_status'
+            
+        status_val = payload_dict.get(status_key, 'Unknown Status')
+        status_str = status_val.value if hasattr(status_val, "value") else str(status_val)
+        
+        if payload_dict.get(status_key):
+            status_str = self._map_lsq_status(status_key, status_str, activity_event_code)
 
         return {
             "RelatedProspectId": lead_id,
@@ -401,9 +488,9 @@ class CRMService:
 
         lsq_payload = await self.build_payload(activity_data_dict, lead_id, activity_event_code)
         # return lsq_payload
-        # print("\n\n\n")
-        # print("LSQ PAYLOAD: ", lsq_payload)
-        # print("\n\n\n")
+        print("\n\n\n")
+        print("LSQ PAYLOAD: ", lsq_payload)
+        print("\n\n\n")
         endpoint = "ProspectActivity.svc/Create"
         return await self._await_request("POST", endpoint, json=lsq_payload)
     

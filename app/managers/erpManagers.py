@@ -142,7 +142,7 @@ class ProductSchema(BaseSchema):
     barcode = db.Column(db.String(100), unique=True, nullable=True, index=True)
     image_url = db.Column(db.String(500))
     min_stock_level = db.Column(db.Integer, default=10, nullable=False)
-    
+    lsq_display_name = db.Column(db.String(255), nullable=True)
     # New fields for commission and discount (in rupees)
     commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Commission in rupees
     discount = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)    # Discount in rupees

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query
+from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query, BackgroundTasks
 from typing import List, Optional
 from datetime import datetime, date
 from decimal import Decimal
@@ -21,6 +21,7 @@ from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType, HASSAN_OUTLET_ID
 from services import CRMService , storeService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
+from utils.crm_utils import sync_order_to_crm
 import uuid
 
 settings = get_settings()
@@ -48,9 +49,16 @@ def generate_order_number() -> str:
     return f"ORD-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
 
 
+
+@router.post("/test/test")
+async def test(order_id: str):
+    result = await sync_order_to_crm(engine, order_id, ActivityType.ORDER_STATUS)
+    return result
+
 @router.post("", response_model=OrderResponse)
 async def create_order(
     payload: OrderCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user_id: str = Depends(require_roles(
         UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
     ))
@@ -294,6 +302,10 @@ async def create_order(
                     }
                 )
         
+        background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.CREATE_ORDER)
+        background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.ORDER_STATUS)
+        background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.DELIVERY_STATUS)
+
         # Build response directly to avoid potential SQLAlchemy session issues
         order_items_response = []
         for item in order_items:
@@ -363,6 +375,7 @@ async def create_order(
 @router.post("/proxy", response_model=OrderResponse)
 async def create_proxy_order(
     payload: ProxyOrderCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
 ):
     """
@@ -597,6 +610,8 @@ async def create_proxy_order(
         except Exception as log_error:
             print(f"⚠️  Failed to log proxy order creation: {log_error}")
         
+        background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.CREATE_ORDER)
+
         # Step 11: Build response
         order_items_response = []
         for item in order_items:
@@ -712,6 +727,7 @@ async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: Li
 @router.post("/bulk/assign-delivery", response_model=BulkAssignmentResponse)
 async def bulk_assign_delivery_guy_to_orders(
     payload: BulkOrderDeliveryAssignmentRequest,
+    background_tasks: BackgroundTasks,
     current_user_id: str = Depends(get_current_user_id),
     _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:work"]))
 ):
@@ -751,6 +767,9 @@ async def bulk_assign_delivery_guy_to_orders(
                 await order_manager.update(order_id, {"delivery_person_id": user.uid})
                 results.append(BulkAssignmentResult(order_id=order_id, status="success"))
                 successful_count += 1
+                
+                # Push delivery assignment activity to CRM
+                background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
                 
             except Exception as e:
                 results.append(BulkAssignmentResult(
@@ -1444,6 +1463,7 @@ async def update_order(
 async def update_order_status(
     order_id: str,
     payload: OrderStatusUpdateRequest,
+    background_tasks: BackgroundTasks,
     current_user_id: str = Depends(require_roles(
         UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
     ))
@@ -1488,11 +1508,7 @@ async def update_order_status(
             await store_service.order_delivered(order_id)
 
             # push activity to crm           
-            delivery_payload = await crm_service.push_activity({
-                "order_data": order.model_dump(),
-                "activity_event": ActivityType.DELIVERY_STATUS
-            })
-            print(delivery_payload)
+            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
             
             # Consume stock from inventory
             await consume_order_stock(order_id)
@@ -1510,11 +1526,7 @@ async def update_order_status(
             await store_service.order_cancelled(order_id)
 
             # push activity to crm           
-            cancel_payload = await crm_service.push_activity({
-                "order_data": order.model_dump(),
-                "activity_event": ActivityType.ORDER_STATUS
-            })
-            print(cancel_payload)
+            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.ORDER_STATUS)
             # Release reserved stock
             await release_order_stock(order_id)
 
@@ -1528,11 +1540,7 @@ async def update_order_status(
             await store_service.order_fulfilled(order_id)
 
             # push activity to crm           
-            delivery_payload = await crm_service.push_activity({
-                "order_data": order.model_dump(),
-                "activity_event": ActivityType.DELIVERY_STATUS
-            })
-            print(delivery_payload)
+            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
         
         await order_manager.update(order_id, update_data)
         
