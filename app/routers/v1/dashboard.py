@@ -116,10 +116,6 @@ async def get_super_admin_dashboard(
         )
 
 
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from collections import defaultdict
-from datetime import datetime, time
 
 @router.get("/super-admin/orders-geography")
 async def get_orders_geography_overview(
@@ -195,12 +191,12 @@ async def get_orders_geography_overview(
         for row in rows:
             dist = row.district or "Unknown District"
             t_name = row.taluk or "Unknown Taluk"
-            status = row.order_status.value
+            order_status_val = row.order_status.value
             count = row.order_count
 
             # Update overall totals
             total_orders += count
-            overall_status_counts[status] += count
+            overall_status_counts[order_status_val] += count
 
             # Initialize district if not present
             if dist not in geography_data:
@@ -219,10 +215,10 @@ async def get_orders_geography_overview(
 
             # Increment counters
             geography_data[dist]["total_orders"] += count
-            geography_data[dist]["status_breakdown"][status] += count
+            geography_data[dist]["status_breakdown"][order_status_val] += count
             
             geography_data[dist]["taluks"][t_name]["total_orders"] += count
-            geography_data[dist]["taluks"][t_name]["status_breakdown"][status] += count
+            geography_data[dist]["taluks"][t_name]["status_breakdown"][order_status_val] += count
 
         return {
             "filters": {
@@ -420,7 +416,7 @@ async def get_district_outlets_overview(
                     OutletSchema.outlet_name,
                     CustomerOrderSchema.order_status,
                     func.count(CustomerOrderSchema.uid).label("order_count"),
-                    func.sum(CustomerOrderSchema.gross_amount - (CustomerOrderSchema.discount_applied + CustomerOrderSchema.manual_discount + CustomerOrderSchema.coupon_discount + CustomerOrderSchema.prepaid_amount)).label("revenue")
+                    func.sum(CustomerOrderSchema.gross_amount - (CustomerOrderSchema.discount_applied + CustomerOrderSchema.manual_discount + CustomerOrderSchema.prepaid_amount)).label("revenue")
                 )
                 .select_from(CustomerOrderSchema)
                 .outerjoin(OutletSchema, CustomerOrderSchema.assigned_outlet_id == OutletSchema.uid)
@@ -458,14 +454,14 @@ async def get_district_outlets_overview(
             dist = row.district or "Unknown District"
             oid = row.assigned_outlet_id
             outlet_name = row.outlet_name if row.outlet_name else "Unassigned"
-            status = row.order_status.value
+            order_status_val = row.order_status.value
             count = row.order_count
             revenue = float(row.revenue) if row.revenue else 0.0
 
             # Update overall summary
             total_orders += count
-            overall_status_counts[status] += count
-            if status == OrderStatus.DELIVERED.value:
+            overall_status_counts[order_status_val] += count
+            if order_status_val == OrderStatus.DELIVERED.value:
                 overall_delivered_revenue += revenue
 
             # Build district hierarchy
@@ -485,11 +481,11 @@ async def get_district_outlets_overview(
 
             # Increment District level counters
             district_data[dist]["total_orders"] += count
-            district_data[dist]["status_breakdown"][status] += count
+            district_data[dist]["status_breakdown"][order_status_val] += count
             
             # Increment Outlet level counters (within the district)
             district_data[dist]["outlets"][outlet_name]["total_orders"] += count
-            district_data[dist]["outlets"][outlet_name]["status_breakdown"][status] += count
+            district_data[dist]["outlets"][outlet_name]["status_breakdown"][order_status_val] += count
 
         # Clean up defaultdicts for clean JSON serialization
         result_data = {}
