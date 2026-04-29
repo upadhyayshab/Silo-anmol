@@ -2,11 +2,15 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Dict, Any, List
 from datetime import datetime, date, timedelta
 from decimal import Decimal
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from collections import defaultdict
+from datetime import datetime, time
 
 from config import get_settings, get_engine
 from managers import (
     SalesInvoiceManager, CustomerOrderManager, InventoryManager,
-    ProductManager, OutletManager, UserManager, StockTransferOrderManager
+    ProductManager, OutletManager, UserManager, StockTransferOrderManager , CustomerOrderSchema, OutletSchema ,ProductSchema ,InventorySchema
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus
@@ -111,6 +115,417 @@ async def get_super_admin_dashboard(
             detail=f"Failed to fetch dashboard data: {str(e)}"
         )
 
+
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from collections import defaultdict
+from datetime import datetime, time
+
+@router.get("/super-admin/orders-geography")
+async def get_orders_geography_overview(
+    district: str = None,
+    taluk: str = None,
+    from_date: str = None,
+    to_date: str = None,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+):
+    """
+    Super Admin - Orders geography overview
+    Consolidated order counts grouped by District and Taluk with filters.
+    Optimized via SQL aggregation.
+    """
+    try:
+        # Parse date filters
+        filter_from_date = None
+        filter_to_date = None
+        
+        if from_date:
+            try:
+                filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+        if to_date:
+            try:
+                filter_to_date = datetime.strptime(to_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+
+        # Open an async database session for raw SQLAlchemy execution
+        async with AsyncSession(engine) as session:
+            query = (
+                select(
+                    CustomerOrderSchema.district,
+                    CustomerOrderSchema.taluk,
+                    CustomerOrderSchema.order_status,
+                    func.count(CustomerOrderSchema.uid).label("order_count")
+                )
+                .select_from(CustomerOrderSchema)
+            )
+
+            # Apply District and Taluk filters directly to SQL
+            if district:
+                query = query.where(CustomerOrderSchema.district == district)
+            if taluk:
+                query = query.where(CustomerOrderSchema.taluk == taluk)
+                
+            # Apply Date filters directly to SQL
+            if filter_from_date:
+                start_dt = datetime.combine(filter_from_date, time.min)
+                query = query.where(CustomerOrderSchema.order_date >= start_dt)
+            if filter_to_date:
+                end_dt = datetime.combine(filter_to_date, time.max)
+                query = query.where(CustomerOrderSchema.order_date <= end_dt)
+
+            # Group the results in the database
+            query = query.group_by(
+                CustomerOrderSchema.district,
+                CustomerOrderSchema.taluk,
+                CustomerOrderSchema.order_status
+            )
+
+            result = await session.execute(query)
+            rows = result.all()
+
+        # Initialize tracking variables
+        total_orders = 0
+        overall_status_counts = defaultdict(int)
+        geography_data = {}
+
+        # Loop through the pre-calculated rows
+        for row in rows:
+            dist = row.district or "Unknown District"
+            t_name = row.taluk or "Unknown Taluk"
+            status = row.order_status.value
+            count = row.order_count
+
+            # Update overall totals
+            total_orders += count
+            overall_status_counts[status] += count
+
+            # Initialize district if not present
+            if dist not in geography_data:
+                geography_data[dist] = {
+                    "total_orders": 0,
+                    "status_breakdown": defaultdict(int),
+                    "taluks": {}
+                }
+            
+            # Initialize taluk if not present
+            if t_name not in geography_data[dist]["taluks"]:
+                geography_data[dist]["taluks"][t_name] = {
+                    "total_orders": 0,
+                    "status_breakdown": defaultdict(int)
+                }
+
+            # Increment counters
+            geography_data[dist]["total_orders"] += count
+            geography_data[dist]["status_breakdown"][status] += count
+            
+            geography_data[dist]["taluks"][t_name]["total_orders"] += count
+            geography_data[dist]["taluks"][t_name]["status_breakdown"][status] += count
+
+        return {
+            "filters": {
+                "district": district,
+                "taluk": taluk,
+                "from_date": from_date,
+                "to_date": to_date
+            },
+            "summary": {
+                "total_orders": total_orders,
+                "overall_status_breakdown": dict(overall_status_counts)
+            },
+            "geography_breakdown": {
+                dist: {
+                    "total_orders": data["total_orders"],
+                    "status_breakdown": dict(data["status_breakdown"]),
+                    "taluks": {
+                        t_name: {
+                            "total_orders": t_data["total_orders"],
+                            "status_breakdown": dict(t_data["status_breakdown"])
+                        } for t_name, t_data in data["taluks"].items()
+                    }
+                } for dist, data in geography_data.items()
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch orders geography data: {str(e)}"
+        )
+
+@router.get("/super-admin/inventory-overview")
+async def get_inventory_overview(
+    product_id: str = None,
+    outlet_id: str = None,
+    from_date: str = None,
+    to_date: str = None,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+):
+    """
+    Super Admin - Consolidated Inventory Overview
+    Optimized SQL query to fetch inventory across outlets with product, outlet, and date filters.
+    """
+    try:
+        # Parse date filters
+        filter_from_date = None
+        filter_to_date = None
+        
+        if from_date:
+            try:
+                filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+        if to_date:
+            try:
+                filter_to_date = datetime.strptime(to_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+
+        # Open an async database session for raw SQLAlchemy execution
+        async with AsyncSession(engine) as session:
+            query = (
+                select(
+                    InventorySchema.product_id,
+                    InventorySchema.outlet_id,
+                    InventorySchema.quantity,
+                    InventorySchema.last_updated,
+                    ProductSchema.product_name,
+                    ProductSchema.sku,
+                    OutletSchema.outlet_name
+                )
+                .select_from(InventorySchema)
+                # Join to get Product and Outlet names directly in the SQL result
+                .join(ProductSchema, InventorySchema.product_id == ProductSchema.uid)
+                .outerjoin(OutletSchema, InventorySchema.outlet_id == OutletSchema.uid)
+            )
+
+            # Apply Product Filter
+            if product_id:
+                query = query.where(InventorySchema.product_id == product_id)
+            
+            # Apply Outlet Filter
+            if outlet_id:
+                if outlet_id.lower() == "warehouse":
+                    # Special case: 'warehouse' means outlet_id is NULL
+                    query = query.where(InventorySchema.outlet_id.is_(None))
+                else:
+                    query = query.where(InventorySchema.outlet_id == outlet_id)
+
+            # Apply Date Filters on last_updated
+            if filter_from_date:
+                start_dt = datetime.combine(filter_from_date, time.min)
+                query = query.where(InventorySchema.last_updated >= start_dt)
+            if filter_to_date:
+                end_dt = datetime.combine(filter_to_date, time.max)
+                query = query.where(InventorySchema.last_updated <= end_dt)
+
+            # Execute the optimized query
+            result = await session.execute(query)
+            rows = result.all()
+
+        # Format the result into the expected JSON structure
+        product_consolidation = {}
+        total_global_quantity = 0
+
+        for row in rows:
+            pid = row.product_id
+            qty = row.quantity or 0
+            
+            # Initialize product in dictionary if not present
+            if pid not in product_consolidation:
+                product_consolidation[pid] = {
+                    "product_id": pid,
+                    "product_name": row.product_name or "Unknown Product",
+                    "sku": row.sku or "N/A",
+                    "total_quantity": 0,
+                    "warehouse_quantity": 0,
+                    "outlets": []
+                }
+
+            # Increment totals
+            total_global_quantity += qty
+            product_consolidation[pid]["total_quantity"] += qty
+
+            # If outlet_id is None, it represents Warehouse inventory
+            if row.outlet_id is None:
+                product_consolidation[pid]["warehouse_quantity"] += qty
+            else:
+                product_consolidation[pid]["outlets"].append({
+                    "outlet_id": row.outlet_id,
+                    "outlet_name": row.outlet_name or "Unknown Outlet",
+                    "quantity": qty,
+                    "last_updated": row.last_updated.isoformat() if row.last_updated else None
+                })
+
+        return {
+            "filters": {
+                "product_id": product_id,
+                "outlet_id": outlet_id,
+                "from_date": from_date,
+                "to_date": to_date
+            },
+            "overview": {
+                "total_unique_products": len(product_consolidation),
+                "total_global_quantity": total_global_quantity
+            },
+            "product_inventory": list(product_consolidation.values())
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch optimized inventory overview data: {str(e)}"
+        )
+
+
+@router.get("/super-admin/district-outlets-overview")
+async def get_district_outlets_overview(
+    from_date: str = None,
+    to_date: str = None,
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+):
+    """
+    Super Admin - Optimized District-wise Outlet Overview
+    Total order counts and revenue executed directly via SQL Aggregation.
+    """
+    try:
+        # Parse date filters
+        filter_from_date = None
+        filter_to_date = None
+        
+        if from_date:
+            try:
+                filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid from_date format. Use YYYY-MM-DD")
+        if to_date:
+            try:
+                filter_to_date = datetime.strptime(to_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid to_date format. Use YYYY-MM-DD")
+
+        # Open an async database session for raw SQLAlchemy execution
+        async with AsyncSession(engine) as session:
+            # Build the optimized SQL query
+            query = (
+                select(
+                    CustomerOrderSchema.district,
+                    CustomerOrderSchema.assigned_outlet_id,
+                    OutletSchema.outlet_name,
+                    CustomerOrderSchema.order_status,
+                    func.count(CustomerOrderSchema.uid).label("order_count"),
+                    func.sum(CustomerOrderSchema.gross_amount - (CustomerOrderSchema.discount_applied + CustomerOrderSchema.manual_discount + CustomerOrderSchema.coupon_discount + CustomerOrderSchema.prepaid_amount)).label("revenue")
+                )
+                .select_from(CustomerOrderSchema)
+                .outerjoin(OutletSchema, CustomerOrderSchema.assigned_outlet_id == OutletSchema.uid)
+            )
+
+            # Apply date filters directly to the SQL WHERE clause
+            if filter_from_date:
+                start_dt = datetime.combine(filter_from_date, time.min)
+                query = query.where(CustomerOrderSchema.order_date >= start_dt)
+            if filter_to_date:
+                end_dt = datetime.combine(filter_to_date, time.max)
+                query = query.where(CustomerOrderSchema.order_date <= end_dt)
+
+            # Let PostgreSQL handle the heavy lifting of grouping
+            query = query.group_by(
+                CustomerOrderSchema.district,
+                CustomerOrderSchema.assigned_outlet_id,
+                OutletSchema.outlet_name,
+                CustomerOrderSchema.order_status
+            )
+
+            # Execute the query
+            result = await session.execute(query)
+            rows = result.all()
+
+        # Initialize summary metrics
+        total_orders = 0
+        overall_delivered_revenue = 0.0
+        overall_status_counts = defaultdict(int)
+        
+        district_data = {}
+
+        # Loop through the small set of pre-calculated rows
+        for row in rows:
+            dist = row.district or "Unknown District"
+            oid = row.assigned_outlet_id
+            outlet_name = row.outlet_name if row.outlet_name else "Unassigned"
+            status = row.order_status.value
+            count = row.order_count
+            revenue = float(row.revenue) if row.revenue else 0.0
+
+            # Update overall summary
+            total_orders += count
+            overall_status_counts[status] += count
+            if status == OrderStatus.DELIVERED.value:
+                overall_delivered_revenue += revenue
+
+            # Build district hierarchy
+            if dist not in district_data:
+                district_data[dist] = {
+                    "total_orders": 0,
+                    "status_breakdown": defaultdict(int),
+                    "outlets": {}
+                }
+            
+            if outlet_name not in district_data[dist]["outlets"]:
+                district_data[dist]["outlets"][outlet_name] = {
+                    "outlet_id": oid,
+                    "total_orders": 0,
+                    "status_breakdown": defaultdict(int)
+                }
+
+            # Increment District level counters
+            district_data[dist]["total_orders"] += count
+            district_data[dist]["status_breakdown"][status] += count
+            
+            # Increment Outlet level counters (within the district)
+            district_data[dist]["outlets"][outlet_name]["total_orders"] += count
+            district_data[dist]["outlets"][outlet_name]["status_breakdown"][status] += count
+
+        # Clean up defaultdicts for clean JSON serialization
+        result_data = {}
+        for dist, data in district_data.items():
+            result_data[dist] = {
+                "total_orders": data["total_orders"],
+                "status_breakdown": dict(data["status_breakdown"]),
+                "outlets": {
+                    out_name: {
+                        "outlet_id": out_data["outlet_id"],
+                        "total_orders": out_data["total_orders"],
+                        "status_breakdown": dict(out_data["status_breakdown"])
+                    } for out_name, out_data in data["outlets"].items()
+                }
+            }
+
+        return {
+            "filters": {
+                "from_date": from_date,
+                "to_date": to_date
+            },
+            "summary": {
+                "total_orders": total_orders,
+                "overall_delivered_revenue": round(overall_delivered_revenue, 2),
+                "overall_status_breakdown": dict(overall_status_counts)
+            },
+            "district_outlets_breakdown": result_data
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch optimized district outlets overview data: {str(e)}"
+        )
 
 @router.get("/warehouse-manager/{user_id}")
 async def get_warehouse_manager_dashboard(
