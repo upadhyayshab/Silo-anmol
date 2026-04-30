@@ -797,10 +797,10 @@ async def bulk_assign_delivery_guy_to_orders(
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,
-    # current_user_id: str = Depends(require_roles(
-    #     UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
-    #     allowed_scopes=["delivery:read"]
-    # ))
+    current_user_id: str = Depends(require_roles(
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
+        allowed_scopes=["delivery:read"]
+    ))
 ):
     """Get specific order details"""
     try:
@@ -1061,10 +1061,10 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     to_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
-    # current_user_id: str = Depends(require_roles(
-    #     UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
-    #     allowed_scopes=["delivery:read"]
-    # ))
+    current_user_id: str = Depends(require_roles(
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
+        allowed_scopes=["delivery:read"]
+    ))
 ):
     """
     Get orders with filters
@@ -1073,36 +1073,36 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     try:
         filters = {}
         
-        # if current_user_id != "microservice":
-        #     # Get current user to determine access level
-        #     current_user = await user_manager.fetch(current_user_id)
+        if current_user_id != "microservice":
+            # Get current user to determine access level
+            current_user = await user_manager.fetch(current_user_id)
             
-        #     # Role-based filtering
-        #     if current_user.role == UserRole.TELECALLER:
-        #         filters["telecaller_id"] = current_user_id
-        #     elif current_user.role == UserRole.OUTLET_MANAGER:
-        #         if current_user.outlet_id:
-        #             filters["assigned_outlet_id"] = current_user.outlet_id
+            # Role-based filtering
+            if current_user.role == UserRole.TELECALLER:
+                filters["telecaller_id"] = current_user_id
+            elif current_user.role == UserRole.OUTLET_MANAGER:
+                if current_user.outlet_id:
+                    filters["assigned_outlet_id"] = current_user.outlet_id
             
-        #     # Apply additional filters
-        #     if transfer_status:
-        #         filters["order_status"] = transfer_status
-        #     if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-        #         filters["telecaller_id"] = telecaller_id
-        #     if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-        #         filters["assigned_outlet_id"] = outlet_id
-        #     if customer_phone:
-        #         filters["customer_phone"] = customer_phone
-        # else:
-        #     # Microservice gets full access, just apply the provided filters
-        #     if transfer_status:
-        #         filters["order_status"] = transfer_status
-        #     if telecaller_id:
-        #         filters["telecaller_id"] = telecaller_id
-        #     if outlet_id:
-        #         filters["assigned_outlet_id"] = outlet_id
-        #     if customer_phone:
-        #         filters["customer_phone"] = customer_phone
+            # Apply additional filters
+            if transfer_status:
+                filters["order_status"] = transfer_status
+            if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                filters["telecaller_id"] = telecaller_id
+            if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                filters["assigned_outlet_id"] = outlet_id
+            if customer_phone:
+                filters["customer_phone"] = customer_phone
+        else:
+            # Microservice gets full access, just apply the provided filters
+            if transfer_status:
+                filters["order_status"] = transfer_status
+            if telecaller_id:
+                filters["telecaller_id"] = telecaller_id
+            if outlet_id:
+                filters["assigned_outlet_id"] = outlet_id
+            if customer_phone:
+                filters["customer_phone"] = customer_phone
         
         orders = await order_manager.fetch_all(
             filters=filters,
