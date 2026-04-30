@@ -778,11 +778,14 @@ Authorization: Bearer <access_token>
 ## INVENTORY MANAGEMENT ENDPOINTS
 
 ### GET /api/v1/inventory
-**Description**: Get inventory by location with filters  
+**Description**: Get inventory by location with filters.  
+> [!NOTE]
+> The **Warehouse** and **Hassan Outlet** inventory pools are unified. Requests for `outlet_id=null` (Warehouse) will return inventory records specifically for the Hassan Outlet pool.
+
 **Authentication**: Required (Super Admin, Admin, Warehouse Manager, Outlet Manager, Accountant)
 
 **Query Parameters**:
-- `outlet_id` (optional): Specific outlet ID (null for warehouse)
+- `outlet_id` (optional): Specific outlet ID (`null` or `HASSAN_OUTLET_ID` for the unified Warehouse/Hassan pool)
 - `product_id` (optional): Specific product ID
 - `low_stock_only` (optional): Only show items below minimum stock level (true/false)
 - `limit` (optional): Number of records to return (default: 100)
@@ -809,7 +812,10 @@ Authorization: Bearer <access_token>
 ---
 
 ### GET /api/v1/inventory/{productId}
-**Description**: Get product stock across all locations  
+**Description**: Get product stock across all locations.  
+> [!NOTE]
+> For the **Warehouse/Hassan** pool, the record with `HASSAN_OUTLET_ID` is used as the primary source of truth.
+
 **Authentication**: Required (Super Admin, Admin, Warehouse Manager, Outlet Manager, Accountant)
 
 **Path Parameters**:
@@ -2213,7 +2219,10 @@ const printInvoice = (invoiceId) => {
 ---
 
 ### GET /api/v1/dashboard/warehouse-manager/{userId}
-**Description**: Warehouse manager dashboard with inventory focus  
+**Description**: Warehouse manager dashboard with inventory focus.  
+> [!NOTE]
+> Inventory metrics for the Warehouse are now pulled directly from the **Hassan Outlet pool**.
+
 **Authentication**: Required (Warehouse Manager, Super Admin)
 
 **Path Parameters**:

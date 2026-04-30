@@ -7,7 +7,7 @@ from config import get_settings, get_engine
 from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager, DeliveryGuyManager,
-    OutletMappingManager,
+    OutletMappingManager,InventorySchema,
     CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,OutletSchema
 )
 from models import (
@@ -19,6 +19,7 @@ from models import (
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType, HASSAN_OUTLET_ID
+from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
 from services import CRMService , storeService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
@@ -672,31 +673,21 @@ async def create_proxy_order(
 async def _find_inventory_for_product(product_id: str, outlet_id: str):
     """
     Find the best inventory record for a product at a given outlet.
-    When the outlet is the Hassan outlet, warehouse and Hassan inventory are
-    treated as one pool — whichever record has sufficient available stock is
-    returned first (Hassan outlet record preferred over warehouse).
+    When the outlet is the Hassan outlet or Warehouse, they are treated
+    as a unified pool using the Hassan Outlet ID.
     """
-    # Primary lookup: exact outlet match
+    # If the requested outlet is Warehouse (None) or Hassan Outlet,
+    # always use the Hassan Outlet ID for inventory lookup.
+    target_outlet_id = outlet_id
+    if outlet_id is None or outlet_id == HASSAN_OUTLET_ID:
+        target_outlet_id = HASSAN_OUTLET_ID
+
     inventory_items = await inventory_manager.fetch_all(
-        filters={"product_id": product_id, "outlet_id": outlet_id}
+        filters={"product_id": product_id, "outlet_id": target_outlet_id}
     )
+    
     if inventory_items.items:
         return inventory_items.items[0]
-
-    # For Hassan outlet: aq (and vice-versa)
-    if outlet_id == HASSAN_OUTLET_ID:
-        warehouse_inventory = await inventory_manager.fetch_all(
-            filters={"product_id": product_id, "outlet_id": None}
-        )
-        if warehouse_inventory.items:
-            return warehouse_inventory.items[0]
-    elif outlet_id is None:
-        # Warehouse lookup: also check Hassan pool
-        hassan_inventory = await inventory_manager.fetch_all(
-            filters={"product_id": product_id, "outlet_id": HASSAN_OUTLET_ID}
-        )
-        if hassan_inventory.items:
-            return hassan_inventory.items[0]
 
     return None
 
@@ -716,13 +707,22 @@ async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: Li
         if available < quantity:
             raise Exception(f"Insufficient stock for {item_data['product'].product_name}. Available: {available}, Required: {quantity}")
 
-        await inventory_manager.update(
-            inventory_item.uid,
-            {
-                "reserved_quantity": inventory_item.reserved_quantity + quantity,
-                "last_updated": datetime.utcnow()
-            }
-        )
+        if is_hassan_or_warehouse(outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=product_id,
+                target_outlet_id=outlet_id,
+                reserved_delta=quantity
+            )
+        else:
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "reserved_quantity": inventory_item.reserved_quantity + quantity,
+                    "last_updated": datetime.utcnow()
+                }
+            )
 
 @router.post("/bulk/assign-delivery", response_model=BulkAssignmentResponse)
 async def bulk_assign_delivery_guy_to_orders(
@@ -1193,34 +1193,7 @@ async def get_orders_by_phone(
         )
 
 
-# Duplicate GET /{order_id} route removed - moved to top of file
-    """Get specific order details"""
-    try:
-        order = await order_manager.fetch(order_id)
-        
-        # Check access permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.TELECALLER and order.telecaller_id != current_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: You can only view your own orders"
-            )
-        elif current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != order.assigned_outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view orders assigned to your outlet"
-                )
-        
-        return await get_order_response(order_id)
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Order not found"
-        )
+
 
 
 async def get_order_response(order_id: str) -> OrderResponse:
@@ -1580,14 +1553,24 @@ async def consume_order_stock(order_id: str):
         inventory_item = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
 
         if inventory_item:
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "quantity": max(0, inventory_item.quantity - item.quantity),
-                    "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
-                    "last_updated": datetime.utcnow()
-                }
-            )
+            if is_hassan_or_warehouse(order.assigned_outlet_id):
+                await sync_unified_inventory(
+                    inventory_manager,
+                    InventorySchema,
+                    product_id=item.product_id,
+                    target_outlet_id=order.assigned_outlet_id,
+                    quantity_delta=-item.quantity,
+                    reserved_delta=-item.quantity
+                )
+            else:
+                await inventory_manager.update(
+                    inventory_item.uid,
+                    {
+                        "quantity": max(0, inventory_item.quantity - item.quantity),
+                        "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
+                        "last_updated": datetime.utcnow()
+                    }
+                )
 
 
 async def release_order_stock(order_id: str):
@@ -1599,13 +1582,22 @@ async def release_order_stock(order_id: str):
         inventory_item = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
 
         if inventory_item:
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
-                    "last_updated": datetime.utcnow()
-                }
-            )
+            if is_hassan_or_warehouse(order.assigned_outlet_id):
+                await sync_unified_inventory(
+                    inventory_manager,
+                    InventorySchema,
+                    product_id=item.product_id,
+                    target_outlet_id=order.assigned_outlet_id,
+                    reserved_delta=-item.quantity
+                )
+            else:
+                await inventory_manager.update(
+                    inventory_item.uid,
+                    {
+                        "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
+                        "last_updated": datetime.utcnow()
+                    }
+                )
 
 
 @router.put("/{order_id}/assign", response_model=StatusResponse)
@@ -1778,53 +1770,7 @@ async def update_order_transaction(
             detail=f"Failed to update transaction: {str(e)}"
         )
 
-# Duplicate GET /{order_id}/transactions route removed - moved to top of file
-    """Get all transactions for an order"""
-    try:
-        order = await order_manager.fetch(order_id)
-        
-        # Check permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.TELECALLER and order.telecaller_id != current_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: You can only view transactions for your own orders"
-            )
-        elif current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != order.assigned_outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view transactions for orders assigned to your outlet"
-                )
-        
-        transactions = await transaction_manager.fetch_all(
-            filters={"order_id": order_id}
-        )
-        
-        transaction_responses = [
-            OrderTransactionResponse(
-                uid=txn.uid,
-                order_id=txn.order_id,
-                payment_status=txn.payment_status,
-                payment_method=txn.payment_method,
-                amount_paid=txn.amount_paid,
-                transaction_reference=txn.transaction_reference,
-                payment_date=txn.payment_date,
-                received_by=txn.received_by,
-                notes=txn.notes
-            )
-            for txn in transactions.items
-        ]
-        
-        return ListResponse(items=transaction_responses, count=len(transaction_responses))
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch transactions: {str(e)}"
-        )
+
 
 
 @router.put("/{order_id}/payment-status", response_model=StatusResponse)
@@ -1959,13 +1905,22 @@ async def delete_order(
 
                     # Only release if order is PENDING (CANCELLED already released)
                     if inventory_item and order.order_status == OrderStatus.PENDING:
-                        await inventory_manager.update(
-                            inventory_item.uid,
-                            {
-                                "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
-                                "last_updated": datetime.utcnow()
-                            }
-                        )
+                        if is_hassan_or_warehouse(order.assigned_outlet_id):
+                            await sync_unified_inventory(
+                                inventory_manager,
+                                InventorySchema,
+                                product_id=item.product_id,
+                                target_outlet_id=order.assigned_outlet_id,
+                                reserved_delta=-item.quantity
+                            )
+                        else:
+                            await inventory_manager.update(
+                                inventory_item.uid,
+                                {
+                                    "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
+                                    "last_updated": datetime.utcnow()
+                                }
+                            )
                 except Exception as inv_error:
                     print(f"Warning: Failed to release inventory for item {item.product_id}: {inv_error}")
         
@@ -2111,14 +2066,24 @@ async def revoke_order(
                     # Different logic based on previous status
                     if order.order_status == OrderStatus.DELIVERED:
                         # DELIVERED → PENDING: Restore consumed stock + reserve it
-                        await inventory_manager.update(
-                            inventory_item.uid,
-                            {
-                                "quantity": inventory_item.quantity + item.quantity,
-                                "reserved_quantity": inventory_item.reserved_quantity + item.quantity,
-                                "last_updated": datetime.utcnow()
-                            }
-                        )
+                        if is_hassan_or_warehouse(order.assigned_outlet_id):
+                            await sync_unified_inventory(
+                                inventory_manager,
+                                InventorySchema,
+                                product_id=item.product_id,
+                                target_outlet_id=order.assigned_outlet_id,
+                                quantity_delta=item.quantity,
+                                reserved_delta=item.quantity
+                            )
+                        else:
+                            await inventory_manager.update(
+                                inventory_item.uid,
+                                {
+                                    "quantity": inventory_item.quantity + item.quantity,
+                                    "reserved_quantity": inventory_item.reserved_quantity + item.quantity,
+                                    "last_updated": datetime.utcnow()
+                                }
+                            )
 
                     elif order.order_status == OrderStatus.CANCELLED:
                         # CANCELLED → PENDING: Re-reserve stock (quantity unchanged)
@@ -2132,13 +2097,22 @@ async def revoke_order(
                                        f"Stock may have been sold after cancellation."
                             )
 
-                        await inventory_manager.update(
-                            inventory_item.uid,
-                            {
-                                "reserved_quantity": inventory_item.reserved_quantity + item.quantity,
-                                "last_updated": datetime.utcnow()
-                            }
-                        )
+                        if is_hassan_or_warehouse(order.assigned_outlet_id):
+                            await sync_unified_inventory(
+                                inventory_manager,
+                                InventorySchema,
+                                product_id=item.product_id,
+                                target_outlet_id=order.assigned_outlet_id,
+                                reserved_delta=item.quantity
+                            )
+                        else:
+                            await inventory_manager.update(
+                                inventory_item.uid,
+                                {
+                                    "reserved_quantity": inventory_item.reserved_quantity + item.quantity,
+                                    "last_updated": datetime.utcnow()
+                                }
+                            )
                 else:
                     print(f"Warning: No inventory record found for product {item.product_id} at outlet {order.assigned_outlet_id}")
                     

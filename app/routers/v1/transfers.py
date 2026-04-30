@@ -15,7 +15,8 @@ from models import (
     ListResponse, StatusResponse , BulkTransferResponse , StockTransferCreateRequestBulk
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, TransferStatus
+from utils.constants import UserRole, TransferStatus, HASSAN_OUTLET_ID
+from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
 import uuid
 
 settings = get_settings()
@@ -85,16 +86,11 @@ async def create_transfer_request(
         
         # Role-based validation
         if current_user.role == UserRole.OUTLET_MANAGER:
-            # Outlet managers can only request transfers to their own outlet from warehouse
-            if current_user.outlet_id != payload.to_outlet_id:
+            # Outlet managers must be involved in the transfer (either as source or destination)
+            if current_user.outlet_id != payload.to_outlet_id and current_user.outlet_id != payload.from_outlet_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only request transfers to your own outlet"
-                )
-            if payload.from_outlet_id is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Outlet managers can only request transfers from warehouse"
+                    detail="You can only create transfers where your outlet is either the source or destination"
                 )
         
         # Validate products and check availability
@@ -129,7 +125,12 @@ async def create_transfer_request(
                 )
             
             inventory_item = source_inventory.items[0]
-            available_stock = inventory_item.quantity - inventory_item.reserved_quantity
+            
+            # If transfer is from warehouse/hassan, neglect reserved quantity
+            if is_hassan_or_warehouse(payload.from_outlet_id):
+                available_stock = inventory_item.quantity
+            else:
+                available_stock = inventory_item.quantity - inventory_item.reserved_quantity
             
             if available_stock < item.quantity_requested:
                 raise HTTPException(
@@ -247,7 +248,12 @@ async def mass_upload_transfer_requests(
                     raise ValueError(f"No stock available for {product.product_name} at source location")
                 
                 inventory_item = source_inventory.items[0]
-                available_stock = inventory_item.quantity - inventory_item.reserved_quantity
+                
+                # If transfer is from warehouse/hassan, neglect reserved quantity
+                if is_hassan_or_warehouse(from_outlet_id):
+                    available_stock = inventory_item.quantity
+                else:
+                    available_stock = inventory_item.quantity - inventory_item.reserved_quantity
                 
                 if available_stock < item.quantity_requested:
                     raise ValueError(
@@ -571,6 +577,9 @@ async def update_transfer_status(
 ):
     """Update transfer status"""
     try:
+        # Get current user
+        current_user = await user_manager.fetch(current_user_id)
+        
         # Get current transfer to validate transition
         transfer = await transfer_manager.fetch(transfer_id)
         
@@ -580,6 +589,22 @@ async def update_transfer_status(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status transition from {transfer.status} to {payload.status}"
             )
+        
+        # Role-based status update validation
+        if current_user.role == UserRole.WAREHOUSE_MANAGER:
+            # Warehouse managers can only handle transfers from warehouse
+            if transfer.from_outlet_id is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only manage transfers from warehouse"
+                )
+            
+            # Can approve, ship, but not deliver
+            if payload.status == TransferStatus.DELIVERED:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only delivery personnel or admins can mark transfers as delivered"
+                )
         
         updates = {
             "status": payload.status,
@@ -599,6 +624,11 @@ async def update_transfer_status(
             await complete_stock_transfer(transfer_id)
         
         elif payload.status == TransferStatus.CANCELLED:
+            if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Only admins can cancel transfers"
+                )
             # Release reserved stock if any
             await release_transfer_stock(transfer_id)
         
@@ -826,10 +856,10 @@ async def approve_transfer_with_quantities(
 async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
     """Helper to build complete transfer response with items"""
     try:
-        # Fetch transfer without joins (fetch relationships separately)
+        # Fetch transfer without joins
         transfer = await transfer_manager.fetch(transfer_id)
         
-        # Get transfer items with error handling
+        # Get transfer items
         items = []
         try:
             transfer_items = await transfer_item_manager.fetch_all(
@@ -865,117 +895,14 @@ async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
         )
     
     except Exception as e:
-        # If transfer fetch fails, handle the error
-        try:
-            transfer = await transfer_manager.fetch(transfer_id)
-            
-            # Get items separately
-            items = []
-            try:
-                transfer_items = await transfer_item_manager.fetch_all(
-                    filters={"transfer_id": transfer_id}
-                )
-                items = [
-                    TransferItemResponse(
-                        uid=item.uid,
-                        product_id=item.product_id,
-                        quantity_requested=item.quantity_requested,
-                        quantity_delivered=item.quantity_delivered
-                    )
-                    for item in transfer_items.items
-                ]
-            except:
-                pass
-            
-            return StockTransferResponse(
-                uid=transfer.uid,
-                from_outlet_id=transfer.from_outlet_id,
-                to_outlet_id=transfer.to_outlet_id,
-                status=transfer.status,
-                requested_by=transfer.requested_by,
-                approved_by=transfer.approved_by,
-                delivery_person_id=transfer.delivery_person_id,
-                scheduled_date=transfer.scheduled_date,
-                delivered_date=transfer.delivered_date,
-                notes=transfer.notes,
-                items=items,
-                created_at=transfer.created_at
-            )
-        except Exception as inner_e:
+        if "not found" in str(e).lower():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Transfer not found: {transfer_id}"
             )
-
-
-        # Validate status transition
-        if not is_valid_transfer_status_transition(transfer.status, payload.status):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status transition from {transfer.status} to {payload.status}"
-            )
-        
-        # Role-based status update validation
-        if current_user.role == UserRole.WAREHOUSE_MANAGER:
-            # Warehouse managers can only handle transfers from warehouse
-            if transfer.from_outlet_id is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only manage transfers from warehouse"
-                )
-            
-            # Can approve, ship, but not deliver
-            if payload.status == TransferStatus.DELIVERED:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only delivery personnel or admins can mark transfers as delivered"
-                )
-        
-        # Handle status-specific logic
-        update_data = {
-            "status": payload.status,
-            "notes": payload.notes
-        }
-        
-        if payload.status == TransferStatus.APPROVED:
-            update_data["approved_by"] = current_user_id
-            # Reserve stock at source location
-            await reserve_transfer_stock(transfer_id)
-        
-        elif payload.status == TransferStatus.IN_TRANSIT:
-            if not transfer.approved_by:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Transfer must be approved before shipping"
-                )
-        
-        elif payload.status == TransferStatus.DELIVERED:
-            update_data["delivered_date"] = datetime.utcnow()
-            # Complete the stock transfer
-            await complete_stock_transfer(transfer_id)
-        
-        elif payload.status == TransferStatus.CANCELLED:
-            if current_user.role != UserRole.ADMIN and current_user.role != UserRole.SUPER_ADMIN:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only admins can cancel transfers"
-                )
-            # Release reserved stock if any
-            await release_transfer_stock(transfer_id)
-        
-        await transfer_manager.update(transfer_id, update_data)
-        
-        return StatusResponse(
-            status="ok",
-            message=f"Transfer status updated to {payload.status}"
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update transfer status: {str(e)}"
+            detail=f"Failed to build transfer response: {str(e)}"
         )
 
 
@@ -1001,7 +928,16 @@ async def complete_stock_transfer(transfer_id: str):
     
     for item in transfer_items.items:
         # Reduce stock at source location
-        if transfer.from_outlet_id:  # Only if transferring from an outlet
+        if transfer.from_outlet_id is None or is_hassan_or_warehouse(transfer.from_outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=item.product_id,
+                target_outlet_id=transfer.from_outlet_id,
+                quantity_delta=-item.quantity_requested,
+                reserved_delta=-item.quantity_requested
+            )
+        elif transfer.from_outlet_id:  # Only if transferring from another outlet
             source_inventory = await inventory_manager.fetch_all(
                 filters={
                     "product_id": item.product_id,
@@ -1024,35 +960,44 @@ async def complete_stock_transfer(transfer_id: str):
                 )
         
         # Add stock at destination location
-        dest_inventory = await inventory_manager.fetch_all(
-            filters={
-                "product_id": item.product_id,
-                "outlet_id": transfer.to_outlet_id
-            }
-        )
-        
-        if dest_inventory.items:
-            # Update existing inventory
-            dest_item = dest_inventory.items[0]
-            new_quantity = dest_item.quantity + item.quantity_requested
-            
-            await inventory_manager.update(
-                dest_item.uid,
-                {
-                    "quantity": new_quantity,
-                    "last_updated": datetime.utcnow()
-                }
+        if is_hassan_or_warehouse(transfer.to_outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=item.product_id,
+                target_outlet_id=transfer.to_outlet_id,
+                quantity_delta=item.quantity_requested
             )
         else:
-            # Create new inventory record at destination
-            new_inventory = InventorySchema(
-                product_id=item.product_id,
-                outlet_id=transfer.to_outlet_id,
-                quantity=item.quantity_requested,
-                reserved_quantity=0,
-                last_updated=datetime.utcnow()
+            dest_inventory = await inventory_manager.fetch_all(
+                filters={
+                    "product_id": item.product_id,
+                    "outlet_id": transfer.to_outlet_id
+                }
             )
-            await inventory_manager.create(new_inventory)
+            
+            if dest_inventory.items:
+                # Update existing inventory
+                dest_item = dest_inventory.items[0]
+                new_quantity = dest_item.quantity + item.quantity_requested
+                
+                await inventory_manager.update(
+                    dest_item.uid,
+                    {
+                        "quantity": new_quantity,
+                        "last_updated": datetime.utcnow()
+                    }
+                )
+            else:
+                # Create new inventory record at destination
+                new_inventory = InventorySchema(
+                    product_id=item.product_id,
+                    outlet_id=transfer.to_outlet_id,
+                    quantity=item.quantity_requested,
+                    reserved_quantity=0,
+                    last_updated=datetime.utcnow()
+                )
+                await inventory_manager.create(new_inventory)
         
         # Update delivered quantity
         await transfer_item_manager.update(
@@ -1070,24 +1015,33 @@ async def reserve_transfer_stock(transfer_id: str):
     
     for item in transfer_items.items:
         # Find inventory at source location
-        inventory_items = await inventory_manager.fetch_all(
-            filters={
-                "product_id": item.product_id,
-                "outlet_id": transfer.from_outlet_id
-            }
-        )
-        
-        if inventory_items.items:
-            inventory_item = inventory_items.items[0]
-            new_reserved = inventory_item.reserved_quantity + item.quantity_requested
-            
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": new_reserved,
-                    "last_updated": datetime.utcnow()
+        if is_hassan_or_warehouse(transfer.from_outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=item.product_id,
+                target_outlet_id=transfer.from_outlet_id,
+                reserved_delta=item.quantity_requested
+            )
+        else:
+            inventory_items = await inventory_manager.fetch_all(
+                filters={
+                    "product_id": item.product_id,
+                    "outlet_id": transfer.from_outlet_id
                 }
             )
+            
+            if inventory_items.items:
+                inventory_item = inventory_items.items[0]
+                new_reserved = inventory_item.reserved_quantity + item.quantity_requested
+                
+                await inventory_manager.update(
+                    inventory_item.uid,
+                    {
+                        "reserved_quantity": new_reserved,
+                        "last_updated": datetime.utcnow()
+                    }
+                )
 
 
 async def release_transfer_stock(transfer_id: str):
@@ -1104,7 +1058,15 @@ async def release_transfer_stock(transfer_id: str):
     
     for item in transfer_items.items:
         # Find inventory at source location
-        if transfer.from_outlet_id:  # Only if transferring from an outlet
+        if is_hassan_or_warehouse(transfer.from_outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=item.product_id,
+                target_outlet_id=transfer.from_outlet_id,
+                reserved_delta=-item.quantity_requested
+            )
+        elif transfer.from_outlet_id:  # Only if transferring from another outlet
             inventory_items = await inventory_manager.fetch_all(
                 filters={
                     "product_id": item.product_id,
@@ -1124,74 +1086,5 @@ async def release_transfer_stock(transfer_id: str):
                     }
                 )
 
-
-    """
-    Get transfer summary report
-    """
-    try:
-        # Set default date range if not provided
-        if not from_date:
-            from_date = date.today().replace(day=1)  # First day of current month
-        if not to_date:
-            to_date = date.today()
-        
-        filters = {}
-        if outlet_id:
-            # For outlet-specific reports, we need to fetch transfers separately
-            # since SQLAlchemy doesn't support MongoDB-style $or in our current setup
-            from_outlet_transfers = await transfer_manager.fetch_all(
-                filters={"from_outlet_id": outlet_id}
-            )
-            to_outlet_transfers = await transfer_manager.fetch_all(
-                filters={"to_outlet_id": outlet_id}
-            )
-            
-            # Combine transfers
-            all_transfers = {}
-            for transfer in from_outlet_transfers.items:
-                all_transfers[transfer.uid] = transfer
-            for transfer in to_outlet_transfers.items:
-                all_transfers[transfer.uid] = transfer
-            
-            transfers_list = list(all_transfers.values())
-        else:
-            transfers = await transfer_manager.fetch_all(filters=filters)
-            transfers_list = transfers.items
-        
-        # Calculate summary statistics
-        status_counts = {status.value: 0 for status in TransferStatus}
-        total_transfers = 0
-        completed_transfers = 0
-        pending_approvals = 0
-        
-        for transfer in transfers_list:
-            if transfer.created_at.date() >= from_date and transfer.created_at.date() <= to_date:
-                total_transfers += 1
-                status_counts[transfer.status.value] += 1
-                
-                if transfer.status == TransferStatus.DELIVERED:
-                    completed_transfers += 1
-                elif transfer.status == TransferStatus.PENDING:
-                    pending_approvals += 1
-        
-        return {
-            "period": {
-                "from_date": from_date,
-                "to_date": to_date
-            },
-            "summary": {
-                "total_transfers": total_transfers,
-                "completed_transfers": completed_transfers,
-                "pending_approvals": pending_approvals,
-                "completion_rate": round((completed_transfers / total_transfers * 100) if total_transfers > 0 else 0, 2)
-            },
-            "status_breakdown": status_counts
-        }
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate transfer summary: {str(e)}"
-        )
 
 

@@ -11,13 +11,14 @@ from config import get_settings, get_engine
 from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager,
-    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,
+    InventorySchema, CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,
     ActivityLogManager, ActivityLogSchema, OutletSchema, LSQTelecallerMappingSchema, LSQTelecallerMappingManager
 )
 from services import CRMService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod, ActivityType, LSQCreateOrder, LSQItems, HASSAN_OUTLET_ID
+from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
 from models import CrmPayload, OrderCreateRequest
 
 
@@ -130,25 +131,18 @@ async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, 
 
 
 async def _find_crm_inventory_for_product(product_id: str, outlet_id: str):
-    """Find inventory record with warehouse-Hassan coupling support."""
+    """Find inventory record with unified warehouse-Hassan pool support."""
+    # If the requested outlet is Warehouse (None) or Hassan Outlet,
+    # always use the Hassan Outlet ID for inventory lookup.
+    target_outlet_id = outlet_id
+    if outlet_id is None or outlet_id == HASSAN_OUTLET_ID:
+        target_outlet_id = HASSAN_OUTLET_ID
+
     inventory_items = await inventory_manager.fetch_all(
-        filters={"product_id": product_id, "outlet_id": outlet_id}
+        filters={"product_id": product_id, "outlet_id": target_outlet_id}
     )
     if inventory_items.items:
         return inventory_items.items[0]
-
-    if outlet_id == HASSAN_OUTLET_ID:
-        warehouse = await inventory_manager.fetch_all(
-            filters={"product_id": product_id, "outlet_id": None}
-        )
-        if warehouse.items:
-            return warehouse.items[0]
-    elif outlet_id is None:
-        hassan = await inventory_manager.fetch_all(
-            filters={"product_id": product_id, "outlet_id": HASSAN_OUTLET_ID}
-        )
-        if hassan.items:
-            return hassan.items[0]
 
     return None
 
@@ -170,13 +164,22 @@ async def reserve_crm_stock(order_id: str, outlet_id: str, validated_items: List
             logging.warning(f"Insufficient stock for {item_data['product'].product_name}. Available: {available}, Required: {quantity}")
             continue
 
-        await inventory_manager.update(
-            inventory_item.uid,
-            {
-                "reserved_quantity": inventory_item.reserved_quantity + quantity,
-                "last_updated": datetime.utcnow()
-            }
-        )
+        if is_hassan_or_warehouse(outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=product_id,
+                target_outlet_id=outlet_id,
+                reserved_delta=quantity
+            )
+        else:
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "reserved_quantity": inventory_item.reserved_quantity + quantity,
+                    "last_updated": datetime.utcnow()
+                }
+            )
 
 
 def generate_order_number() -> str:

@@ -14,6 +14,7 @@ from models import (
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole , TransferStatus, OrderStatus, HASSAN_OUTLET_ID
+from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
 
 import sqlalchemy as db
 from sqlalchemy import func, and_
@@ -28,9 +29,7 @@ user_manager = UserManager(engine)
 
 
 
-def is_hassan_outlet(outlet_id: Optional[str]) -> bool:
-    """Check if the outlet is the Hassan outlet (coupled with warehouse)"""
-    return outlet_id == HASSAN_OUTLET_ID
+# Helpers now imported from utils.inventory_utils
 
 
 router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
@@ -260,27 +259,17 @@ async def get_inventory(
             )
         )
         
-        # Warehouse-Hassan coupling: treat both as one pool for order-based sales counting
-        if outlet_id is not None:
-            if outlet_id.lower() == "null":
-                # Warehouse view: count sales from both warehouse-assigned and Hassan-assigned orders
-                orders_query = orders_query.where(
-                    db.or_(
-                        CustomerOrderSchema.assigned_outlet_id.is_(None),
-                        CustomerOrderSchema.assigned_outlet_id == HASSAN_OUTLET_ID
-                    )
+        # Unified Pool: count sales from both warehouse-assigned (None) and Hassan-assigned orders
+        if outlet_id is not None and (outlet_id.lower() == "null" or outlet_id == HASSAN_OUTLET_ID):
+            orders_query = orders_query.where(
+                db.or_(
+                    CustomerOrderSchema.assigned_outlet_id.is_(None),
+                    CustomerOrderSchema.assigned_outlet_id == HASSAN_OUTLET_ID
                 )
-            elif is_hassan_outlet(outlet_id):
-                # Hassan view: same combined pool as warehouse
-                orders_query = orders_query.where(
-                    db.or_(
-                        CustomerOrderSchema.assigned_outlet_id.is_(None),
-                        CustomerOrderSchema.assigned_outlet_id == HASSAN_OUTLET_ID
-                    )
-                )
-            else:
-                orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
-                
+            )
+        elif outlet_id is not None:
+            orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
+            
         if product_id:
             orders_query = orders_query.where(OrderItemSchema.product_id == product_id)
             
@@ -326,24 +315,12 @@ async def get_inventory(
             )
         )
 
-        # 5. Apply Filters with warehouse-Hassan coupling
+        # 5. Apply Filters with Unified Hassan/Warehouse Pool
         if outlet_id is not None:
-            if outlet_id.lower() == "null":
-                # Warehouse request: include both warehouse (NULL) and Hassan outlet
-                stmt = stmt.where(
-                    db.or_(
-                        InventorySchema.outlet_id.is_(None),
-                        InventorySchema.outlet_id == HASSAN_OUTLET_ID
-                    )
-                )
-            elif is_hassan_outlet(outlet_id):
-                # Hassan request: same combined view as warehouse
-                stmt = stmt.where(
-                    db.or_(
-                        InventorySchema.outlet_id.is_(None),
-                        InventorySchema.outlet_id == HASSAN_OUTLET_ID
-                    )
-                )
+            if outlet_id.lower() == "null" or outlet_id == HASSAN_OUTLET_ID:
+                # Unified Pool request: specifically show records for Hassan Outlet
+                # (Inventory is now stored under Hassan Outlet ID for both)
+                stmt = stmt.where(InventorySchema.outlet_id == HASSAN_OUTLET_ID)
             else:
                 stmt = stmt.where(InventorySchema.outlet_id == outlet_id)
                 
@@ -369,22 +346,17 @@ async def get_inventory(
         for inventory_item, total_received, total_sold, total_transferred_out in rows:
 
             # WAREHOUSE vs OUTLET LOGIC
-            # Note: When coupled, Hassan outlet is treated as part of warehouse inventory
-            if inventory_item.outlet_id is None:
-                # Warehouse: Quantity reflects DB, Delivered reflects stock sent to outlets (excluding Hassan)
-                actual_quantity = inventory_item.quantity
-                delivered = int(total_transferred_out)
-                display_received = 0  # Warehouse doesn't "receive" transfers
-            elif is_hassan_outlet(inventory_item.outlet_id):
-                # Hassan outlet: Combined with warehouse, so no separate delivery tracking
-                # Hassan receives stock from warehouse, sells some, but we track as one pool
+            # Note: Hassan outlet is now the primary pool for warehouse inventory
+            if is_hassan_or_warehouse(inventory_item.outlet_id):
+                # Hassan/Warehouse: Quantity reflects DB, Delivered reflects stock sent to outlets
+                # Since Hassan is now the warehouse pool, we treat its sales as delivered
                 actual_quantity = inventory_item.quantity
                 delivered = int(total_sold)
                 display_received = int(total_received)
             else:
                 # Other outlets: Quantity reflects total received from warehouse minus total sold
                 delivered = int(total_sold)
-                actual_quantity = max(0, int(total_received) - delivered)
+                actual_quantity = inventory_item.quantity
                 display_received = int(total_received)
 
             available_quantity = max(0, actual_quantity - inventory_item.reserved_quantity)
@@ -489,13 +461,22 @@ async def adjust_stock(
                     detail=f"Cannot reduce stock below reserved quantity. Reserved: {inventory_item.reserved_quantity}"
                 )
             
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "quantity": new_quantity,
-                    "last_updated": datetime.utcnow()
-                }
-            )
+            if is_hassan_or_warehouse(payload.outlet_id):
+                await sync_unified_inventory(
+                    inventory_manager,
+                    InventorySchema,
+                    product_id=payload.product_id,
+                    target_outlet_id=payload.outlet_id,
+                    quantity_delta=payload.quantity_change
+                )
+            else:
+                await inventory_manager.update(
+                    inventory_item.uid,
+                    {
+                        "quantity": new_quantity,
+                        "last_updated": datetime.utcnow()
+                    }
+                )
             
             return StatusResponse(
                 status="ok",
@@ -510,15 +491,23 @@ async def adjust_stock(
                     detail="Cannot create inventory with zero or negative quantity"
                 )
             
-            new_inventory = InventorySchema(
-                product_id=payload.product_id,
-                outlet_id=payload.outlet_id,
-                quantity=payload.quantity_change,
-                reserved_quantity=0,
-                last_updated=datetime.utcnow()
-            )
-            
-            await inventory_manager.create(new_inventory)
+            if is_hassan_or_warehouse(payload.outlet_id):
+                await sync_unified_inventory(
+                    inventory_manager,
+                    InventorySchema,
+                    product_id=payload.product_id,
+                    target_outlet_id=payload.outlet_id,
+                    quantity_delta=payload.quantity_change
+                )
+            else:
+                new_inventory = InventorySchema(
+                    product_id=payload.product_id,
+                    outlet_id=payload.outlet_id,
+                    quantity=payload.quantity_change,
+                    reserved_quantity=0,
+                    last_updated=datetime.utcnow()
+                )
+                await inventory_manager.create(new_inventory)
             
             return StatusResponse(
                 status="ok",
@@ -578,15 +567,24 @@ async def reserve_stock(
                 detail=f"Insufficient stock. Available: {available_quantity}, Requested: {quantity}"
             )
         
-        # Update reserved quantity
-        new_reserved = inventory_item.reserved_quantity + quantity
-        await inventory_manager.update(
-            inventory_item.uid,
-            {
-                "reserved_quantity": new_reserved,
-                "last_updated": datetime.utcnow()
-            }
-        )
+        if is_hassan_or_warehouse(outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=product_id,
+                target_outlet_id=outlet_id,
+                reserved_delta=quantity
+            )
+        else:
+            # Update reserved quantity
+            new_reserved = inventory_item.reserved_quantity + quantity
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "reserved_quantity": new_reserved,
+                    "last_updated": datetime.utcnow()
+                }
+            )
         
         return StatusResponse(
             status="ok",
@@ -645,15 +643,24 @@ async def release_reserved_stock(
                 detail=f"Cannot release more than reserved. Reserved: {inventory_item.reserved_quantity}, Requested: {quantity}"
             )
         
-        # Update reserved quantity
-        new_reserved = inventory_item.reserved_quantity - quantity
-        await inventory_manager.update(
-            inventory_item.uid,
-            {
-                "reserved_quantity": new_reserved,
-                "last_updated": datetime.utcnow()
-            }
-        )
+        if is_hassan_or_warehouse(outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=product_id,
+                target_outlet_id=outlet_id,
+                reserved_delta=-quantity
+            )
+        else:
+            # Update reserved quantity
+            new_reserved = inventory_item.reserved_quantity - quantity
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "reserved_quantity": new_reserved,
+                    "last_updated": datetime.utcnow()
+                }
+            )
         
         return StatusResponse(
             status="ok",
@@ -719,18 +726,31 @@ async def consume_reserved_stock(
                 detail=f"Insufficient total stock. Available: {inventory_item.quantity}, Requested: {quantity}"
             )
         
-        # Update both quantity and reserved quantity
-        new_quantity = inventory_item.quantity - quantity
-        new_reserved = inventory_item.reserved_quantity - quantity
-        
-        await inventory_manager.update(
-            inventory_item.uid,
-            {
-                "quantity": new_quantity,
-                "reserved_quantity": new_reserved,
-                "last_updated": datetime.utcnow()
-            }
-        )
+        if is_hassan_or_warehouse(outlet_id):
+            await sync_unified_inventory(
+                inventory_manager,
+                InventorySchema,
+                product_id=product_id,
+                target_outlet_id=outlet_id,
+                quantity_delta=-quantity,
+                reserved_delta=-quantity
+            )
+            # Need these for the response message
+            new_quantity = inventory_item.quantity - quantity
+            new_reserved = inventory_item.reserved_quantity - quantity
+        else:
+            # Update both quantity and reserved quantity
+            new_quantity = inventory_item.quantity - quantity
+            new_reserved = inventory_item.reserved_quantity - quantity
+            
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "quantity": new_quantity,
+                    "reserved_quantity": new_reserved,
+                    "last_updated": datetime.utcnow()
+                }
+            )
         
         return StatusResponse(
             status="ok",

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, status
+import sqlalchemy as db
 from typing import Dict, Any, List
 from datetime import datetime, date, timedelta
 from decimal import Decimal
@@ -10,10 +11,11 @@ from datetime import datetime, time
 from config import get_settings, get_engine
 from managers import (
     SalesInvoiceManager, CustomerOrderManager, InventoryManager,
-    ProductManager, OutletManager, UserManager, StockTransferOrderManager , CustomerOrderSchema, OutletSchema ,ProductSchema ,InventorySchema
+    ProductManager, OutletManager, UserManager, StockTransferOrderManager,
+    TransferItemManager, CustomerOrderSchema, OutletSchema, ProductSchema, InventorySchema
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus
+from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, HASSAN_OUTLET_ID
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -26,6 +28,7 @@ product_manager = ProductManager(engine)
 outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
 transfer_manager = StockTransferOrderManager(engine)
+transfer_item_manager = TransferItemManager(engine)
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -306,8 +309,13 @@ async def get_inventory_overview(
             # Apply Outlet Filter
             if outlet_id:
                 if outlet_id.lower() == "warehouse":
-                    # Special case: 'warehouse' means outlet_id is NULL
-                    query = query.where(InventorySchema.outlet_id.is_(None))
+                    # Special case: 'warehouse' now uses the unified pool (None and Hassan)
+                    query = query.where(
+                        db.or_(
+                            InventorySchema.outlet_id.is_(None),
+                            InventorySchema.outlet_id == HASSAN_OUTLET_ID
+                        )
+                    )
                 else:
                     query = query.where(InventorySchema.outlet_id == outlet_id)
 
@@ -346,8 +354,11 @@ async def get_inventory_overview(
             total_global_quantity += qty
             product_consolidation[pid]["total_quantity"] += qty
 
-            # If outlet_id is None, it represents Warehouse inventory
-            if row.outlet_id is None:
+            # Unified Hassan/Warehouse Pool logic
+            # Both outlet_id=None and HASSAN_OUTLET_ID are treated as Warehouse inventory
+            outlet_id_str = str(row.outlet_id) if row.outlet_id else None
+            
+            if outlet_id_str is None or outlet_id_str == HASSAN_OUTLET_ID:
                 product_consolidation[pid]["warehouse_quantity"] += qty
             else:
                 product_consolidation[pid]["outlets"].append({
@@ -541,10 +552,13 @@ async def get_warehouse_manager_dashboard(
                     detail="Access denied"
                 )
         
-        # Get warehouse inventory (outlet_id = NULL)
-        warehouse_inventory = await inventory_manager.fetch_all(
-            filters={"outlet_id": None}
-        )
+        # Get warehouse inventory (now unified under Hassan Outlet ID)
+        # Fetch all and filter to include both NULL and Hassan Outlet ID
+        all_inventory = await inventory_manager.fetch_all()
+        warehouse_items = [
+            inv for inv in all_inventory.items 
+            if inv.outlet_id is None or str(inv.outlet_id) == HASSAN_OUTLET_ID
+        ]
         
         # Get pending transfer requests (no joins - fetch items separately)
         pending_transfers = await transfer_manager.fetch_all(
@@ -560,7 +574,7 @@ async def get_warehouse_manager_dashboard(
         out_of_stock_count = 0
         low_stock_alerts = []
         
-        for inv in warehouse_inventory.items:
+        for inv in warehouse_items:
             try:
                 product = await product_manager.fetch(inv.product_id)
                 if inv.quantity == 0:
@@ -635,7 +649,8 @@ async def get_warehouse_manager_dashboard(
                 "total_products": total_products,
                 "low_stock_items": low_stock_count,
                 "out_of_stock_items": out_of_stock_count,
-                "pending_transfers": len(pending_transfers.items)
+                "pending_transfers": len(pending_transfers.items),
+                "warehouse_inventory_count": len(warehouse_items)
             },
             "pending_transfers": pending_transfers_data[:10],
             "low_stock_alerts": low_stock_alerts[:10]
