@@ -43,6 +43,7 @@ DISTRICT_ALIASES = {
     "bijapur": "Vijayapura",
     "bangalore": "Bengaluru",
     "belgaum": "Belagavi",
+    "t narasipura": "Mysuru",
 }
 
 TALUK_ALIASES = {
@@ -54,9 +55,12 @@ TALUK_ALIASES = {
     ("belagavi", "kagawada"): "Kagawad",
     ("belagavi", "mudalgi"): "Mudalgi",
     ("bengaluru", "bengaluru"): "Bengaluru South",
+    ("bengaluru", "bangalore north"): "Bengaluru South",
+    ("bengaluru", "bangalore south"): "Bengaluru South",
     ("chikkamagaluru", "chikkamagaluru"): "Chikmagalur",
     ("chikkamagaluru", "kaduru"): "Kadur",
     ("davanagere", "davanagere"): "Davangere",
+    ("davanagere", None): "Davangere",
     ("davanagere", "nyamathi"): "Nyamathi",
     ("dharwad", "hubballi (rural)"): "Hubli Rural",
     ("dharwad", "hubballi (urban)"): "Hubli",
@@ -65,22 +69,28 @@ TALUK_ALIASES = {
     ("gadag", "naragunda"): "Naragund",
     ("gadag", "rona"): "Ron",
     ("gadag", "gajendragada"): "Gajendragad",
+    ("gadag", None): "Gadag",
+    ("gadag", "mundargi"): "Gadag",
     ("hassan", "arasikere"): "Arsikere",
     ("hassan", "channarayapattana"): "Channarayapatna",
     ("hassan", "holenarsipura"): "Holenarasipura",
     ("hassan", "arakalagudu"): "Arakalagud",
+    ("hassan", "arkalgud"): "Arakalagud",
     ("hassan", "aluru"): "Alur",
     ("hassan", "beluru"): "Belur",
     ("haveri", "hangala"): "Hangal",
     ("haveri", "savanuru"): "Savanur",
     ("haveri", "hirekeruru"): "Hirekerur",
+    ("haveri", "ranebennur"): "ranibennur",
+    ("haveri", "rannebennur"): "ranibennur",
     ("haveri", "shiggavi"): "Shiggaon",
-    ("haveri", "rattihalli"): "Rannebennur",
+    ("haveri", "rattihalli"): "ranibennur",
     ("kalaburagi", "afzalpura"): "Afzalpur",
     ("kalaburagi", "alanda"): "Aland",
     ("kalaburagi", "chitapura"): "Chittapur",
     ("kalaburagi", "jevargi"): "Jewargi",
     ("kalaburagi", "kamalapura"): "Kamalapura",
+    ("kolar", "bangarpet"): "Bangarapet",
     ("kolar", "bangarapete"): "Bangarapet",
     ("kolar", "maluru"): "Malur",
     ("kolar", "mulabagilu"): "Mulbagal",
@@ -88,8 +98,12 @@ TALUK_ALIASES = {
     ("kolar", "kolar gold fields"): "Kolar Gold Fields",
     ("koppal", "koppala"): "Koppala",
     ("mandya", "srirangapattana"): "Srirangapatna",
+    ("mandya", "shrirangapattana"): "Srirangapatna",
+    ("mandya", "k.r.pete"): "Krishnarajpet",
     ("mandya", "krishnarajapete"): "Krishnarajpet",
     ("mysuru", "hunasuru"): "Hunsur",
+    ("mysuru", None): "Mysuru",
+    ("mysuru", "kollegal"): "Mysuru",
     ("mysuru", "krishnarajanagara"): "K R Nagar",
     ("mysuru", "nanjanagodu"): "Nanjangud",
     ("mysuru", "heggadadevanakote"): "H D Kote",
@@ -99,6 +113,7 @@ TALUK_ALIASES = {
     ("raichur", "raichuru"): "Raichur",
     ("raichur", "sindhanuru"): "Sindhanur",
     ("raichur", "lingasaguru"): "Lingasugur",
+    ("ramanagara", "kanakapaura"): "Kanakapura",
     ("ramanagara", "channapattana"): "Channapatna",
     ("shivamogga", "shivamogga"): "Shimoga",
     ("shivamogga", "bhadravathi"): "Bhadravati",
@@ -119,6 +134,7 @@ TALUK_ALIASES = {
     ("vijayanagara", "hosapete"): "Hospet",
     ("vijayanagara", "hoovina hadagali"): "Huvinahadagali",
     ("vijayanagara", "kotturu"): "Kotturu",
+    ("vijayanagara", "bellary"): "Ballari",
     ("yadgir", "yadagiri"): "Yadgir",
     ("yadgir", "gurmitkala"): "Gurmitkal",
 }
@@ -131,6 +147,23 @@ def normalize_location(district: Optional[str], taluk: Optional[str]) -> Tuple[O
 
     Returns (normalized_district_lowercase, normalized_taluk_lowercase).
     """
+    # Ensure inputs are strings and handle NaN/None
+    def _to_str(val):
+        if val is None:
+            return None
+        # Handle float (specifically NaN which is truthy)
+        if isinstance(val, float):
+            import math
+            if math.isnan(val):
+                return None
+            val = str(val)
+        if not isinstance(val, str):
+            val = str(val)
+        return val.strip() or None
+
+    district = _to_str(district)
+    taluk = _to_str(taluk)
+
     if not district:
         return district, taluk
 
@@ -141,6 +174,9 @@ def normalize_location(district: Optional[str], taluk: Optional[str]) -> Tuple[O
         norm_taluk = TALUK_ALIASES.get(
             (norm_district.lower(), taluk.lower()), taluk
         )
+    else:
+        # If taluk is missing, check if we have a default taluk mapping for this district
+        norm_taluk = TALUK_ALIASES.get((norm_district.lower(), None))
 
     return norm_district.lower(), norm_taluk.lower() if norm_taluk else norm_taluk
 
@@ -274,6 +310,7 @@ async def auto_assign_outlet(
                 outlet = await outlet_manager.fetch(mapping_entry.outlet_id)
                 if outlet and outlet.is_active:
                     print(f"MATCH: Assigned outlet: {outlet.outlet_name}")
+                    outlet.is_fallback = False
                     return outlet
 
         # Fallback: If no mapping found, use Hassan outlet as fallback
@@ -284,11 +321,13 @@ async def auto_assign_outlet(
         
         if hassan_outlet:
             print(f"FALLBACK: Fallback outlet (Hassan): {hassan_outlet.outlet_name}")
+            hassan_outlet.is_fallback = True
             return hassan_outlet
             
         # Final fallback: use the first active outlet if Hassan not found
         first_outlet = all_outlets.items[0]
         print(f"FALLBACK: Fallback outlet (First Active): {first_outlet.outlet_name}")
+        first_outlet.is_fallback = True
         return first_outlet
 
     except Exception as e:
