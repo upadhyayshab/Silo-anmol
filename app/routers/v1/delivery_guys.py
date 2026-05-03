@@ -121,7 +121,7 @@ async def list_delivery_guys(
 @router.post("", response_model=DeliveryGuyResponse, status_code=status.HTTP_201_CREATED)
 async def create_delivery_guy(
     payload: DeliveryGuyCreateRequest,
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
         # 1. Handle email generation if not provided
@@ -292,36 +292,37 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 new_status = OrderStatus.DELIVERED
                 updates["actual_delivery_date"] = datetime.utcnow()
                 
-                transactions = await transaction_manager.fetch_all(filters={"order_id": order_uid})
-                amount_paid_so_far = sum(t.amount_paid for t in transactions.items if t.payment_status == PaymentStatus.PAID)
-                
-                if amount_paid_so_far < order.total_amount:
-                    amount_to_collect = order.total_amount - amount_paid_so_far
-                    transaction = OrderTransactionSchema(
-                        order_id=order_uid,
-                        payment_status=PaymentStatus.PAID,
-                        payment_method=order.payment_method,
-                        amount_paid=amount_to_collect,
-                        notes=f"Auto-reconciled from bulk webhook. Remarks: {item.remarks}",
-                        received_by=item.delivery_person_id or order.telecaller_id
-                    )
-                    await transaction_manager.create(transaction)
-                    updates["has_auto_reconciled"] = True
-                
-                items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
-                for order_item in items.items:
-                    inv_records = await inventory_manager.fetch_all(
-                        filters={"product_id": order_item.product_id, "outlet_id": order.assigned_outlet_id}
-                    )
-                    if inv_records.items:
-                        inv = inv_records.items[0]
-                        new_qty = max(0, inv.quantity - order_item.quantity)
-                        new_reserved = max(0, inv.reserved_quantity - order_item.quantity)
-                        await inventory_manager.update(inv.uid, {
-                            "quantity": new_qty,
-                            "reserved_quantity": new_reserved,
-                            "last_updated": datetime.utcnow()
-                        })
+                # Process reconciliation and inventory only if order status is changing to delivered
+                if order.order_status != OrderStatus.DELIVERED:
+                    # Auto-reconcile remaining balance (total_amount is the balance to be collected)
+                    if order.total_amount > 0:
+                        amount_to_collect = order.total_amount
+                        transaction = OrderTransactionSchema(
+                            order_id=order_uid,
+                            payment_status=PaymentStatus.PAID,
+                            payment_method=order.payment_method,
+                            amount_paid=amount_to_collect,
+                            notes=f"Auto-reconciled from bulk webhook. Remarks: {item.remarks}",
+                            received_by=item.delivery_person_id or order.telecaller_id
+                        )
+                        await transaction_manager.create(transaction)
+                        updates["has_auto_reconciled"] = True
+                    
+                    # Finalize inventory (deduct from quantity and reserved)
+                    items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
+                    for order_item in items.items:
+                        inv_records = await inventory_manager.fetch_all(
+                            filters={"product_id": order_item.product_id, "outlet_id": order.assigned_outlet_id}
+                        )
+                        if inv_records.items:
+                            inv = inv_records.items[0]
+                            new_qty = max(0, inv.quantity - order_item.quantity)
+                            new_reserved = max(0, inv.reserved_quantity - order_item.quantity)
+                            await inventory_manager.update(inv.uid, {
+                                "quantity": new_qty,
+                                "reserved_quantity": new_reserved,
+                                "last_updated": datetime.utcnow()
+                            })
 
             elif item.status in ["postponed", "attempted"]:
                 new_status = OrderStatus.POSTPONED if item.status == "postponed" else OrderStatus.ATTEMPTED
@@ -329,7 +330,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                     updates["expected_delivery_date"] = item.postpone_date
                 else:
                     updates["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)
-                updates["priority_level"] = 10
+                updates["priority_level"] = (order.priority_level or 0) + 10
                 
             elif item.status == "cancelled":
                 new_status = OrderStatus.CANCELLED

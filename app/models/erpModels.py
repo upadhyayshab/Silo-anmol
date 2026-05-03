@@ -754,6 +754,50 @@ class BulkAssignmentResponse(BaseModel):
 
 
 # ============================================================================
+# DELIVERY GUY HANDOVER MODELS
+# ============================================================================
+
+class DeliveryHandoverCreateRequest(BaseModel):
+    delivery_guy_id: str = Field(..., description="Delivery Guy User UID")
+    outlet_id: str = Field(..., description="Outlet UID")
+    amount: Decimal = Field(..., gt=0, description="Amount handed over")
+    handover_date: date = Field(..., description="Date of handover")
+    remarks: Optional[str] = Field(None, description="Additional notes")
+
+
+class DeliveryHandoverStatusUpdateRequest(BaseModel):
+    status: OutletCollectionStatus = Field(..., description="New confirmation status")
+
+
+class DeliveryHandoverResponse(BaseModel):
+    uid: str
+    delivery_guy_id: str
+    outlet_id: str
+    amount: Decimal
+    handover_date: date
+    status: OutletCollectionStatus
+    confirmed_by: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+    remarks: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    # Optional nested details
+    delivery_guy: Optional[UserResponse] = None
+    outlet: Optional[OutletResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DeliveryGuyCashBalanceResponse(BaseModel):
+    delivery_guy_id: str
+    current_cash_balance: Decimal
+    total_collected: Decimal
+    total_handed_over: Decimal
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -798,10 +842,13 @@ __all__ = [
     "OutletCollectionResponse",
     
     # Outlet Manager Payouts
-    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest",
-    "PayoutResponse",
-
-    # Delivery Guys
+    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest", "PayoutResponse",
+    
+    # Delivery Guy
     "DeliveryGuyCreateRequest", "DeliveryGuyUpdateRequest", "DeliveryGuyResponse",
     "BulkOrderDeliveryAssignmentRequest", "BulkAssignmentResult", "BulkAssignmentResponse",
+    
+    # Delivery Guy Handovers
+    "DeliveryHandoverCreateRequest", "DeliveryHandoverStatusUpdateRequest", 
+    "DeliveryHandoverResponse", "DeliveryGuyCashBalanceResponse"
 ]

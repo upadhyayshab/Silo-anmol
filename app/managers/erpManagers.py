@@ -696,6 +696,35 @@ class DeliveryGuyManager(GenericManager[DeliveryGuySchema]):
     pass
 
 # ============================================================================
+# DELIVERY GUY HANDOVERS
+# ============================================================================
+
+class DeliveryGuyHandoverSchema(BaseSchema):
+    """Tracking cash handovers from delivery guys to outlet"""
+    __tablename__ = "delivery_guy_handovers"
+
+    delivery_guy_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    handover_date = db.Column(db.Date, nullable=False, index=True)
+    
+    # Status tracking
+    status = db.Column(db.Enum(OutletCollectionStatus), nullable=False, default=OutletCollectionStatus.PENDING, index=True)
+    confirmed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    confirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    remarks = db.Column(db.Text, nullable=True)
+    
+    # Relationships
+    delivery_guy = relationship("UserSchema", foreign_keys=[delivery_guy_id])
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+    confirmer = relationship("UserSchema", foreign_keys=[confirmed_by])
+
+
+class DeliveryGuyHandoverManager(GenericManager[DeliveryGuyHandoverSchema]):
+    pass
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -743,7 +772,7 @@ __all__ = [
     # Outlet Manager Payouts
     "OutletManagerPayoutSchema", "OutletManagerPayoutManager",
 
-    # LSQ Telecaller Mapping
+    # LSQ Telecallers Mapping
     "LSQTelecallerMappingSchema", "LSQTelecallerMappingManager",
 
     # Outlet Mapping (auto-assign)
@@ -751,4 +780,8 @@ __all__ = [
 
     # Delivery Guys
     "DeliveryGuySchema", "DeliveryGuyManager",
+    
+    # Delivery Guy Handovers
+    "DeliveryGuyHandoverSchema", "DeliveryGuyHandoverManager",
 ]
+

@@ -1094,8 +1094,8 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     to_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
-    expected_delivery_date: Optional[date] = Query(None),
-    delivery_person_id: Optional[str] = Query(None),
+    dynamic_filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    sorts: List[str] = Depends(D.sorting_dependency),
     current_user_id: str = Depends(require_roles(
         UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DELIVERY_GUY,
         allowed_scopes=["delivery:read"]
@@ -1107,13 +1107,11 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     """
     try:
         filters = {}
-        joins = []
+        joins = [CustomerOrderSchema.items, CustomerOrderSchema.delivery_person] # Always join these for consistent response
         
+        # 1. Role-based isolation (skip for microservice)
         if current_user_id != "microservice":
-            # Get current user to determine access level
             current_user = await user_manager.fetch(current_user_id)
-            
-            # Role-based filtering
             if current_user.role == UserRole.TELECALLER:
                 filters["telecaller_id"] = current_user_id
             elif current_user.role == UserRole.OUTLET_MANAGER:
@@ -1121,37 +1119,22 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
                     filters["assigned_outlet_id"] = current_user.outlet_id
             elif current_user.role == UserRole.DELIVERY_GUY:
                 filters["delivery_person_id"] = current_user_id
-            
-            # Apply additional filters
-            if transfer_status:
-                filters["order_status"] = transfer_status
-            if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-                filters["telecaller_id"] = telecaller_id
-            if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-                filters["assigned_outlet_id"] = outlet_id
-            if customer_phone:
-                filters["customer_phone"] = customer_phone
-            if expected_delivery_date:
-                filters["expected_delivery_date"] = expected_delivery_date
-                joins.append(CustomerOrderSchema.delivery_person)
-            if delivery_person_id:
-                filters["delivery_person_id"] = delivery_person_id
-        else:
-            # Microservice gets full access, just apply the provided filters
-            if transfer_status:
-                filters["order_status"] = transfer_status
-            if telecaller_id:
-                filters["telecaller_id"] = telecaller_id
-            if outlet_id:
-                filters["assigned_outlet_id"] = outlet_id
-            if customer_phone:
-                filters["customer_phone"] = customer_phone
-            if expected_delivery_date:
-                filters["expected_delivery_date"] = expected_delivery_date
-                joins.append(CustomerOrderSchema.delivery_person)
-            if delivery_person_id:
-                filters["delivery_person_id"] = delivery_person_id
+        
+        # 2. Manual filters
+        if transfer_status:
+            filters["order_status"] = transfer_status
+        
+        # Apply optional filters (restricted for non-admins)
+        is_admin = current_user_id == "microservice" or current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]
+        
+        if telecaller_id and is_admin:
+            filters["telecaller_id"] = telecaller_id
+        if outlet_id and is_admin:
+            filters["assigned_outlet_id"] = outlet_id
+        if customer_phone:
+            filters["customer_phone"] = customer_phone
 
+        # 3. Date range filters
         if from_date or to_date:
             date_filter = {}
             if from_date:
@@ -1160,13 +1143,25 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
                 date_filter["<="] = datetime.combine(to_date, time.max)
             filters["order_date"] = date_filter
 
-        joins.append(CustomerOrderSchema.items)
+        # 4. Handle type coercion for dynamic filters (expected_delivery_date is a Date column)
+        if "expected_delivery_date" in dynamic_filters:
+            val = dynamic_filters["expected_delivery_date"]
+            if isinstance(val, datetime):
+                dynamic_filters["expected_delivery_date"] = val.date()
+            elif isinstance(val, dict):
+                for op, v in val.items():
+                    if isinstance(v, datetime):
+                        val[op] = v.date()
+
+        # 5. Merge dynamic filters
+        filters.update(dynamic_filters)
+        
         orders = await order_manager.fetch_all(
             filters=filters,
             joins=joins,
             limit=limit,
             offset=offset,
-            sorts=["-created_at"],
+            sorts=sorts or ["-created_at"],
         )
         
         return orders.model_dump()

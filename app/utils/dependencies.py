@@ -74,9 +74,9 @@ def filtering_dependency(request: Request):
     filters: dict[str, Any] = {}
     for key, value in request.query_params.items():
         if key.endswith(":eq"):
-            filters[key.removesuffix(":eq")] = value
+            filters[key.removesuffix(":eq")] = _coerce_scalar(value)
         elif key.endswith(":neq"):
-            filters[key.removesuffix(":neq")] = {"$neq": value}
+            filters[key.removesuffix(":neq")] = {"$neq": _coerce_scalar(value)}
         elif key.endswith(":lt"):
             field = key.removesuffix(":lt")
             filters[field] = {"$lt": _coerce_scalar(value)}
@@ -90,15 +90,19 @@ def filtering_dependency(request: Request):
             field = key.removesuffix(":gte")
             filters[field] = {"$gte": _coerce_scalar(value)}
         elif key.endswith(":in"):
-            filters[key.removesuffix(":in")] = {"$in": value.split(",")}
+            field = key.removesuffix(":in")
+            values = [v.strip() for v in value.split(",") if v.strip()]
+            filters[field] = {"$in": [_coerce_scalar(v) for v in values]}
         elif key.endswith(":nin"):
-            filters[key.removesuffix(":nin")] = {"$nin": value.split(",")}
+            field = key.removesuffix(":nin")
+            values = [v.strip() for v in value.split(",") if v.strip()]
+            filters[field] = {"$nin": [_coerce_scalar(v) for v in values]}
         elif key.endswith(":between"):
             field = key.removesuffix(":between")
             values = [v.strip() for v in value.split(",") if v.strip()]
             filters[field] = {"$between": [_coerce_scalar(v) for v in values]}
         elif key.endswith(":like"):
-            filters[key.removesuffix(":like")] = {"$like": f"%{value}%"}
+            filters[key.removesuffix(":like")] = {"$like": f"%{str(value)}%"}
         elif key.endswith(":ieq"):
             field = key.removesuffix(":ieq")
             coerced = _coerce_scalar(value)
