@@ -17,6 +17,7 @@ class OrderStatus(str, Enum):
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
     POSTPONED = "postponed"
+    ATTEMPTED = "attempted"
 
 
 class CollectionType(str, Enum):
@@ -277,4 +278,4 @@ class ActivityType(str, Enum):
     PAYMENT_STATUS = "payment_status"
     REFUND_STATUS = "refund_status"
     DELIVERY_STATUS = "delivery_status"
-    CREATE_ORDER = "create_order"
+    CREATE_ORDER = "create_order"

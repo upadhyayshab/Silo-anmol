@@ -325,6 +325,7 @@ class CustomerOrderSchema(BaseSchema):
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Final net amount
     total_commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total commission for order
     delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True, index=True)
+    priority_level = db.Column(db.Integer, default=0, nullable=False, index=True)
 
     # Relationships
     telecaller = relationship("UserSchema", back_populates="created_orders", foreign_keys=[telecaller_id]) # here we will get the telecallers and the outlet manager
@@ -474,13 +475,22 @@ class DeliveryTrackingSchema(BaseSchema):
     order_id = db.Column(db.String, db.ForeignKey("customer_orders.uid"), nullable=False, index=True)
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False)
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
+    delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     status_changed_to = db.Column(db.String(50), nullable=False)
+    
+    # New delivery specific fields
+    postpone_date = db.Column(db.Date, nullable=True)
+    attempt_number = db.Column(db.Integer, default=1, nullable=False)
+    priority_level = db.Column(db.Integer, default=0, nullable=False, index=True)
+    
     remarks = db.Column(db.Text)
     changed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
 
     # Relationships
     order = relationship("CustomerOrderSchema", back_populates="delivery_tracking")
     outlet = relationship("OutletSchema", back_populates="delivery_tracking")
+    delivery_person = relationship("UserSchema", foreign_keys=[delivery_person_id])
+    changer = relationship("UserSchema", foreign_keys=[changed_by])
 
 
 class DeliveryTrackingManager(GenericManager[DeliveryTrackingSchema]):

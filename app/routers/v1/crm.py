@@ -420,7 +420,8 @@ async def process_crm_orders(payload: dict):
             manual_discount=discount_applied,
             discount_applied=discount_applied,
             total_amount=final_total_amount,
-            total_commission=total_commission
+            total_commission=total_commission,
+            priority_level=10
         )
         
         # For online/prepaid orders, attach the prepaid amount

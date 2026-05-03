@@ -257,6 +257,7 @@ class OrderCreateRequest(BaseModel):
     expected_delivery_date: Optional[date] = None
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
     prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance")
+    priority_level: int = Field(default=10, description="Order priority level (default 10 for normal)")
     items: List[OrderItemRequest]
 
 
@@ -277,6 +278,7 @@ class OrderUpdateRequest(BaseModel):
     pincode: Optional[str] = None
     lat_lon: Optional[List[Decimal]] = None
     expected_delivery_date: Optional[date] = None
+    priority_level: Optional[int] = None
 
 
 class OrderFullUpdateRequest(BaseModel):
@@ -298,6 +300,7 @@ class OrderFullUpdateRequest(BaseModel):
     expected_delivery_date: Optional[date] = None
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
     prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance") # Added field
+    priority_level: int = Field(default=10, description="Order priority level (default 10 for normal)")
     items: List[OrderItemRequest]
 
 
@@ -357,7 +360,9 @@ class OrderResponse(BaseModel):
     prepaid_amount: Decimal  # Amount already paid
     total_amount: Decimal  # Final net amount
     total_commission: Decimal  # Total commission for the order
+    priority_level: int 
     delivery_person_id: Optional[str] = None
+    delivery_person: Optional[dict] = None
     items: List[OrderItemResponse] = []
     created_at: datetime
 
@@ -709,10 +714,10 @@ class PayoutResponse(BaseModel):
 # ============================================================================
 
 class DeliveryGuyCreateRequest(BaseModel):
-    email: str
-    password: str
+    email: Optional[str] = None
+    password: Optional[str] = None
     full_name: str
-    phone: Optional[str] = None
+    phone: str
     outlet_id: str
 
 class DeliveryGuyUpdateRequest(BaseModel):

@@ -1000,6 +1000,7 @@ Authorization: Bearer <access_token>
   "actual_delivery_date": null,
   "status_remarks": null,
   "total_amount": 1500.00,
+  "priority_level": 10,
   "items": [
     {
       "uid": "order-item-uuid",
@@ -1035,6 +1036,7 @@ Authorization: Bearer <access_token>
   "collection_type": "doorstep",
   "payment_method": "online",
   "expected_delivery_date": "2024-01-17",
+  "priority_level": 10,
   "items": [
     {
       "product_id": "product-uuid",
@@ -1071,6 +1073,7 @@ Authorization: Bearer <access_token>
   "actual_delivery_date": null,
   "status_remarks": null,
   "total_amount": 25000.00,
+  "priority_level": 10,
   "items": [
     {
       "uid": "new-order-item-uuid",
@@ -1099,7 +1102,8 @@ Authorization: Bearer <access_token>
   "customer_name": "Updated Customer Name",
   "customer_phone": "+1111111111",
   "address_line": "Updated Address",
-  "expected_delivery_date": "2024-01-18"
+  "expected_delivery_date": "2024-01-18",
+  "priority_level": 20
 }
 ```
 
@@ -1124,6 +1128,7 @@ Authorization: Bearer <access_token>
   "actual_delivery_date": null,
   "status_remarks": null,
   "total_amount": 25000.00,
+  "priority_level": 20,
   "items": [
     {
       "uid": "order-item-uuid",
@@ -1224,6 +1229,7 @@ Authorization: Bearer <access_token>
       "order_status": "delivery_allotted",
       "total_amount": 1500.00,
       "expected_delivery_date": "2024-01-16",
+      "priority_level": 10,
       "created_at": "2024-01-15T10:30:00Z"
     }
   ],
