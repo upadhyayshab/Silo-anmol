@@ -1,17 +1,112 @@
 import sqlalchemy as db
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, aliased
+from sqlalchemy import and_, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 from typing import Optional, List
 
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
-from SharedBackend.managers.base import NESTED_JOINS
+from SharedBackend.managers.base import NESTED_JOINS, NESTED_FILTERS
 from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod, 
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
     PayoutStatus
 )
+
+
+# ============================================================================
+# ERP BASE MANAGERS (EXTENDING SHAREDBACKEND)
+# ============================================================================
+
+class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
+    @classmethod
+    async def _filter(cls, query: db.Select, filters: NESTED_FILTERS, schema: type[BaseSchema]) -> db.Select:
+        """
+        Overridden filter method to support dynamic operators ($ilike, $like, $gt, etc.)
+        and fix the dictionary fallthrough bug in the base manager.
+        """
+        operator_mapping = {
+            '==': lambda col, val: col == val,
+            '$eq': lambda col, val: col == val,
+            '!=': lambda col, val: col != val,
+            '$neq': lambda col, val: col != val,
+            '>': lambda col, val: col > val,
+            '$gt': lambda col, val: col > val,
+            '>=': lambda col, val: col >= val,
+            '$gte': lambda col, val: col >= val,
+            '<': lambda col, val: col < val,
+            '$lt': lambda col, val: col < val,
+            '<=': lambda col, val: col <= val,
+            '$lte': lambda col, val: col <= val,
+            'in': lambda col, val: col.in_(val if isinstance(val, list) else [val]),
+            '$in': lambda col, val: col.in_(val if isinstance(val, list) else [val]),
+            '$nin': lambda col, val: ~col.in_(val if isinstance(val, list) else [val]),
+            'between': lambda col, val: col.between(val[0], val[1]),
+            '$between': lambda col, val: col.between(val[0], val[1]),
+            '$like': lambda col, val: col.like(val),
+            '$ilike': lambda col, val: col.ilike(val),
+            '$ieq': lambda col, val: col.ilike(val),
+            '$in_ci': lambda col, val: and_(*[col.ilike(v) for v in val]) if isinstance(val, list) else col.ilike(val)
+        }
+
+        # Handle relationship filters first
+        relationship_filters = {}
+        mapper = db.inspect(schema)
+        for relation in mapper.relationships:
+            if relation.key in filters:
+                relationship_filters[relation.key] = filters.pop(relation.key)
+
+        for column, condition in filters.items():
+            col_attr = getattr(schema, column, None)
+            if col_attr is None:
+                continue
+
+            if isinstance(condition, dict):
+                # Process each operator in the dictionary
+                for op, value in condition.items():
+                    if op in operator_mapping:
+                        query = query.filter(operator_mapping[op](col_attr, value))
+            elif isinstance(condition, list):
+                query = query.filter(col_attr.in_(condition))
+            else:
+                # Simple scalar equality
+                query = query.filter(col_attr == condition)
+
+        # Handle relationship joins and nested filters
+        for relation_key, related_filter in relationship_filters.items():
+            relation = mapper.relationships[relation_key]
+            related_model = relation.mapper.class_
+            related_alias = aliased(related_model)
+            query = query.join(related_alias)
+
+            if not relation.uselist:
+                # Recursively filter for single relationships
+                query = await cls._filter(query, related_filter, related_model)
+            else:
+                # Handle collections (any/all matching)
+                if isinstance(related_filter, dict):
+                    subquery = db.select(related_model)
+                    subquery = await cls._filter(subquery, related_filter, related_model)
+                    condition = subquery.whereclause
+                    if condition is not None:
+                        query = query.filter(~getattr(schema, relation_key).any(~condition))
+                elif isinstance(related_filter, list):
+                    conditions = []
+                    for sub_filter in related_filter:
+                        subquery = await cls._filter(db.select(related_model), sub_filter, related_model)
+                        sub_condition = subquery.whereclause
+                        if sub_condition is not None:
+                            conditions.append(getattr(schema, relation_key).any(sub_condition))
+                    if conditions:
+                        query = query.filter(and_(*conditions))
+
+        return query
+
+
+class ERPBasePassManager[SchemaType: BaseSchema](BasePassManager[SchemaType], ERPGenericManager[SchemaType]):
+    """Extends BasePassManager with the improved filtering logic from ERPGenericManager"""
+    pass
 
 
 # ============================================================================
@@ -47,7 +142,7 @@ class UserSchema(BasePassSchema):
     notifications = relationship("NotificationSchema", back_populates="user")
 
 
-class UserManager(BasePassManager[UserSchema]):
+class UserManager(ERPBasePassManager[UserSchema]):
     async def update(
             self,
             uid: str,
@@ -102,7 +197,7 @@ class OutletSchema(BaseSchema):
     delivery_tracking = relationship("DeliveryTrackingSchema", back_populates="outlet")
 
 
-class OutletManager(GenericManager[OutletSchema]):
+class OutletManager(ERPGenericManager[OutletSchema]):
     pass
 
 
@@ -122,7 +217,7 @@ class ProductCategorySchema(BaseSchema):
     products = relationship("ProductSchema", back_populates="category")
 
 
-class ProductCategoryManager(GenericManager[ProductCategorySchema]):
+class ProductCategoryManager(ERPGenericManager[ProductCategorySchema]):
     pass
 
 
@@ -159,7 +254,7 @@ class ProductSchema(BaseSchema):
     transfer_items = relationship("TransferItemSchema", back_populates="product")
 
 
-class ProductManager(GenericManager[ProductSchema]):
+class ProductManager(ERPGenericManager[ProductSchema]):
     pass
 
 
@@ -185,7 +280,7 @@ class InventorySchema(BaseSchema):
     outlet = relationship("OutletSchema", back_populates="inventory")
 
 
-class InventoryManager(GenericManager[InventorySchema]):
+class InventoryManager(ERPGenericManager[InventorySchema]):
     pass
 
 
@@ -240,7 +335,7 @@ class SalesInvoiceSchema(BaseSchema):
     items = relationship("SalesInvoiceItemSchema", back_populates="invoice", cascade="all, delete-orphan")
 
 
-class SalesInvoiceManager(GenericManager[SalesInvoiceSchema]):
+class SalesInvoiceManager(ERPGenericManager[SalesInvoiceSchema]):
     pass
 
 
@@ -274,7 +369,7 @@ class SalesInvoiceItemSchema(BaseSchema):
     product = relationship("ProductSchema", back_populates="invoice_items")
 
 
-class SalesInvoiceItemManager(GenericManager[SalesInvoiceItemSchema]):
+class SalesInvoiceItemManager(ERPGenericManager[SalesInvoiceItemSchema]):
     pass
 
 
@@ -340,7 +435,7 @@ class CustomerOrderSchema(BaseSchema):
     delivery_tracking = relationship("DeliveryTrackingSchema", back_populates="order", cascade="all, delete-orphan")
 
 
-class CustomerOrderManager(GenericManager[CustomerOrderSchema]):
+class CustomerOrderManager(ERPGenericManager[CustomerOrderSchema]):
     pass
 
 
@@ -365,7 +460,7 @@ class OrderItemSchema(BaseSchema):
     product = relationship("ProductSchema", back_populates="order_items")
 
 
-class OrderItemManager(GenericManager[OrderItemSchema]):
+class OrderItemManager(ERPGenericManager[OrderItemSchema]):
     pass
 
 
@@ -387,7 +482,7 @@ class OrderTransactionSchema(BaseSchema):
     receiver = relationship("UserSchema", back_populates="received_transactions")
 
 
-class OrderTransactionManager(GenericManager[OrderTransactionSchema]):
+class OrderTransactionManager(ERPGenericManager[OrderTransactionSchema]):
     pass
 
 
@@ -414,7 +509,7 @@ class SalesTransactionSchema(BaseSchema):
     creator = relationship("UserSchema", back_populates="created_sales")
 
 
-class SalesTransactionManager(GenericManager[SalesTransactionSchema]):
+class SalesTransactionManager(ERPGenericManager[SalesTransactionSchema]):
     pass
 
 
@@ -446,7 +541,7 @@ class StockTransferOrderSchema(BaseSchema):
     items = relationship("TransferItemSchema", back_populates="transfer", cascade="all, delete-orphan")
 
 
-class StockTransferOrderManager(GenericManager[StockTransferOrderSchema]):
+class StockTransferOrderManager(ERPGenericManager[StockTransferOrderSchema]):
     pass
 
 
@@ -464,7 +559,7 @@ class TransferItemSchema(BaseSchema):
     product = relationship("ProductSchema", back_populates="transfer_items")
 
 
-class TransferItemManager(GenericManager[TransferItemSchema]):
+class TransferItemManager(ERPGenericManager[TransferItemSchema]):
     pass
 
 
@@ -497,7 +592,7 @@ class DeliveryTrackingSchema(BaseSchema):
     changer = relationship("UserSchema", foreign_keys=[changed_by])
 
 
-class DeliveryTrackingManager(GenericManager[DeliveryTrackingSchema]):
+class DeliveryTrackingManager(ERPGenericManager[DeliveryTrackingSchema]):
     pass
 
 
@@ -520,7 +615,7 @@ class ActivityLogSchema(BaseSchema):
     user = relationship("UserSchema", back_populates="activity_logs")
 
 
-class ActivityLogManager(GenericManager[ActivityLogSchema]):
+class ActivityLogManager(ERPGenericManager[ActivityLogSchema]):
     pass
 
 
@@ -542,7 +637,7 @@ class NotificationSchema(BaseSchema):
     user = relationship("UserSchema", back_populates="notifications")
 
 
-class NotificationManager(GenericManager[NotificationSchema]):
+class NotificationManager(ERPGenericManager[NotificationSchema]):
     pass
 
 
@@ -567,7 +662,7 @@ class SystemConfigurationSchema(BaseSchema):
     price_includes_tax = db.Column(db.Boolean, default=False, nullable=False)
 
 
-class SystemConfigurationManager(GenericManager[SystemConfigurationSchema]):
+class SystemConfigurationManager(ERPGenericManager[SystemConfigurationSchema]):
     pass
 
 
@@ -597,7 +692,7 @@ class OutletDailyCollectionSchema(BaseSchema):
     confirmer = relationship("UserSchema", foreign_keys=[confirmed_by])
 
 
-class OutletDailyCollectionManager(GenericManager[OutletDailyCollectionSchema]):
+class OutletDailyCollectionManager(ERPGenericManager[OutletDailyCollectionSchema]):
     pass
 
 
@@ -635,7 +730,7 @@ class OutletManagerPayoutSchema(BaseSchema):
     payer = relationship("UserSchema", foreign_keys=[paid_by])
 
 
-class OutletManagerPayoutManager(GenericManager[OutletManagerPayoutSchema]):
+class OutletManagerPayoutManager(ERPGenericManager[OutletManagerPayoutSchema]):
     pass
 
 
@@ -655,7 +750,7 @@ class LSQTelecallerMappingSchema(BaseSchema):
     telecaller = relationship("UserSchema", foreign_keys=[telecaller_id])
 
 
-class LSQTelecallerMappingManager(GenericManager[LSQTelecallerMappingSchema]):
+class LSQTelecallerMappingManager(ERPGenericManager[LSQTelecallerMappingSchema]):
     pass
 
 
@@ -676,7 +771,7 @@ class OutletMappingSchema(BaseSchema):
     outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
 
 
-class OutletMappingManager(GenericManager[OutletMappingSchema]):
+class OutletMappingManager(ERPGenericManager[OutletMappingSchema]):
     pass
 
 # ============================================================================
@@ -696,7 +791,7 @@ class DeliveryGuySchema(BaseSchema):
     user = relationship("UserSchema", foreign_keys=[user_id])
     outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
 
-class DeliveryGuyManager(GenericManager[DeliveryGuySchema]):
+class DeliveryGuyManager(ERPGenericManager[DeliveryGuySchema]):
     pass
 
 # ============================================================================
@@ -724,7 +819,7 @@ class DeliveryGuyHandoverSchema(BaseSchema):
     confirmer = relationship("UserSchema", foreign_keys=[confirmed_by])
 
 
-class DeliveryGuyHandoverManager(GenericManager[DeliveryGuyHandoverSchema]):
+class DeliveryGuyHandoverManager(ERPGenericManager[DeliveryGuyHandoverSchema]):
     pass
 
 
@@ -744,7 +839,7 @@ class RateCardSchema(BaseSchema):
     outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
 
 
-class RateCardManager(GenericManager[RateCardSchema]):
+class RateCardManager(ERPGenericManager[RateCardSchema]):
     pass
 
 
@@ -779,7 +874,7 @@ class RiderPayoutSchema(BaseSchema):
     orders = relationship("CustomerOrderSchema", backref="payout", foreign_keys=[CustomerOrderSchema.payout_id])
 
 
-class RiderPayoutManager(GenericManager[RiderPayoutSchema]):
+class RiderPayoutManager(ERPGenericManager[RiderPayoutSchema]):
     pass
 
 
