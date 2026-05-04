@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings, get_engine
 from managers import (
     DeliveryGuyHandoverManager, DeliveryGuyHandoverSchema,
-    OrderTransactionManager, DeliveryGuyManager, UserManager, UserSchema, OutletManager
+    OrderTransactionManager, DeliveryGuyManager, UserManager, UserSchema, OutletManager, OutletSchema
 )
 from models import (
     DeliveryHandoverCreateRequest, DeliveryHandoverStatusUpdateRequest,
@@ -105,7 +105,13 @@ async def create_handover(
         )
 
         handover = await handover_manager.create(handover_data)
-        return DeliveryHandoverResponse.from_orm(handover)
+        
+        # Re-fetch with joins to populate relationships and avoid DetachedInstanceError
+        fresh_handover = await handover_manager.fetch(handover.uid, joins=[
+            DeliveryGuyHandoverSchema.delivery_guy,
+            DeliveryGuyHandoverSchema.outlet
+        ])
+        return DeliveryHandoverResponse.from_orm(fresh_handover)
     except HTTPException:
         raise
     except Exception as e:
@@ -131,9 +137,11 @@ async def list_handovers(
     """
     try:
         async with AsyncSession(engine) as session:
-            # 1. Base query for fetching records with JOIN to get delivery guy details
-            query = select(DeliveryGuyHandoverSchema, UserSchema).join(
+            # 1. Base query for fetching records with JOIN to get delivery guy and outlet details
+            query = select(DeliveryGuyHandoverSchema, UserSchema, OutletSchema).join(
                 UserSchema, DeliveryGuyHandoverSchema.delivery_guy_id == UserSchema.uid
+            ).join(
+                OutletSchema, DeliveryGuyHandoverSchema.outlet_id == OutletSchema.uid
             )
 
             # 2. Build filters
@@ -170,10 +178,11 @@ async def list_handovers(
             rows = result.all()
 
             responses = []
-            for handover_obj, user_obj in rows:
-                resp = DeliveryHandoverResponse.from_orm(handover_obj)
-                resp.delivery_guy = UserResponse.from_orm(user_obj)
-                responses.append(resp)
+            for handover_obj, user_obj, outlet_obj in rows:
+                # Set relationships manually to satisfy Pydantic serialization without lazy loading
+                handover_obj.delivery_guy = user_obj
+                handover_obj.outlet = outlet_obj
+                responses.append(DeliveryHandoverResponse.from_orm(handover_obj))
 
             return ListResponse(items=responses, count=total_count)
 
@@ -205,8 +214,11 @@ async def update_handover_status(
             updates["confirmed_at"] = datetime.utcnow()
 
         updated_handover = await handover_manager.update(handover_id, updates)
-        # Re-fetch to get complete object
-        fresh_handover = await handover_manager.fetch(handover_id)
+        # Re-fetch with joins to populate relationships and avoid DetachedInstanceError
+        fresh_handover = await handover_manager.fetch(handover_id, joins=[
+            DeliveryGuyHandoverSchema.delivery_guy,
+            DeliveryGuyHandoverSchema.outlet
+        ])
         return DeliveryHandoverResponse.from_orm(fresh_handover)
     except HTTPException:
         raise

@@ -740,15 +740,21 @@ async def bulk_assign_delivery_guy_to_orders(
     try:
         # 1. Validate delivery guy once
         try:
-            dg = await delivery_guy_manager.fetch(payload.delivery_guy_id)
-            user = await user_manager.fetch(dg.user_id)
+            dg_response = await delivery_guy_manager.fetch_all(filters = {"user_id": payload.delivery_guy_id})
+            if not dg_response.items:
+                raise HTTPException(status_code=404, detail="Delivery guy profile not found")
+            
+            dg_profile = dg_response.items[0]
+            user = await user_manager.fetch(payload.delivery_guy_id)
+        except HTTPException:
+            raise
         except Exception:
             raise HTTPException(status_code=404, detail="Delivery guy not found")
             
         if user.role != UserRole.DELIVERY_GUY:
             raise HTTPException(status_code=400, detail="Assigned user is not a delivery guy")
             
-        if not dg.is_active_for_delivery:
+        if not dg_profile.is_active_for_delivery:
             raise HTTPException(status_code=400, detail="Delivery guy is not active for delivery")
             
         results = []
@@ -760,7 +766,7 @@ async def bulk_assign_delivery_guy_to_orders(
                 order = await order_manager.fetch(order_id)
                 
                 # Check outlet matching
-                if dg.outlet_id != order.assigned_outlet_id:
+                if dg_profile.outlet_id != order.assigned_outlet_id:
                      results.append(BulkAssignmentResult(
                         order_id=order_id,
                         status="failed",
@@ -795,7 +801,7 @@ async def bulk_assign_delivery_guy_to_orders(
                 # 4. Log the status change in tracking table
                 tracking_record = DeliveryTrackingSchema(
                     order_id=order_id,
-                    outlet_id=dg.outlet_id,
+                    outlet_id=dg_profile.outlet_id,
                     telecaller_id=order.telecaller_id,
                     delivery_person_id=user.uid,
                     status_changed_to=OrderStatus.DELIVERY_ALLOTTED,
