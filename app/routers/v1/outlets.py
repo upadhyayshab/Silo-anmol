@@ -68,7 +68,7 @@ async def list_outlets(
     limit: int = 50,
     offset: int = 0,
     _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, 
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER,
         UserRole.WAREHOUSE_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER,
         allowed_scopes=["delivery:read"]
     ))

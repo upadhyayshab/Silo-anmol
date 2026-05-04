@@ -798,6 +798,85 @@ class DeliveryGuyCashBalanceResponse(BaseModel):
 
 
 # ============================================================================
+# RIDER RATE CARD MODELS
+# ============================================================================
+
+class RateCardCreateRequest(BaseModel):
+    outlet_id: str
+    pay_per_order: Decimal = Field(..., gt=0)
+    is_active: bool = True
+
+class RateCardUpdateRequest(BaseModel):
+    pay_per_order: Optional[Decimal] = Field(None, gt=0)
+    is_active: Optional[bool] = None
+
+class RateCardResponse(BaseModel):
+    uid: str
+    outlet_id: str
+    pay_per_order: Decimal
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# RIDER PAYOUT MODELS
+# ============================================================================
+
+class RiderPayoutCreateRequest(BaseModel):
+    rider_id: str
+    outlet_id: str
+    period_from: date
+    period_to: date
+    payment_method: Optional[PaymentMethod] = None
+    remarks: Optional[str] = None
+
+    @validator('period_to')
+    def validate_period(cls, v, values):
+        if 'period_from' in values and v < values['period_from']:
+            raise ValueError('period_to must be after period_from')
+        return v
+
+class RiderPayoutUpdateRequest(BaseModel):
+    status: Optional[PayoutStatus] = None
+    payment_method: Optional[PaymentMethod] = None
+    transaction_id: Optional[str] = None
+    payment_date: Optional[date] = None
+    remarks: Optional[str] = None
+
+class RiderPayoutStatusUpdateRequest(BaseModel):
+    status: PayoutStatus
+    remarks: Optional[str] = None
+
+class RiderPayoutResponse(BaseModel):
+    uid: str
+    rider_id: str
+    outlet_id: str
+    period_from: date
+    period_to: date
+    total_amount: Decimal
+    status: PayoutStatus
+    payment_method: Optional[PaymentMethod] = None
+    transaction_id: Optional[str] = None
+    payment_date: Optional[date] = None
+    remarks: Optional[str] = None
+    created_by: str
+    paid_by: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    # Optional nested details
+    rider: Optional[UserResponse] = None
+    outlet: Optional[OutletResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -850,5 +929,9 @@ __all__ = [
     
     # Delivery Guy Handovers
     "DeliveryHandoverCreateRequest", "DeliveryHandoverStatusUpdateRequest", 
-    "DeliveryHandoverResponse", "DeliveryGuyCashBalanceResponse"
+    "DeliveryHandoverResponse", "DeliveryGuyCashBalanceResponse",
+
+    # Rider Payouts & Rate Cards
+    "RateCardCreateRequest", "RateCardUpdateRequest", "RateCardResponse",
+    "RiderPayoutCreateRequest", "RiderPayoutUpdateRequest", "RiderPayoutStatusUpdateRequest", "RiderPayoutResponse"
 ]

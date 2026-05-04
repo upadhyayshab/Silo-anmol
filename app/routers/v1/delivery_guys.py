@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, BackgroundTasks
 from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict , Decimal
 import re
 from datetime import datetime, date, timedelta
 from utils import dependencies as D
@@ -8,7 +8,8 @@ from config import get_settings, get_engine
 from managers import (
     DeliveryGuyManager, UserManager, OutletManager, DeliveryGuySchema, UserSchema,
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
-    InventoryManager, DeliveryTrackingManager, OrderTransactionSchema, DeliveryTrackingSchema
+    InventoryManager, DeliveryTrackingManager, OrderTransactionSchema, DeliveryTrackingSchema,
+    RateCardManager, RateCardSchema
 )
 from models import (
     DeliveryGuyCreateRequest, DeliveryGuyUpdateRequest, DeliveryGuyResponse,
@@ -28,6 +29,7 @@ order_item_manager = OrderItemManager(engine)
 transaction_manager = OrderTransactionManager(engine)
 inventory_manager = InventoryManager(engine)
 tracking_manager = DeliveryTrackingManager(engine)
+rate_card_manager = RateCardManager(engine)
 
 router = APIRouter(prefix="/delivery-guys", tags=["Delivery Guy Management"])
 
@@ -323,6 +325,15 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                                 "reserved_quantity": new_reserved,
                                 "last_updated": datetime.utcnow()
                             })
+                    
+                    # Calculate rider earning based on rate card
+                    rate_cards = await rate_card_manager.fetch_all(filters={"outlet_id": order.assigned_outlet_id, "is_active": True})
+                    if rate_cards.items:
+                        rate_card = rate_cards.items[0]
+                        updates["rider_earning"] = rate_card.pay_per_order
+                    else:
+                        # Fallback to 0 if no rate card found
+                        updates["rider_earning"] = Decimal('0.00')
 
             elif item.status in ["postponed", "attempted"]:
                 new_status = OrderStatus.POSTPONED if item.status == "postponed" else OrderStatus.ATTEMPTED
