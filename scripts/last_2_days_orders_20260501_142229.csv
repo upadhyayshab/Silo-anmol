@@ -1,0 +1,61 @@
+order_number,district,taluk,assigned_outlet_name,created_at,created_by,resolution_source
+ORD-CRM-20260501052323-E931416C,bengaluru,bangalore north,Hassan Office Outlet,2026-05-01 05:23:23,Likith ,pincode:560079
+ORD-20260430115120-E64F99D5,haveri,hirekerur,HAVERI OUTLET,2026-04-30 11:51:20,Sumathi,pincode:581210
+ORD-CRM-20260430114349-4F713F18,hassan,hassan,Salgame Outlet,2026-04-30 11:43:49,Suchithra S,pincode:573217
+ORD-CRM-20260430114238-521A0696,mandya,shrirangapattana,Hassan Office Outlet,2026-04-30 11:42:38,Sheela S,pincode:571607 , t 
+ORD-CRM-20260430105957-7BB33D50,chikkamagaluru,tarikere,Kadur Outlet,2026-04-30 10:59:57,Sheela S,pincode:577550
+ORD-CRM-20260430095300-37A32C1A,chitradurga,challakere,HOSDURGA OUTLET,2026-04-30 09:53:00,Veena,pincode:577538
+ORD-CRM-20260430094336-E9826AE9,shivamogga,sorab,Sagara Outlet,2026-04-30 09:43:36,Shreya M,pincode:577419
+ORD-CRM-20260430094333-B176CC55,t narasipura,,Hassan Office Outlet,2026-04-30 09:43:33,Swathi D L,order_fields(pincode_failed) , t 
+ORD-20260430093249-073D3E27,chikkamagaluru,kadur,Kadur Outlet,2026-04-30 09:32:49,Prajwal K M,pincode:577180
+ORD-CRM-20260430093012-8AC15789,gadag,,Hassan Office Outlet,2026-04-30 09:30:12,Swathi D L,pincode:582114 ,  t
+ORD-20260430092912-72120BED,mandya,k.r.pete,Hassan Office Outlet,2026-04-30 09:29:12,Aishwarya G U,pincode:571436 ,  t
+ORD-20260430092354-4814910F,chitradurga,hosadurga,HOSDURGA OUTLET,2026-04-30 09:23:54,Prajwal K M,pincode:577527
+ORD-20260430090427-BE56D767,chitradurga,hosadurga,HOSDURGA OUTLET,2026-04-30 09:04:27,Anu H P,pincode:577527
+ORD-CRM-20260430082959-5FCCA503,mandya,pandavapura,Jaknahalli Outlet,2026-04-30 08:29:59,Anitha S B,pincode:571434
+ORD-CRM-20260430081900-C5B1B08F,mysuru,h d kote,HUNSUR OUTLET,2026-04-30 08:19:00,Vaishnavi H R,pincode:571121
+ORD-CRM-20260430081219-1D04A369,mysuru,nanjangud,Mysuru Outlet,2026-04-30 08:12:19,Ruthu B D,pincode:571301
+ORD-CRM-20260430062703-99037334,bengaluru,bangalore south,Hassan Office Outlet,2026-04-30 06:27:03,Likith ,pincode:560078
+ORD-20260430062403-5E02ADAC,dharwad,navalgund,Navalgunda Outlet,2026-04-30 06:24:03,Aishwarya G U,pincode:582201
+ORD-20260430062249-60BA365A,vijayanagara,bellary,Hassan Office Outlet,2026-04-30 06:22:49,Anu H P,pincode:583103 , t 
+ORD-CRM-20260430062119-0C3EF716,mysuru,hunsur,HUNSUR OUTLET,2026-04-30 06:21:19,Pooja B J,pincode:571106
+ORD-CRM-20260430062043-EF57E9EB,ramanagara,kanakapura,Kanakapura Outlet,2026-04-30 06:20:43,Ayesha Mufeeda,pincode:562119
+ORD-CRM-20260430062002-6E46E7B7,hassan,arkalgud,Hassan Office Outlet,2026-04-30 06:20:02,Anitha S B,pincode:573102 , t 
+ORD-20260430060817-9B0C5E73,mysuru,periyapatna,HUNSUR OUTLET,2026-04-30 06:08:17,Sumathi,pincode:571107
+ORD-CRM-20260430055336-8060619E,bagalkot,jamkhandi,MOODALGI OUTLET,2026-04-30 05:53:36,Sahana L,pincode:587301
+ORD-CRM-20260430055154-DEAB91FE,belagavi,athani,MOODALGI OUTLET,2026-04-30 05:51:54,Ruthu B D,pincode:591304
+ORD-CRM-20260430055132-627A0121,kolar,mulbagal,Kolar Outlet,2026-04-30 05:51:32,Pooja B J,pincode:563131
+ORD-CRM-20260430054058-78114D11,mysuru,nanjangud,Mysuru Outlet,2026-04-30 05:40:58,Anitha S B,pincode:571312
+ORD-CRM-20260430054029-F9208917,kolar,kolar,Kolar Outlet,2026-04-30 05:40:29,Shreya M,pincode:563126
+ORD-CRM-20260430053952-F388B86E,chitradurga,challakere,HOSDURGA OUTLET,2026-04-30 05:39:52,Veena,pincode:577538
+ORD-CRM-20260430053844-D7DC8CEA,chamarajanagara,chamarajanagara,Hassan Office Outlet,2026-04-30 05:38:44,Ayesha Mufeeda,pincode:571316
+ORD-CRM-20260430053732-994471D1,gadag,gadag,Gadag Outlet,2026-04-30 05:37:32,Vaishnavi H R,pincode:582117
+ORD-CRM-20260430052130-95D314A3,mandya,maddur,MADDURU OUTLET,2026-04-30 05:21:30,Keerthi D B,pincode:571422
+ORD-CRM-20260430050620-83E14F86,kolar,srinivaspur,Kolar Outlet,2026-04-30 05:06:20,Executive ,pincode:563135
+ORD-CRM-20260430000818-4B2DAC5D,mysuru,t narasipura,Mysuru Outlet,2026-04-29 13:08:18,Executive ,pincode:571122
+ORD-CRM-20260429110533-1B2C61F9,mysuru,t narasipura,Mysuru Outlet,2026-04-29 11:05:33,Anitha S B,pincode:571122
+ORD-CRM-20260429105939-27C5C8A5,tumakuru,tumkur,Tumkur Outlet,2026-04-29 10:59:39,Veena,pincode:572118
+ORD-CRM-20260429105305-5E6D8186,dharwad,dharwad,Hubli Outlet,2026-04-29 10:53:05,Ayesha Mufeeda,pincode:580001
+ORD-CRM-20260429104910-A6CEB677,tumakuru,turuvekere,Tumkur Outlet,2026-04-29 10:49:10,Anitha S B,pincode:572221
+ORD-CRM-20260429103949-B832FE2A,ramanagara,kanakapaura,Hassan Office Outlet,2026-04-29 10:39:49,Suchithra S,pincode:562126 , t 
+ORD-CRM-20260429103104-6001B463,davanagere,channagiri,Channagiri Outlet,2026-04-29 10:31:04,Shreya M,pincode:577215
+ORD-CRM-20260429102750-236D5310,kolar,malur,Kolar Outlet,2026-04-29 10:27:50,Suchithra S,pincode:563130
+ORD-CRM-20260429095722-E4FA8898,kolar,mulbagal,Kolar Outlet,2026-04-29 09:57:22,Executive ,pincode:563131
+ORD-CRM-20260429095535-BDFCF6E3,hassan,arakalagud,Arkalgudu Outlet,2026-04-29 09:55:35,Swathi D L,pincode:573130
+ORD-CRM-20260429095459-9B53F814,mandya,pandavapura,Jaknahalli Outlet,2026-04-29 09:54:59,Sahana L,pincode:571812
+ORD-CRM-20260429094935-EF0DBE1E,mandya,nagamangala,Jaknahalli Outlet,2026-04-29 09:49:35,Anitha S B,pincode:571445
+ORD-CRM-20260429094138-C4F0506C,ramanagara,ramanagara,RAMNAGARA OUTLET,2026-04-29 09:41:38,Veena,pincode:562159
+ORD-CRM-20260429093639-680D8CC0,haveri,shiggaon,HAVERI OUTLET,2026-04-29 09:36:39,Ayesha Mufeeda,pincode:581193
+ORD-20260429093011-EB5E38BF,haveri,hangal,HAVERI OUTLET,2026-04-29 09:30:11,testingUser,order_fields
+ORD-CRM-20260429092821-5F422001,mandya,malavalli,MADDURU OUTLET,2026-04-29 09:28:21,Anitha S B,pincode:571417
+ORD-CRM-20260429092214-ABEA7D14,mysuru,kollegal,Hassan Office Outlet,2026-04-29 09:22:14,Swathi D L,pincode:571101 , m
+ORD-CRM-20260429091834-F003AF08,hassan,arsikere,Hassan Office Outlet,2026-04-29 09:18:34,Sahana L,pincode:573103
+ORD-CRM-20260429091654-062B0660,haveri,savanur,HAVERI OUTLET,2026-04-29 09:16:54,Ruthu B D,pincode:581118
+ORD-CRM-20260429091359-AE99A7BA,chikkamagaluru,chikmagalur,Kadur Outlet,2026-04-29 09:13:59,Sheela S,pincode:577133
+ORD-CRM-20260429091347-DFF307F8,chitradurga,hosadurga,HOSDURGA OUTLET,2026-04-29 09:13:47,Ayesha Mufeeda,pincode:577527
+ORD-CRM-20260429091310-1639D84E,ramanagara,ramanagara,RAMNAGARA OUTLET,2026-04-29 09:13:10,Sahana L,pincode:562159
+ORD-CRM-20260429090345-A9AA21C7,mandya,nagamangala,Jaknahalli Outlet,2026-04-29 09:03:45,Sahana L,pincode:571802
+ORD-CRM-20260429085803-42C63AFB,mysuru,hunsur,HUNSUR OUTLET,2026-04-29 08:58:03,Sahana L,pincode:571105
+ORD-CRM-20260429085641-D621D27F,udupi,kundapura,UDUPI OUTLET,2026-04-29 08:56:41,Vaishnavi H R,pincode:576201
+ORD-CRM-20260429085546-27C667B3,vijayapura,indi,Hassan Office Outlet,2026-04-29 08:55:46,Swathi D L,pincode:586117
+ORD-20260429085316-65EBBB3A,belagavi,gokak,MOODALGI OUTLET,2026-04-29 08:53:16,Anu H P,pincode:591227

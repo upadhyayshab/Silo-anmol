@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, BackgroundTasks
 from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Dict , Decimal
+from typing import List, Optional, Any, Dict
+from decimal import Decimal
 import re
 from datetime import datetime, date, timedelta
 from utils import dependencies as D
