@@ -1,5 +1,5 @@
 {
-    "family": "erp-backend-prod",
+    "family": "erp-backend-dev",
     "containerDefinitions": [
         {
             "name": "erp-backend",
@@ -7,7 +7,7 @@
             "cpu": 0,
             "portMappings": [
                 {
-                    "name": "erp-backend-prod-8000-tcp",
+                    "name": "erp-backend-dev-8000-tcp",
                     "containerPort": 8000,
                     "hostPort": 8000,
                     "protocol": "tcp",
@@ -21,77 +21,77 @@
             "secrets": [
                 {
                     "name": "SERVICE_NAME",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/SERVICE_NAME"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/SERVICE_NAME"
                 },
                 {
                     "name": "DB_NAME",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_NAME"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_NAME"
                 },
                 {
                     "name": "DB_PORT",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_PORT"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_PORT"
                 },
                 {
                     "name": "DB_HOST",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_HOST"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_HOST"
                 },
                 {
                     "name": "DB_PASSWORD",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_PASSWORD"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_PASSWORD"
                 },
                 {
                     "name": "DB_USER",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_USER"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_USER"
                 },
                 {
                     "name": "DB_DIALECT",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_DIALECT"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_DIALECT"
                 },
                 {
                     "name": "DB_DRIVER",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_DRIVER"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_DRIVER"
                 },
                 {
                     "name": "DB_SUPPORTS_SCHEMA",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DB_SUPPORTS_SCHEMA"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DB_SUPPORTS_SCHEMA"
                 },
                 {
                     "name": "DEBUG",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/DEBUG"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DEBUG"
                 },
                 {
                     "name": "ENV",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/ENV"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/ENV"
                 },
                 {
                     "name": "MASTER_API_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/MASTER_API_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/MASTER_API_KEY"
                 },
                 {
                     "name": "JWT_SECRET_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/JWT_SECRET_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/JWT_SECRET_KEY"
                 },
                 {
                     "name": "CRM_URL",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/CRM_URL"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/CRM_URL"
                 },
                 {
                     "name": "CRM_API_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/CRM_API_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/CRM_API_KEY"
                 },
                 {
                     "name": "CRM_SECRET_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/CRM_SECRET_KEY"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/CRM_SECRET_KEY"
                 },
                 {
                     "name": "STORE_URL",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-prod/STORE_URL"
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/STORE_URL"
                 }
             ],
             "logConfiguration": {
                 "logDriver": "awslogs",
                 "options": {
-                    "awslogs-group": "/ecs/erp-backend-prod",
+                    "awslogs-group": "/ecs/erp-backend-dev",
                     "awslogs-create-group": "true",
                     "awslogs-region": "ap-south-1",
                     "awslogs-stream-prefix": "ecs"
@@ -101,8 +101,8 @@
             "systemControls": []
         }
     ],
-    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-erp-backend-prod",
-    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-erp-backend-prod",
+    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-erp-backend-dev",
+    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-erp-backend-dev",
     "networkMode": "awsvpc",
     "volumes": [],
     "placementConstraints": [],
