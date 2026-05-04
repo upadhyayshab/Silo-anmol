@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query, BackgroundTasks
-from typing import List, Optional
-from datetime import datetime, date
+from typing import List, Optional, Any, Dict
+from datetime import datetime, date, time
 from decimal import Decimal
-
+from utils import dependencies as D
 from config import get_settings, get_engine
 from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager, DeliveryGuyManager,
-    OutletMappingManager,InventorySchema,
-    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,OutletSchema
+    OutletMappingManager, DeliveryTrackingManager,InventorySchema,
+    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema, OutletSchema, DeliveryTrackingSchema
 )
 from models import (
     OrderCreateRequest, ProxyOrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
@@ -37,6 +37,7 @@ outlet_manager = OutletManager(engine)
 outlet_mapping_manager = OutletMappingManager(engine)
 user_manager = UserManager(engine)
 delivery_guy_manager = DeliveryGuyManager(engine)
+tracking_manager = DeliveryTrackingManager(engine)
 
 crm_service = CRMService()
 store_service = storeService()
@@ -220,7 +221,8 @@ async def create_order(
             discount_applied=discount_applied,
             prepaid_amount=payload.prepaid_amount,
             total_amount=final_total_amount,
-            total_commission=total_commission  # New field
+            total_commission=total_commission,  # New field
+            priority_level=payload.priority_level
         )
         
         # DEBUG: Log the created order schema values
@@ -354,6 +356,7 @@ async def create_order(
                 prepaid_amount=created_order.prepaid_amount,
                 total_amount=final_total_amount,
                 total_commission=total_commission,  # New field
+                priority_level=created_order.priority_level,
                 items=order_items_response,
                 created_at=created_order.created_at
             )
@@ -533,7 +536,8 @@ async def create_proxy_order(
             discount_applied=discount_applied,
             prepaid_amount=payload.prepaid_amount,
             total_amount=final_total_amount,
-            total_commission=total_commission
+            total_commission=total_commission,
+            priority_level=payload.priority_level
         )
         
         created_order = await order_manager.create(new_order)
@@ -655,6 +659,7 @@ async def create_proxy_order(
             prepaid_amount=created_order.prepaid_amount,
             total_amount=final_total_amount,
             total_commission=total_commission,
+            priority_level=created_order.priority_level,
             items=order_items_response,
             created_at=created_order.created_at
         )
@@ -764,12 +769,40 @@ async def bulk_assign_delivery_guy_to_orders(
                      failed_count += 1
                      continue
                 
-                await order_manager.update(order_id, {"delivery_person_id": user.uid})
+                # Skip if already assigned to this person and already in DELIVERY_ALLOTTED status
+                if order.delivery_person_id == user.uid and order.order_status == OrderStatus.DELIVERY_ALLOTTED:
+                    results.append(BulkAssignmentResult(order_id=order_id, status="success", message="Already assigned"))
+                    successful_count += 1
+                    continue
+                
+                # Update order with delivery person and status
+                await order_manager.update(order_id, {
+                    "delivery_person_id": user.uid,
+                    "order_status": OrderStatus.DELIVERY_ALLOTTED
+                })
+                
+                # --- Simulate External Delivery Service API Call ---
+                # import httpx
+                # async with httpx.AsyncClient() as client:
+                #     await client.post("EXTERNAL_API_URL/assign", json={"order_id": order.uid, "rider_id": user.uid})
+                
                 results.append(BulkAssignmentResult(order_id=order_id, status="success"))
                 successful_count += 1
                 
                 # Push delivery assignment activity to CRM
                 background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
+                
+                # 4. Log the status change in tracking table
+                tracking_record = DeliveryTrackingSchema(
+                    order_id=order_id,
+                    outlet_id=dg.outlet_id,
+                    telecaller_id=order.telecaller_id,
+                    delivery_person_id=user.uid,
+                    status_changed_to=OrderStatus.DELIVERY_ALLOTTED,
+                    remarks=f"Order assigned to {user.full_name} by outlet manager.",
+                    changed_by=current_user_id
+                )
+                await tracking_manager.create(tracking_record)
                 
             except Exception as e:
                 results.append(BulkAssignmentResult(
@@ -1052,7 +1085,7 @@ openapi_examples={
 
 # GENERIC ROUTE LAST (after all specific routes)
 
-@router.get("", response_model=ListResponse[OrderResponse])
+@router.get("")
 async def get_orders(transfer_status: Optional[OrderStatus] = None,
     telecaller_id: Optional[str] = None,
     outlet_id: Optional[str] = None,
@@ -1061,8 +1094,10 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     to_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
+    dynamic_filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    sorts: List[str] = Depends(D.sorting_dependency),
     current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DELIVERY_GUY,
         allowed_scopes=["delivery:read"]
     ))
 ):
@@ -1072,56 +1107,64 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     """
     try:
         filters = {}
+        joins = [CustomerOrderSchema.items, CustomerOrderSchema.delivery_person] # Always join these for consistent response
         
+        # 1. Role-based isolation (skip for microservice)
         if current_user_id != "microservice":
-            # Get current user to determine access level
             current_user = await user_manager.fetch(current_user_id)
-            
-            # Role-based filtering
             if current_user.role == UserRole.TELECALLER:
                 filters["telecaller_id"] = current_user_id
             elif current_user.role == UserRole.OUTLET_MANAGER:
                 if current_user.outlet_id:
                     filters["assigned_outlet_id"] = current_user.outlet_id
-            
-            # Apply additional filters
-            if transfer_status:
-                filters["order_status"] = transfer_status
-            if telecaller_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-                filters["telecaller_id"] = telecaller_id
-            if outlet_id and current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-                filters["assigned_outlet_id"] = outlet_id
-            if customer_phone:
-                filters["customer_phone"] = customer_phone
-        else:
-            # Microservice gets full access, just apply the provided filters
-            if transfer_status:
-                filters["order_status"] = transfer_status
-            if telecaller_id:
-                filters["telecaller_id"] = telecaller_id
-            if outlet_id:
-                filters["assigned_outlet_id"] = outlet_id
-            if customer_phone:
-                filters["customer_phone"] = customer_phone
+            elif current_user.role == UserRole.DELIVERY_GUY:
+                filters["delivery_person_id"] = current_user_id
+        
+        # 2. Manual filters
+        if transfer_status:
+            filters["order_status"] = transfer_status
+        
+        # Apply optional filters (restricted for non-admins)
+        is_admin = current_user_id == "microservice" or current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]
+        
+        if telecaller_id and is_admin:
+            filters["telecaller_id"] = telecaller_id
+        if outlet_id and is_admin:
+            filters["assigned_outlet_id"] = outlet_id
+        if customer_phone:
+            filters["customer_phone"] = customer_phone
+
+        # 3. Date range filters
+        if from_date or to_date:
+            date_filter = {}
+            if from_date:
+                date_filter[">="] = datetime.combine(from_date, time.min)
+            if to_date:
+                date_filter["<="] = datetime.combine(to_date, time.max)
+            filters["order_date"] = date_filter
+
+        # 4. Handle type coercion for dynamic filters (expected_delivery_date is a Date column)
+        if "expected_delivery_date" in dynamic_filters:
+            val = dynamic_filters["expected_delivery_date"]
+            if isinstance(val, datetime):
+                dynamic_filters["expected_delivery_date"] = val.date()
+            elif isinstance(val, dict):
+                for op, v in val.items():
+                    if isinstance(v, datetime):
+                        val[op] = v.date()
+
+        # 5. Merge dynamic filters
+        filters.update(dynamic_filters)
         
         orders = await order_manager.fetch_all(
             filters=filters,
+            joins=joins,
             limit=limit,
-            offset=offset
+            offset=offset,
+            sorts=sorts or ["-created_at"],
         )
         
-        order_responses = []
-        for order in orders.items:
-            # Filter by date range if specified
-            if from_date and order.order_date.date() < from_date:
-                continue
-            if to_date and order.order_date.date() > to_date:
-                continue
-            
-            order_response = await get_order_response(order.uid)
-            order_responses.append(order_response)
-        
-        return ListResponse(items=order_responses, count=len(order_responses))
+        return orders.model_dump()
     
     except Exception as e:
         raise HTTPException(
@@ -1198,7 +1241,7 @@ async def get_orders_by_phone(
 
 async def get_order_response(order_id: str) -> OrderResponse:
     """Helper to build complete order response with items"""
-    order = await order_manager.fetch(order_id)
+    order = await order_manager.fetch(order_id, joins=[CustomerOrderSchema.delivery_person])
     
     # Get order items
     order_items = await order_item_manager.fetch_all(
@@ -1255,6 +1298,11 @@ async def get_order_response(order_id: str) -> OrderResponse:
         prepaid_amount=prepaid_amount,
         total_amount=order.total_amount,
         total_commission=total_commission,  # New field
+        delivery_person_id=order.delivery_person_id,
+        delivery_person={
+            "full_name": order.delivery_person.full_name,
+            "phone": order.delivery_person.phone
+        } if order.delivery_person else None,
         items=items,
         created_at=order.created_at
     )

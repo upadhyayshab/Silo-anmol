@@ -257,6 +257,7 @@ class OrderCreateRequest(BaseModel):
     expected_delivery_date: Optional[date] = None
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
     prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance")
+    priority_level: int = Field(default=10, description="Order priority level (default 10 for normal)")
     items: List[OrderItemRequest]
 
 
@@ -277,6 +278,7 @@ class OrderUpdateRequest(BaseModel):
     pincode: Optional[str] = None
     lat_lon: Optional[List[Decimal]] = None
     expected_delivery_date: Optional[date] = None
+    priority_level: Optional[int] = None
 
 
 class OrderFullUpdateRequest(BaseModel):
@@ -298,6 +300,7 @@ class OrderFullUpdateRequest(BaseModel):
     expected_delivery_date: Optional[date] = None
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
     prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance") # Added field
+    priority_level: int = Field(default=10, description="Order priority level (default 10 for normal)")
     items: List[OrderItemRequest]
 
 
@@ -357,7 +360,9 @@ class OrderResponse(BaseModel):
     prepaid_amount: Decimal  # Amount already paid
     total_amount: Decimal  # Final net amount
     total_commission: Decimal  # Total commission for the order
+    priority_level: int 
     delivery_person_id: Optional[str] = None
+    delivery_person: Optional[dict] = None
     items: List[OrderItemResponse] = []
     created_at: datetime
 
@@ -709,10 +714,10 @@ class PayoutResponse(BaseModel):
 # ============================================================================
 
 class DeliveryGuyCreateRequest(BaseModel):
-    email: str
-    password: str
+    email: Optional[str] = None
+    password: Optional[str] = None
     full_name: str
-    phone: Optional[str] = None
+    phone: str
     outlet_id: str
 
 class DeliveryGuyUpdateRequest(BaseModel):
@@ -746,6 +751,129 @@ class BulkAssignmentResponse(BaseModel):
     successful_count: int
     failed_count: int
     results: List[BulkAssignmentResult]
+
+
+# ============================================================================
+# DELIVERY GUY HANDOVER MODELS
+# ============================================================================
+
+class DeliveryHandoverCreateRequest(BaseModel):
+    delivery_guy_id: str = Field(..., description="Delivery Guy User UID")
+    outlet_id: str = Field(..., description="Outlet UID")
+    amount: Decimal = Field(..., gt=0, description="Amount handed over")
+    handover_date: date = Field(..., description="Date of handover")
+    remarks: Optional[str] = Field(None, description="Additional notes")
+
+
+class DeliveryHandoverStatusUpdateRequest(BaseModel):
+    status: OutletCollectionStatus = Field(..., description="New confirmation status")
+
+
+class DeliveryHandoverResponse(BaseModel):
+    uid: str
+    delivery_guy_id: str
+    outlet_id: str
+    amount: Decimal
+    handover_date: date
+    status: OutletCollectionStatus
+    confirmed_by: Optional[str] = None
+    confirmed_at: Optional[datetime] = None
+    remarks: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    # Optional nested details
+    delivery_guy: Optional[UserResponse] = None
+    outlet: Optional[OutletResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DeliveryGuyCashBalanceResponse(BaseModel):
+    delivery_guy_id: str
+    current_cash_balance: Decimal
+    total_collected: Decimal
+    total_handed_over: Decimal
+
+
+# ============================================================================
+# RIDER RATE CARD MODELS
+# ============================================================================
+
+class RateCardCreateRequest(BaseModel):
+    outlet_id: str
+    pay_per_order: Decimal = Field(..., gt=0)
+    is_active: bool = True
+
+class RateCardUpdateRequest(BaseModel):
+    pay_per_order: Optional[Decimal] = Field(None, gt=0)
+    is_active: Optional[bool] = None
+
+class RateCardResponse(BaseModel):
+    uid: str
+    outlet_id: str
+    pay_per_order: Decimal
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# RIDER PAYOUT MODELS
+# ============================================================================
+
+class RiderPayoutCreateRequest(BaseModel):
+    rider_id: str
+    outlet_id: str
+    period_from: date
+    period_to: date
+    payment_method: Optional[PaymentMethod] = None
+    remarks: Optional[str] = None
+
+    @validator('period_to')
+    def validate_period(cls, v, values):
+        if 'period_from' in values and v < values['period_from']:
+            raise ValueError('period_to must be after period_from')
+        return v
+
+class RiderPayoutUpdateRequest(BaseModel):
+    status: Optional[PayoutStatus] = None
+    payment_method: Optional[PaymentMethod] = None
+    transaction_id: Optional[str] = None
+    payment_date: Optional[date] = None
+    remarks: Optional[str] = None
+
+class RiderPayoutStatusUpdateRequest(BaseModel):
+    status: PayoutStatus
+    remarks: Optional[str] = None
+
+class RiderPayoutResponse(BaseModel):
+    uid: str
+    rider_id: str
+    outlet_id: str
+    period_from: date
+    period_to: date
+    total_amount: Decimal
+    status: PayoutStatus
+    payment_method: Optional[PaymentMethod] = None
+    transaction_id: Optional[str] = None
+    payment_date: Optional[date] = None
+    remarks: Optional[str] = None
+    created_by: str
+    paid_by: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    # Optional nested details
+    rider: Optional[UserResponse] = None
+    outlet: Optional[OutletResponse] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ============================================================================
@@ -793,10 +921,17 @@ __all__ = [
     "OutletCollectionResponse",
     
     # Outlet Manager Payouts
-    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest",
-    "PayoutResponse",
-
-    # Delivery Guys
+    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest", "PayoutResponse",
+    
+    # Delivery Guy
     "DeliveryGuyCreateRequest", "DeliveryGuyUpdateRequest", "DeliveryGuyResponse",
     "BulkOrderDeliveryAssignmentRequest", "BulkAssignmentResult", "BulkAssignmentResponse",
+    
+    # Delivery Guy Handovers
+    "DeliveryHandoverCreateRequest", "DeliveryHandoverStatusUpdateRequest", 
+    "DeliveryHandoverResponse", "DeliveryGuyCashBalanceResponse",
+
+    # Rider Payouts & Rate Cards
+    "RateCardCreateRequest", "RateCardUpdateRequest", "RateCardResponse",
+    "RiderPayoutCreateRequest", "RiderPayoutUpdateRequest", "RiderPayoutStatusUpdateRequest", "RiderPayoutResponse"
 ]

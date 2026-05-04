@@ -3,13 +3,13 @@ pipeline {
 
     environment {
         AWS_REGION = 'ap-south-1'
-        ECR_REPOSITORY = '400115659362.dkr.ecr.ap-south-1.amazonaws.com/erp-backend-dev'
-        ECS_CLUSTER = 'SiloFortune-dev'
-        ECS_TASK_DEFINITION_FAMILY = 'erp-backend-dev'
-        ECS_SERVICE = 'erp-backend-dev'
+        ECR_REPOSITORY = '400115659362.dkr.ecr.ap-south-1.amazonaws.com/erp-backend-prod'
+        ECS_CLUSTER = 'SiloFortune-prod'
+        ECS_TASK_DEFINITION_FAMILY = 'erp-backend-prod'
+        ECS_SERVICE = 'erp-backend-prod'
         IMAGE_TAG = UUID.randomUUID().toString().replace('-', '')
-        CPU = "256"
-        MEMORY = "512"
+        CPU = "512"
+        MEMORY = "1024"
     }
 
     stages {

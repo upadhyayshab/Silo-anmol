@@ -325,6 +325,11 @@ class CustomerOrderSchema(BaseSchema):
     total_amount = db.Column(db.Numeric(10, 2), nullable=False)  # Final net amount
     total_commission = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)  # Total commission for order
     delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True, index=True)
+    priority_level = db.Column(db.Integer, default=0, nullable=False, index=True)
+
+    # Rider Payout fields
+    rider_earning = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    payout_id = db.Column(db.String, db.ForeignKey("rider_payouts.uid"), nullable=True, index=True)
 
     # Relationships
     telecaller = relationship("UserSchema", back_populates="created_orders", foreign_keys=[telecaller_id]) # here we will get the telecallers and the outlet manager
@@ -474,13 +479,22 @@ class DeliveryTrackingSchema(BaseSchema):
     order_id = db.Column(db.String, db.ForeignKey("customer_orders.uid"), nullable=False, index=True)
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False)
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
+    delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     status_changed_to = db.Column(db.String(50), nullable=False)
+    
+    # New delivery specific fields
+    postpone_date = db.Column(db.Date, nullable=True)
+    attempt_number = db.Column(db.Integer, default=1, nullable=False)
+    priority_level = db.Column(db.Integer, default=0, nullable=False, index=True)
+    
     remarks = db.Column(db.Text)
     changed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
 
     # Relationships
     order = relationship("CustomerOrderSchema", back_populates="delivery_tracking")
     outlet = relationship("OutletSchema", back_populates="delivery_tracking")
+    delivery_person = relationship("UserSchema", foreign_keys=[delivery_person_id])
+    changer = relationship("UserSchema", foreign_keys=[changed_by])
 
 
 class DeliveryTrackingManager(GenericManager[DeliveryTrackingSchema]):
@@ -686,6 +700,90 @@ class DeliveryGuyManager(GenericManager[DeliveryGuySchema]):
     pass
 
 # ============================================================================
+# DELIVERY GUY HANDOVERS
+# ============================================================================
+
+class DeliveryGuyHandoverSchema(BaseSchema):
+    """Tracking cash handovers from delivery guys to outlet"""
+    __tablename__ = "delivery_guy_handovers"
+
+    delivery_guy_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(10, 2), nullable=False)
+    handover_date = db.Column(db.Date, nullable=False, index=True)
+    
+    # Status tracking
+    status = db.Column(db.Enum(OutletCollectionStatus), nullable=False, default=OutletCollectionStatus.PENDING, index=True)
+    confirmed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    confirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    remarks = db.Column(db.Text, nullable=True)
+    
+    # Relationships
+    delivery_guy = relationship("UserSchema", foreign_keys=[delivery_guy_id])
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+    confirmer = relationship("UserSchema", foreign_keys=[confirmed_by])
+
+
+class DeliveryGuyHandoverManager(GenericManager[DeliveryGuyHandoverSchema]):
+    pass
+
+
+# ============================================================================
+# RIDER RATE CARDS
+# ============================================================================
+
+class RateCardSchema(BaseSchema):
+    """Rider rate cards for delivery incentives"""
+    __tablename__ = "rate_cards"
+
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, unique=True, index=True)
+    pay_per_order = db.Column(db.Numeric(10, 2), default=0.00, nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+    # Relationships
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+
+
+class RateCardManager(GenericManager[RateCardSchema]):
+    pass
+
+
+# ============================================================================
+# RIDER PAYOUTS
+# ============================================================================
+
+class RiderPayoutSchema(BaseSchema):
+    """Historical records of rider payouts"""
+    __tablename__ = "rider_payouts"
+
+    rider_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    period_from = db.Column(db.Date, nullable=False)
+    period_to = db.Column(db.Date, nullable=False)
+    total_amount = db.Column(db.Numeric(10, 2), nullable=False)
+    status = db.Column(db.Enum(PayoutStatus), default=PayoutStatus.PENDING, nullable=False, index=True)
+    payment_method = db.Column(db.Enum(PaymentMethod), nullable=True)
+    transaction_id = db.Column(db.String(255), nullable=True)
+    payment_date = db.Column(db.Date, nullable=True)
+    remarks = db.Column(db.Text, nullable=True)
+
+    # Audit fields
+    created_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
+    paid_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+
+    # Relationships
+    rider = relationship("UserSchema", foreign_keys=[rider_id])
+    outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+    creator = relationship("UserSchema", foreign_keys=[created_by])
+    payer = relationship("UserSchema", foreign_keys=[paid_by])
+    orders = relationship("CustomerOrderSchema", backref="payout", foreign_keys=[CustomerOrderSchema.payout_id])
+
+
+class RiderPayoutManager(GenericManager[RiderPayoutSchema]):
+    pass
+
+
+# ============================================================================
 # EXPORTS
 # ============================================================================
 
@@ -733,7 +831,7 @@ __all__ = [
     # Outlet Manager Payouts
     "OutletManagerPayoutSchema", "OutletManagerPayoutManager",
 
-    # LSQ Telecaller Mapping
+    # LSQ Telecallers Mapping
     "LSQTelecallerMappingSchema", "LSQTelecallerMappingManager",
 
     # Outlet Mapping (auto-assign)
@@ -741,4 +839,12 @@ __all__ = [
 
     # Delivery Guys
     "DeliveryGuySchema", "DeliveryGuyManager",
+    
+    # Delivery Guy Handovers
+    "DeliveryGuyHandoverSchema", "DeliveryGuyHandoverManager",
+
+    # Rider Payouts & Rate Cards
+    "RateCardSchema", "RateCardManager",
+    "RiderPayoutSchema", "RiderPayoutManager",
 ]
+

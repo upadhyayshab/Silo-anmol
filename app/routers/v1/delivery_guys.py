@@ -1,22 +1,44 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Body
-from typing import List, Optional
-
+from fastapi import APIRouter, HTTPException, Depends, status, Body, BackgroundTasks
+from pydantic import BaseModel, Field
+from typing import List, Optional, Any, Dict , Decimal
+import re
+from datetime import datetime, date, timedelta
+from utils import dependencies as D
 from config import get_settings, get_engine
-from managers import DeliveryGuyManager, UserManager, OutletManager, DeliveryGuySchema, UserSchema
+from managers import (
+    DeliveryGuyManager, UserManager, OutletManager, DeliveryGuySchema, UserSchema,
+    CustomerOrderManager, OrderItemManager, OrderTransactionManager,
+    InventoryManager, DeliveryTrackingManager, OrderTransactionSchema, DeliveryTrackingSchema,
+    RateCardManager, RateCardSchema
+)
 from models import (
     DeliveryGuyCreateRequest, DeliveryGuyUpdateRequest, DeliveryGuyResponse,
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
 from utils.auth import require_roles, get_current_user_id, get_password_hash
-from utils.constants import UserRole
+from utils.constants import UserRole, OrderStatus, PaymentStatus, ActivityType, PaymentMethod
+from utils.crm_utils import sync_order_to_crm
 
 settings = get_settings()
 engine = get_engine(settings.name)
 delivery_guy_manager = DeliveryGuyManager(engine)
 user_manager = UserManager(engine)
 outlet_manager = OutletManager(engine)
+order_manager = CustomerOrderManager(engine)
+order_item_manager = OrderItemManager(engine)
+transaction_manager = OrderTransactionManager(engine)
+inventory_manager = InventoryManager(engine)
+tracking_manager = DeliveryTrackingManager(engine)
+rate_card_manager = RateCardManager(engine)
 
 router = APIRouter(prefix="/delivery-guys", tags=["Delivery Guy Management"])
+
+class DeliveryStatusUpdatePayload(BaseModel):
+    order_id: str
+    status: str = Field(..., description="delivered, postponed, attempted, cancelled")
+    postpone_date: Optional[date] = None
+    remarks: Optional[str] = None
+    delivery_person_id: Optional[str] = None
 
 @router.get("/{delivery_guy_id}", response_model=DeliveryGuyResponse)
 async def get_delivery_guy(
@@ -56,26 +78,18 @@ async def get_delivery_guy(
 
 @router.get("", response_model=ListResponse[DeliveryGuyResponse])
 async def list_delivery_guys(
-    outlet_id: Optional[str] = None,
-    is_active_for_delivery: Optional[bool] = None,
-    is_deleted: Optional[bool] = False,
+    filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    sorts: List[str] = Depends(D.sorting_dependency),
     limit: int = 50,
     offset: int = 0,
     _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
 ):
     try:
-        filters = {}
-        if outlet_id:
-            filters["outlet_id"] = outlet_id
-        if is_active_for_delivery is not None:
-            filters["is_active_for_delivery"] = is_active_for_delivery
-        if is_deleted is not None:
-            filters["is_deleted"] = is_deleted
-
         delivery_guys = await delivery_guy_manager.fetch_all(
             limit=limit,
             offset=offset,
-            filters=filters if filters else None
+            sorts=sorts,
+            filters=filters or None
         )
         
         responses = []
@@ -112,15 +126,30 @@ async def create_delivery_guy(
     _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
-        # 1. Check if user already exists
-        existing_user = await user_manager.fetch_all(filters={"email": payload.email})
+        # 1. Handle email generation if not provided
+        email = payload.email
+        if not email:
+            # Generate email from name: lowercase, spaces to dots, alphanumeric only
+            name_slug = re.sub(r'[^a-z0-9]', '.', payload.full_name.lower())
+            name_slug = re.sub(r'\.+', '.', name_slug).strip('.')
+            email = f"{name_slug}@silofortune.com"
+
+        # 2. Check if user already exists by email or phone
+        existing_user = await user_manager.fetch_all(filters={"email": email})
         if existing_user.items:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User with this email already exists"
+                detail=f"User with email {email} already exists"
+            )
+        
+        existing_phone = await user_manager.fetch_all(filters={"phone": payload.phone})
+        if existing_phone.items:
+             raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User with phone {payload.phone} already exists"
             )
             
-        # 2. Check if outlet exists
+        # 3. Check if outlet exists
         outlet = await outlet_manager.fetch(payload.outlet_id)
         if not outlet.is_active:
              raise HTTPException(
@@ -128,9 +157,10 @@ async def create_delivery_guy(
                 detail="Outlet is not active"
             )
 
-        # 3. Create User first
+        # 4. Create User first
+        # Password is always phone number as per requirements
         user = UserSchema(
-            email=payload.email,
+            email=email,
             password_hash=get_password_hash(payload.phone),
             full_name=payload.full_name,
             role=UserRole.DELIVERY_GUY,
@@ -140,7 +170,7 @@ async def create_delivery_guy(
         )
         created_user = await user_manager.create(user)
 
-        # 4. Create Delivery Guy profile
+        # 5. Create Delivery Guy profile
         dg = DeliveryGuySchema(
             user_id=created_user.uid,
             outlet_id=payload.outlet_id,
@@ -235,3 +265,126 @@ async def delete_delivery_guy(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete delivery guy: {str(e)}"
         )
+
+# --- Webhook Endpoints ---
+
+@router.post("/webhooks/delivery-status", status_code=status.HTTP_200_OK)
+async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], background_tasks: BackgroundTasks):
+    """
+    Webhook endpoint to receive delivery status updates for multiple orders.
+    """
+    results = []
+    for item in payload:
+        try:
+            # Find the order
+            try:
+                order = await order_manager.fetch(item.order_id)
+            except Exception:
+                orders = await order_manager.fetch_all(filters={"order_number": item.order_id})
+                if not orders.items:
+                    results.append({"order_id": item.order_id, "status": "failed", "message": "Order not found"})
+                    continue
+                order = orders.items[0]
+
+            order_uid = order.uid
+            updates = {}
+            new_status = order.order_status
+            
+            if item.status == "delivered":
+                new_status = OrderStatus.DELIVERED
+                updates["actual_delivery_date"] = datetime.utcnow()
+                
+                # Process reconciliation and inventory only if order status is changing to delivered
+                if order.order_status != OrderStatus.DELIVERED:
+                    # Auto-reconcile remaining balance (total_amount is the balance to be collected)
+                    if order.total_amount > 0:
+                        amount_to_collect = order.total_amount
+                        transaction = OrderTransactionSchema(
+                            order_id=order_uid,
+                            payment_status=PaymentStatus.PAID,
+                            payment_method=order.payment_method,
+                            amount_paid=amount_to_collect,
+                            notes=f"Auto-reconciled from bulk webhook. Remarks: {item.remarks}",
+                            received_by=item.delivery_person_id or order.telecaller_id
+                        )
+                        await transaction_manager.create(transaction)
+                        updates["has_auto_reconciled"] = True
+                    
+                    # Finalize inventory (deduct from quantity and reserved)
+                    items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
+                    for order_item in items.items:
+                        inv_records = await inventory_manager.fetch_all(
+                            filters={"product_id": order_item.product_id, "outlet_id": order.assigned_outlet_id}
+                        )
+                        if inv_records.items:
+                            inv = inv_records.items[0]
+                            new_qty = max(0, inv.quantity - order_item.quantity)
+                            new_reserved = max(0, inv.reserved_quantity - order_item.quantity)
+                            await inventory_manager.update(inv.uid, {
+                                "quantity": new_qty,
+                                "reserved_quantity": new_reserved,
+                                "last_updated": datetime.utcnow()
+                            })
+                    
+                    # Calculate rider earning based on rate card
+                    rate_cards = await rate_card_manager.fetch_all(filters={"outlet_id": order.assigned_outlet_id, "is_active": True})
+                    if rate_cards.items:
+                        rate_card = rate_cards.items[0]
+                        updates["rider_earning"] = rate_card.pay_per_order
+                    else:
+                        # Fallback to 0 if no rate card found
+                        updates["rider_earning"] = Decimal('0.00')
+
+            elif item.status in ["postponed", "attempted"]:
+                new_status = OrderStatus.POSTPONED if item.status == "postponed" else OrderStatus.ATTEMPTED
+                if item.postpone_date:
+                    updates["expected_delivery_date"] = item.postpone_date
+                else:
+                    updates["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)
+                updates["priority_level"] = (order.priority_level or 0) + 10
+                
+            elif item.status == "cancelled":
+                new_status = OrderStatus.CANCELLED
+                updates["status_remarks"] = item.remarks
+                items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
+                for order_item in items.items:
+                    inv_records = await inventory_manager.fetch_all(
+                        filters={"product_id": order_item.product_id, "outlet_id": order.assigned_outlet_id}
+                    )
+                    if inv_records.items:
+                        inv = inv_records.items[0]
+                        new_reserved = max(0, inv.reserved_quantity - order_item.quantity)
+                        await inventory_manager.update(inv.uid, {
+                            "reserved_quantity": new_reserved,
+                            "last_updated": datetime.utcnow()
+                        })
+            else:
+                results.append({"order_id": item.order_id, "status": "failed", "message": f"Unknown status: {item.status}"})
+                continue
+
+            updates["order_status"] = new_status
+            await order_manager.update(order_uid, updates)
+
+            tracking_record = DeliveryTrackingSchema(
+                order_id=order_uid,
+                outlet_id=order.assigned_outlet_id,
+                telecaller_id=order.telecaller_id,
+                delivery_person_id=item.delivery_person_id,
+                status_changed_to=new_status,
+                postpone_date=item.postpone_date,
+                priority_level=updates.get("priority_level", 0),
+                remarks=item.remarks,
+                changed_by=item.delivery_person_id or order.telecaller_id
+            )
+            await tracking_manager.create(tracking_record)
+            
+            background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
+            if updates.pop("has_auto_reconciled", False):
+                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.PAYMENT_STATUS)
+
+            results.append({"order_id": item.order_id, "status": "success", "new_status": new_status})
+
+        except Exception as e:
+            results.append({"order_id": item.order_id, "status": "failed", "message": str(e)})
+
+    return {"status": "completed", "results": results}
