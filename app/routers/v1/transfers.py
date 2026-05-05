@@ -315,7 +315,7 @@ async def test_deployment():
 @router.get("/pending-approvals", response_model=ListResponse[StockTransferResponse])
 async def get_pending_approvals(
     current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN , UserRole.OUTLET_MANAGER
     ))
 ):
     """Get all transfers pending approval"""
@@ -783,7 +783,7 @@ async def approve_transfer_with_quantities(
     transfer_id: str,
     payload: StockTransferApproveQuantitiesRequest,
     current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN,UserRole.OUTLET_MANAGER ,UserRole.SUPER_ADMIN
     ))
 ):
     """
