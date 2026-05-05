@@ -347,7 +347,7 @@ async def process_crm_orders(payload: dict):
             
             # Commission calculation logic
             if product.margin > 0:
-                commission_base = subtotal - product.unit_price
+                commission_base = calculated_unit_price - product.unit_price
             else:
                 commission_base = max(product.cost_price - discount_per_unit, Decimal('0.00'))
                 
