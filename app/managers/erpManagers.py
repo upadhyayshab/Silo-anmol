@@ -11,7 +11,7 @@ from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod, 
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus
+    PayoutStatus, PayoutFrequency
 )
 
 
@@ -117,7 +117,7 @@ class UserSchema(BasePassSchema):
     """User accounts with role-based access"""
     __tablename__ = "users"
 
-    email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(255), nullable=False, index=True)
     full_name = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum(UserRole), nullable=False, index=True)
     phone = db.Column(db.String(20))
@@ -785,6 +785,7 @@ class DeliveryGuySchema(BaseSchema):
     user_id = db.Column(db.String, db.ForeignKey("users.uid"), unique=True, nullable=False, index=True)
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
     is_active_for_delivery = db.Column(db.Boolean, default=True, nullable=False)
+    payout_frequency = db.Column(db.Enum(PayoutFrequency), default=PayoutFrequency.WEEKLY, nullable=False)
     is_deleted = db.Column(db.Boolean, default=False, nullable=False)
 
     # Relationships

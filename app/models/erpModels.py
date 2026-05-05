@@ -8,7 +8,7 @@ from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus
+    PayoutStatus, PayoutFrequency
 )
 
 
@@ -714,15 +714,17 @@ class PayoutResponse(BaseModel):
 # ============================================================================
 
 class DeliveryGuyCreateRequest(BaseModel):
-    email: Optional[str] = None
+    email: str = Field(..., description="User email address")
     password: Optional[str] = None
     full_name: str
     phone: str
     outlet_id: str
+    payout_frequency: PayoutFrequency = PayoutFrequency.WEEKLY
 
 class DeliveryGuyUpdateRequest(BaseModel):
     is_active_for_delivery: Optional[bool] = None
     outlet_id: Optional[str] = None
+    payout_frequency: Optional[PayoutFrequency] = None
     is_deleted: Optional[bool] = None
 
 class DeliveryGuyResponse(BaseModel):
@@ -730,6 +732,7 @@ class DeliveryGuyResponse(BaseModel):
     user_id: str
     outlet_id: str
     is_active_for_delivery: bool
+    payout_frequency: PayoutFrequency
     is_deleted: bool
     created_at: datetime
     user: Optional[UserResponse] = None
@@ -832,6 +835,7 @@ class RiderPayoutCreateRequest(BaseModel):
     period_from: date
     period_to: date
     payment_method: Optional[PaymentMethod] = None
+    transaction_id: Optional[str] = None
     remarks: Optional[str] = None
 
     @validator('period_to')
@@ -875,6 +879,18 @@ class RiderPayoutResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class RiderPayoutSummaryItem(BaseModel):
+    rider_id: str
+    full_name: str
+    phone: str
+    outlet_id: str
+    outlet_name: str
+    payout_frequency: PayoutFrequency
+    pending_amount: Decimal
+    pending_order_count: int
+    last_payout_date: Optional[date] = None
+    last_payout_amount: Optional[Decimal] = None
 
 # ============================================================================
 # EXPORTS
@@ -933,5 +949,5 @@ __all__ = [
 
     # Rider Payouts & Rate Cards
     "RateCardCreateRequest", "RateCardUpdateRequest", "RateCardResponse",
-    "RiderPayoutCreateRequest", "RiderPayoutUpdateRequest", "RiderPayoutStatusUpdateRequest", "RiderPayoutResponse"
+    "RiderPayoutCreateRequest", "RiderPayoutUpdateRequest", "RiderPayoutStatusUpdateRequest", "RiderPayoutResponse", "RiderPayoutSummaryItem"
 ]

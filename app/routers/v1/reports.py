@@ -8,9 +8,12 @@ from managers import (
     SalesInvoiceManager, CustomerOrderManager, InventoryManager,
     ProductManager, OutletManager, UserManager, StockTransferOrderManager,
     ActivityLogManager,CustomerOrderSchema,
+    DeliveryGuyManager, DeliveryGuyHandoverManager, OrderTransactionManager,
+    DeliveryGuySchema, DeliveryGuyHandoverSchema, OrderTransactionSchema
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus
+from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, PaymentMethod, OutletCollectionStatus
+from utils.functions import ensure_date
 import calendar
 
 settings = get_settings()
@@ -25,6 +28,9 @@ outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
 transfer_manager = StockTransferOrderManager(engine)
 activity_manager = ActivityLogManager(engine)
+delivery_guy_manager = DeliveryGuyManager(engine)
+handover_manager = DeliveryGuyHandoverManager(engine)
+transaction_manager = OrderTransactionManager(engine)
 
 router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 
@@ -33,7 +39,7 @@ router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 async def get_outlet_orders(
     outlet_id: str,
     role: Optional[str] = None,
-    status: Optional[OrderStatus] = None,
+    order_status: Optional[OrderStatus] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     limit: int = 100,
@@ -70,8 +76,8 @@ async def get_outlet_orders(
         
         # Build filters
         filters = {"assigned_outlet_id": outlet_id}
-        if status:
-            filters["order_status"] = status
+        if order_status:
+            filters["order_status"] = order_status
             
         # Fetch all orders for this outlet
         orders_result = await order_manager.fetch_all(
@@ -101,7 +107,7 @@ async def get_outlet_orders(
         
         for order in orders_result.items:
             # Apply date filtering if specified
-            order_date = order.order_date.date()
+            order_date = ensure_date(order.order_date)
             if from_date and order_date < from_date:
                 continue
             if to_date and order_date > to_date:
@@ -167,7 +173,7 @@ async def get_outlet_orders(
             "commission_summary": commission_summary,  # NEW: Commission summary by status
             "filters_applied": {
                 "role": role if role else "All",
-                "status": status.value if status else None,
+                "status": order_status.value if order_status else None,
                 "from_date": from_date.isoformat() if from_date else None,
                 "to_date": to_date.isoformat() if to_date else None,
                 "limit": limit,
@@ -458,7 +464,7 @@ async def get_order_performance(
         # Filter by date range
         period_orders = [
             order for order in orders.items
-            if from_date <= order.order_date.date() <= to_date
+            if from_date <= ensure_date(order.order_date) <= to_date
         ]
         
         # Calculate metrics
@@ -467,11 +473,11 @@ async def get_order_performance(
         
         status_breakdown = {}
         for order in period_orders:
-            status = order.order_status.value
-            if status not in status_breakdown:
-                status_breakdown[status] = {"count": 0, "value": 0}
-            status_breakdown[status]["count"] += 1
-            status_breakdown[status]["value"] += float(order.total_amount)
+            os_val = order.order_status.value
+            if os_val not in status_breakdown:
+                status_breakdown[os_val] = {"count": 0, "value": 0}
+            status_breakdown[os_val]["count"] += 1
+            status_breakdown[os_val]["value"] += float(order.total_amount)
         
         # Delivery performance
         delivered_orders = [
@@ -482,7 +488,7 @@ async def get_order_performance(
         avg_delivery_time = 0
         if delivered_orders:
             total_delivery_time = sum(
-                (order.actual_delivery_date.date() - order.order_date.date()).days
+                (ensure_date(order.actual_delivery_date) - ensure_date(order.order_date)).days
                 for order in delivered_orders
             )
             avg_delivery_time = total_delivery_time / len(delivered_orders)
@@ -630,9 +636,7 @@ async def get_product_performance(
                 continue
             
             # Handle both date and datetime objects
-            delivery_date = order.actual_delivery_date
-            if hasattr(delivery_date, 'date'):
-                delivery_date = delivery_date.date()
+            delivery_date = ensure_date(order.actual_delivery_date)
             
             if from_date <= delivery_date <= to_date:
                 period_orders.append(order)
@@ -757,7 +761,7 @@ async def get_activity_logs(
         # Filter by date range
         period_logs = [
             log for log in logs.items
-            if from_date <= log.created_at.date() <= to_date
+            if from_date <= ensure_date(log.created_at) <= to_date
         ]
         
         # Get user details for logs
@@ -851,7 +855,7 @@ async def get_transfer_efficiency(
         # Filter by date range
         period_transfers = [
             transfer for transfer in transfers.items
-            if from_date <= transfer.created_at.date() <= to_date
+            if from_date <= ensure_date(transfer.created_at) <= to_date
         ]
         
         total_transfers = len(period_transfers)
@@ -859,10 +863,10 @@ async def get_transfer_efficiency(
         # Status breakdown
         status_counts = {}
         for transfer in period_transfers:
-            status = transfer.status.value
-            if status not in status_counts:
-                status_counts[status] = 0
-            status_counts[status] += 1
+            ts_val = transfer.status.value
+            if ts_val not in status_counts:
+                status_counts[ts_val] = 0
+            status_counts[ts_val] += 1
         
         # Delivery time analysis
         delivered_transfers = [
@@ -873,7 +877,7 @@ async def get_transfer_efficiency(
         avg_delivery_time = 0
         if delivered_transfers:
             total_time = sum(
-                (t.delivered_date.date() - t.created_at.date()).days
+                (ensure_date(t.delivered_date) - ensure_date(t.created_at)).days
                 for t in delivered_transfers
             )
             avg_delivery_time = total_time / len(delivered_transfers)
@@ -928,4 +932,126 @@ async def get_transfer_efficiency(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate transfer efficiency report: {str(e)}"
+        )
+
+
+@router.get("/delivery-overview")
+async def get_delivery_overview(
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """
+    Get comprehensive delivery operations overview for Super Admin
+    """
+    try:
+        # 1. Fetch all delivery guys
+        delivery_guys = await delivery_guy_manager.fetch_all(limit=1000, filters={"is_deleted": False})
+        total_riders = len(delivery_guys.items)
+        active_riders = len([dg for dg in delivery_guys.items if dg.is_active_for_delivery])
+        
+        # 2. Total Deliveries
+        delivered_orders = await order_manager.fetch_all(
+            filters={"order_status": OrderStatus.DELIVERED},
+            limit=50000
+        )
+        total_deliveries = len(delivered_orders.items)
+        
+        # 3. Global Pending Cash Calculation
+        # Note: We sum cash balances from all riders
+        # Total Collected (Cash Transactions received by riders)
+        rider_user_ids = {dg.user_id for dg in delivery_guys.items}
+        transactions = await transaction_manager.fetch_all(
+            filters={
+                "payment_method": PaymentMethod.CASH,
+                "payment_status": PaymentStatus.PAID
+            },
+            limit=50000
+        )
+        total_collected = sum(((t.amount_paid or Decimal("0.00")) for t in transactions.items if t.received_by in rider_user_ids), Decimal("0.00"))
+        
+        # Total Handed Over (Confirmed handovers)
+        handovers = await handover_manager.fetch_all(
+            filters={"status": OutletCollectionStatus.CONFIRMED},
+            limit=10000
+        )
+        total_handed_over = sum(((h.amount or Decimal("0.00")) for h in handovers.items), Decimal("0.00"))
+        
+        total_pending_cash = total_collected - total_handed_over
+        
+        # 4. Pre-group data by outlet for efficiency (O(N) instead of O(N*M))
+        from collections import defaultdict
+        
+        orders_by_outlet = defaultdict(list)
+        for o in delivered_orders.items:
+            orders_by_outlet[o.assigned_outlet_id].append(o)
+            
+        transactions_by_rider = defaultdict(list)
+        for t in transactions.items:
+            transactions_by_rider[t.received_by].append(t)
+            
+        handovers_by_outlet = defaultdict(list)
+        for h in handovers.items:
+            handovers_by_outlet[h.outlet_id].append(h)
+            
+        # 5. Outlet Performance
+        outlets = await outlet_manager.fetch_all(limit=100, filters={"is_active": True})
+        outlet_performance_list = []
+        
+        for outlet in outlets.items:
+            outlet_riders = [dg for dg in delivery_guys.items if dg.outlet_id == outlet.uid]
+            outlet_rider_user_ids = {dg.user_id for dg in outlet_riders}
+            
+            outlet_active = len([dg for dg in outlet_riders if dg.is_active_for_delivery])
+            
+            # Use pre-grouped data
+            outlet_delivered_orders = orders_by_outlet.get(outlet.uid, [])
+            outlet_deliveries = len(outlet_delivered_orders)
+            
+            # Pending cash for this outlet
+            outlet_collected = Decimal("0.00")
+            for rider_id in outlet_rider_user_ids:
+                rider_txs = transactions_by_rider.get(rider_id, [])
+                outlet_collected += sum(((t.amount_paid or Decimal("0.00")) for t in rider_txs), Decimal("0.00"))
+                
+            outlet_handovers = handovers_by_outlet.get(outlet.uid, [])
+            outlet_handed_over = sum(((h.amount or Decimal("0.00")) for h in outlet_handovers), Decimal("0.00"))
+            outlet_pending = outlet_collected - outlet_handed_over
+            
+            # Calculate On-Time Delivery Rate
+            on_time_count = 0
+            for o in outlet_delivered_orders:
+                actual_date = ensure_date(o.actual_delivery_date)
+                expected_date = ensure_date(o.expected_delivery_date)
+                
+                if actual_date and expected_date and actual_date <= expected_date:
+                    on_time_count += 1
+            
+            on_time_rate = 0
+            if outlet_deliveries > 0:
+                on_time_rate = round((on_time_count / outlet_deliveries) * 100, 1)
+            
+            outlet_performance_list.append({
+                "id": outlet.uid,
+                "name": outlet.outlet_name,
+                "code": outlet.outlet_code,
+                "riders": len(outlet_riders),
+                "active": outlet_active,
+                "deliveries": outlet_deliveries,
+                "pendingCash": float(outlet_pending),
+                "onTimeRate": f"{on_time_rate}%"
+            })
+            
+        return {
+            "total_riders": total_riders,
+            "active_riders": active_riders,
+            "total_deliveries": total_deliveries,
+            "total_pending_cash": float(total_pending_cash),
+            "outlet_performance": outlet_performance_list
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error in delivery-overview: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch delivery overview: {str(e)}"
         )

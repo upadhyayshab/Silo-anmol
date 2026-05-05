@@ -127,21 +127,8 @@ async def create_delivery_guy(
     _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
-        # 1. Handle email generation if not provided
+        # 1. Use email from payload (frontend will send test emails)
         email = payload.email
-        if not email:
-            # Generate email from name: lowercase, spaces to dots, alphanumeric only
-            name_slug = re.sub(r'[^a-z0-9]', '.', payload.full_name.lower())
-            name_slug = re.sub(r'\.+', '.', name_slug).strip('.')
-            email = f"{name_slug}@silofortune.com"
-
-        # 2. Check if user already exists by email or phone
-        existing_user = await user_manager.fetch_all(filters={"email": email})
-        if existing_user.items:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"User with email {email} already exists"
-            )
         
         existing_phone = await user_manager.fetch_all(filters={"phone": payload.phone})
         if existing_phone.items:

@@ -106,6 +106,10 @@ class OutletCollectionStatus(str, Enum):
     NOT_RECEIVED = "NOT_RECEIVED"
 
 
+class PayoutFrequency(str, Enum):
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"
+
 class PayoutStatus(str, Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
@@ -127,6 +131,7 @@ __all__ = [
     "OutletPaymentSubMode",
     "OutletCollectionStatus",
     "PayoutStatus",
+    "PayoutFrequency",
     "HASSAN_OUTLET_ID"
 ]
 
