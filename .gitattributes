@@ -1,0 +1,4 @@
+Jenkinsfile-prod merge=ours
+erp-backend-prod.json merge=ours
+Jenkinsfile-dev merge=ours
+erp-backend-dev.json merge=ours
