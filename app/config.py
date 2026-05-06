@@ -105,7 +105,11 @@ class Settings(BaseSettings):
 
     # Medusa webhook
     store_url:str = os.getenv("STORE_URL","https://store-backend.gausampurna.co")
-    
+
+    # Driver App Configuration (from environment)
+    driver_url: str = os.getenv("DRIVER_URL", "")
+    driver_api_key: str = os.getenv("DRIVER_API_KEY", "Delivery-secret-key")
+
     # =============================================================================
     # COMPUTED PROPERTIES
     # =============================================================================

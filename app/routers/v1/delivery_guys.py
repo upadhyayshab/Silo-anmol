@@ -91,32 +91,11 @@ async def list_delivery_guys(
             limit=limit,
             offset=offset,
             sorts=sorts,
-            filters=filters or None
+            filters=filters ,
+            joins = [DeliveryGuySchema.user, DeliveryGuySchema.outlet]
         )
-        
-        responses = []
-        for dg in delivery_guys.items:
-            try:
-                user = await user_manager.fetch(dg.user_id)
-                outlet = await outlet_manager.fetch(dg.outlet_id)
-                user_resp = UserResponse.from_orm(user)
-                outlet_resp = OutletResponse.from_orm(outlet)
-                
-                responses.append(DeliveryGuyResponse(
-                    uid=dg.uid,
-                    user_id=dg.user_id,
-                    outlet_id=dg.outlet_id,
-                    is_active_for_delivery=dg.is_active_for_delivery,
-                    payout_frequency=dg.payout_frequency,
-                    is_deleted=dg.is_deleted,
-                    created_at=dg.created_at,
-                    user=user_resp,
-                    outlet=outlet_resp
-                ))
-            except:
-                continue
 
-        return ListResponse(items=responses, count=len(responses))
+        return delivery_guys.model_dump()
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -297,7 +276,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                             payment_method=order.payment_method,
                             amount_paid=amount_to_collect,
                             notes=f"Auto-reconciled from bulk webhook. Remarks: {item.remarks}",
-                            received_by=item.delivery_person_id or order.telecaller_id
+                            received_by=item.delivery_person_id or order.delivery_guy_id
                         )
                         await transaction_manager.create(transaction)
                         updates["has_auto_reconciled"] = True

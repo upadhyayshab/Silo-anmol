@@ -680,11 +680,13 @@ async def get_transfers(
             if current_user.outlet_id:
                 # For outlet managers, we need to fetch transfers separately and combine
                 # since SQLAlchemy doesn't support MongoDB-style $or in our current setup
-                to_outlet_transfers = await transfer_manager.fetch_all(
-                    filters={"to_outlet_id": current_user.outlet_id},
-                    limit=limit,
-                    offset=offset
-                )
+                to_outlet_id
+                if to_outlet_id :
+                    to_outlet_transfers = await transfer_manager.fetch_all(
+                        filters={"to_outlet_id": to_outlet_id},
+                        limit=limit,
+                        offset=offset
+                    )
                 from_outlet_transfers = await transfer_manager.fetch_all(
                     filters={"from_outlet_id": current_user.outlet_id},
                     limit=limit,
@@ -698,13 +700,10 @@ async def get_transfers(
                 for transfer in from_outlet_transfers.items:
                     all_transfers[transfer.uid] = transfer
                 
-                # Convert back to list and apply additional filters
                 filtered_transfers = []
                 for transfer in all_transfers.values():
-                    # Apply status filter if specified
-                    if transfer_status and transfer.status != transfer_status:
-                        continue
-                    # Apply date filters
+                    if transfer_status:
+                        filters["status"] = transfer_status
                     if from_date and transfer.created_at.date() < from_date:
                         continue
                     if to_date and transfer.created_at.date() > to_date:

@@ -77,7 +77,7 @@ async def get_cash_balance(
 @router.post("", response_model=DeliveryHandoverResponse)
 async def create_handover(
     payload: DeliveryHandoverCreateRequest,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, allowed_scopes=["delivery:write"]))
 ):
     """
     Create a new cash handover record
