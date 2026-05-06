@@ -86,6 +86,10 @@
                 {
                     "name": "STORE_URL",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/STORE_URL"
+                },
+                {
+                    "name": "DRIVER_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DRIVER_URL"
                 }
             ],
             "logConfiguration": {
