@@ -77,14 +77,16 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
         for relation_key, related_filter in relationship_filters.items():
             relation = mapper.relationships[relation_key]
             related_model = relation.mapper.class_
-            related_alias = aliased(related_model)
-            query = query.join(related_alias)
 
             if not relation.uselist:
-                # Recursively filter for single relationships
-                query = await cls._filter(query, related_filter, related_model)
+                # For single relationships, join the alias and recurse using the alias as the schema
+                # This ensures SQLAlchemy can link the filter to the joined table.
+                related_alias = aliased(related_model)
+                query = query.join(related_alias, getattr(schema, relation_key))
+                query = await cls._filter(query, related_filter, related_alias)
             else:
-                # Handle collections (any/all matching)
+                # For collections, we use .any() which handles filtering via subqueries.
+                # We avoid joining at the root level to prevent duplicate parent rows.
                 if isinstance(related_filter, dict):
                     subquery = db.select(related_model)
                     subquery = await cls._filter(subquery, related_filter, related_model)

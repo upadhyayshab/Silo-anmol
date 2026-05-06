@@ -1106,7 +1106,11 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     """
     try:
         filters = {}
-        joins = [CustomerOrderSchema.items, CustomerOrderSchema.delivery_person ] # Always join these for consistent response
+        # Nested join [items, items.product] ensures products are included for each item
+        joins = [
+            [CustomerOrderSchema.items, OrderItemSchema.product], 
+            CustomerOrderSchema.delivery_person 
+        ]
         
         # 1. Role-based isolation (skip for microservice)
         if current_user_id != "microservice":
