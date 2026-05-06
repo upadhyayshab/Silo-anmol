@@ -20,7 +20,8 @@ from models import (
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType, HASSAN_OUTLET_ID
 from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
-from services import CRMService , storeService
+from services import CRMService, storeService, deliveryService
+from services.deliveryService import ScheduledDeliveryRequest, ScheduledAssignment, ScheduledOrder
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
 import uuid
@@ -41,6 +42,7 @@ tracking_manager = DeliveryTrackingManager(engine)
 
 crm_service = CRMService()
 store_service = storeService()
+delivery_service = deliveryService()
 
 router = APIRouter(prefix="/orders", tags=["Order Management"])
 
@@ -760,6 +762,7 @@ async def bulk_assign_delivery_guy_to_orders(
         results = []
         successful_count = 0
         failed_count = 0
+        scheduled_orders = []
         
         for order_id in payload.order_ids:
             try:
@@ -775,7 +778,18 @@ async def bulk_assign_delivery_guy_to_orders(
                      failed_count += 1
                      continue
                 
-                # Skip if already assigned to this person and already in DELIVERY_ALLOTTED status
+                # Collect for External Delivery Service call - run even if already assigned in ERP
+                # to ensure external service is in sync
+                scheduled_orders.append(ScheduledOrder(
+                    order_id=order.uid,
+                    address=f"{order.house_no or ''} {order.street or ''} {order.address_line}".strip(),
+                    pincode=order.pincode,
+                    latitude=str(order.lat_lon[0]) if order.lat_lon and len(order.lat_lon) > 0 else "0",
+                    longitude=str(order.lat_lon[1]) if order.lat_lon and len(order.lat_lon) > 1 else "0",
+                    priority=order.priority_level or 10
+                ))
+
+                # Skip ERP update if already assigned to this person and already in DELIVERY_ALLOTTED status
                 if order.delivery_person_id == user.uid and order.order_status == OrderStatus.DELIVERY_ALLOTTED:
                     results.append(BulkAssignmentResult(order_id=order_id, status="success", message="Already assigned"))
                     successful_count += 1
@@ -786,11 +800,6 @@ async def bulk_assign_delivery_guy_to_orders(
                     "delivery_person_id": user.uid,
                     "order_status": OrderStatus.DELIVERY_ALLOTTED
                 })
-                
-                # --- Simulate External Delivery Service API Call ---
-                # import httpx
-                # async with httpx.AsyncClient() as client:
-                #     await client.post("EXTERNAL_API_URL/assign", json={"order_id": order.uid, "rider_id": user.uid})
                 
                 results.append(BulkAssignmentResult(order_id=order_id, status="success"))
                 successful_count += 1
@@ -817,7 +826,21 @@ async def bulk_assign_delivery_guy_to_orders(
                     message=str(e)
                 ))
                 failed_count += 1
-                
+        # Trigger scheduling if there are successful assignments
+        if scheduled_orders:
+            print(f"DEBUG: Adding background task for {len(scheduled_orders)} orders to delivery_service")
+            scheduling_payload = ScheduledDeliveryRequest(
+                outlet_id=dg_profile.outlet_id,
+                assignments=[
+                    ScheduledAssignment(
+                        driver_uid=user.uid,
+                        orders=scheduled_orders,
+                        total_distance=0.0
+                    )
+                ]
+            )
+            background_tasks.add_task(delivery_service.create_scheduled_delivery, scheduling_payload)
+
         return BulkAssignmentResponse(
             successful_count=successful_count,
             failed_count=failed_count,
@@ -1016,6 +1039,7 @@ openapi_examples={
             "prepaid_amount": payload.prepaid_amount, # <--- Added here to update the row
             "total_amount": final_total_amount,
             "total_commission": total_commission,
+            "priority_level": payload.priority_level,
             "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
     
@@ -1372,6 +1396,7 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
     discount_applied = getattr(order, 'discount_applied', Decimal('0.00'))
     prepaid_amount = getattr(order, 'prepaid_amount', Decimal('0.00'))
     total_commission = getattr(order, 'total_commission', Decimal('0.00'))
+    priority_level = getattr(order, 'priority_level', 10)
     
     return OrderResponse(
         uid=order.uid,
@@ -1403,6 +1428,10 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
         prepaid_amount=prepaid_amount,
         total_amount=order.total_amount,
         total_commission=total_commission,
+        priority_level=priority_level,
+        lat_lon=getattr(order, 'lat_lon', None),
+        delivery_person_id=getattr(order, 'delivery_person_id', None),
+        delivery_person=getattr(order, 'delivery_person', None),
         items=items,
         created_at=order.created_at,
         
