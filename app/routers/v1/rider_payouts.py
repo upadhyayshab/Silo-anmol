@@ -205,6 +205,25 @@ async def list_payout_history(
         filters=filters,
         joins=[RiderPayoutSchema.rider, RiderPayoutSchema.outlet]
     )
+@router.get("/rider/{rider_id}", response_model=ListResponse[RiderPayoutResponse])
+async def list_payout_history(
+    rider_id: str,
+    filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    sorts: List[str] = Depends(D.sorting_dependency),
+    limit: int = 50,
+    offset: int = 0,
+    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+):
+    """View payout history for a specific rider"""
+    if rider_id:
+        filters["rider_id"] = rider_id
+    return await payout_manager.fetch_all(
+        limit=limit, 
+        offset=offset, 
+        sorts=sorts, 
+        filters=filters,
+        joins=[RiderPayoutSchema.rider, RiderPayoutSchema.outlet]
+    )
 
 @router.get("/{uid}", response_model=RiderPayoutResponse)
 async def get_payout_details(

@@ -8,7 +8,7 @@ from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager, DeliveryGuyManager,
     OutletMappingManager, DeliveryTrackingManager,InventorySchema,
-    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema, OutletSchema, DeliveryTrackingSchema
+    CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema, OutletSchema, DeliveryTrackingSchema , ProductSchema
 )
 from models import (
     OrderCreateRequest, ProxyOrderCreateRequest, OrderUpdateRequest, OrderStatusUpdateRequest,
@@ -843,7 +843,7 @@ async def get_order(
 ):
     """Get specific order details"""
     try:
-        order = await order_manager.fetch(order_id)
+        order = await order_manager.fetch(order_id  ,joins = [CustomerOrderSchema.items])
         
         if current_user_id != "microservice":
             # Check access permissions
@@ -862,14 +862,7 @@ async def get_order(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail="Access denied: You can only view orders for your outlet"
                     )
-        
-        # Get order items
-        order_items = await order_item_manager.fetch_all(
-            filters={"order_id": order_id}
-        )
-        
-        # Use the helper function to build proper response
-        return await get_order_response(order_id)
+        return order.model_dump()
     
     except Exception as e:
         if "not found" in str(e).lower():
@@ -1113,7 +1106,7 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     """
     try:
         filters = {}
-        joins = [CustomerOrderSchema.items, CustomerOrderSchema.delivery_person] # Always join these for consistent response
+        joins = [CustomerOrderSchema.items, CustomerOrderSchema.delivery_person ] # Always join these for consistent response
         
         # 1. Role-based isolation (skip for microservice)
         if current_user_id != "microservice":
