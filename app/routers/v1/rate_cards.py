@@ -32,7 +32,7 @@ async def create_rate_card(
         raise HTTPException(status_code=400, detail="Rate card already exists for this outlet. Use PUT to update.")
 
     new_rate_card = RateCardSchema(**payload.dict())
-    return await rate_card_manager.create(new_rate_card)
+    return await rate_card_manager.create(new_rate_card, joins=[RateCardSchema.outlet])
 
 @router.get("", response_model=ListResponse[RateCardResponse])
 async def list_rate_cards(
@@ -58,7 +58,7 @@ async def get_rate_card(
 ):
     """Get a specific rate card"""
     try:
-        return await rate_card_manager.fetch(uid)
+        return await rate_card_manager.fetch(uid, joins=[RateCardSchema.outlet])
     except:
         raise HTTPException(status_code=404, detail="Rate card not found")
 
@@ -71,7 +71,7 @@ async def update_rate_card(
     """Update a rate card"""
     updates = payload.dict(exclude_unset=True)
     try:
-        return await rate_card_manager.update(uid, updates)
+        return await rate_card_manager.update(uid, updates, joins=[RateCardSchema.outlet])
     except:
         raise HTTPException(status_code=404, detail="Rate card not found")
 
