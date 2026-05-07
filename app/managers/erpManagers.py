@@ -1,5 +1,7 @@
 import sqlalchemy as db
-from sqlalchemy.orm import relationship, aliased
+from sqlalchemy.orm import relationship, aliased, joinedload, selectinload, load_only, defer
+from sqlalchemy.orm.relationships import RelationshipProperty
+from sqlalchemy.orm.attributes import QueryableAttribute
 from sqlalchemy import and_, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
@@ -21,6 +23,115 @@ from utils.constants import (
 # ============================================================================
 
 class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
+    @classmethod
+    def _resolve_joins(cls, schema: type[BaseSchema], joins: Any, loader: Any = None) -> list[Any]:
+        """
+        Smarter join resolver that uses selectinload for collections and joinedload for scalars.
+        Supports QueryableAttribute, list, and dict for joins.
+        """
+        if joins is None:
+            return []
+
+        # Convert single join to list for uniform processing
+        if not isinstance(joins, (list, dict, set)):
+            joins_list = [joins]
+        elif isinstance(joins, set):
+            joins_list = list(joins)
+        elif isinstance(joins, dict):
+            joins_list = [joins]
+        else:
+            joins_list = joins
+
+        options = []
+        for join in joins_list:
+            if isinstance(join, QueryableAttribute):
+                prop = join.property
+                if isinstance(prop, RelationshipProperty):
+                    # Efficiency: selectinload for collections, joinedload for scalars
+                    if prop.uselist:
+                        options.append(loader.selectinload(join) if loader else selectinload(join))
+                    else:
+                        options.append(loader.joinedload(join) if loader else joinedload(join))
+            
+            elif isinstance(join, dict):
+                for key, sub_joins in join.items():
+                    attr = getattr(schema, key) if isinstance(key, str) else key
+                    prop = attr.property
+                    
+                    if isinstance(prop, RelationshipProperty):
+                        if prop.uselist:
+                            current_loader = loader.selectinload(attr) if loader else selectinload(attr)
+                        else:
+                            current_loader = loader.joinedload(attr) if loader else joinedload(attr)
+                        
+                        if sub_joins:
+                            options.extend(cls._resolve_joins(prop.mapper.class_, sub_joins, current_loader))
+                        else:
+                            options.append(current_loader)
+            
+            elif isinstance(join, (list, tuple)) and len(join) > 0:
+                # Handle [parent, child1, child2] or [parent, [child, grandchild]]
+                parent = join[0]
+                children = join[1:]
+                
+                attr = getattr(schema, parent) if isinstance(parent, str) else parent
+                prop = attr.property
+                
+                if isinstance(prop, RelationshipProperty):
+                    if prop.uselist:
+                        current_loader = loader.selectinload(attr) if loader else selectinload(attr)
+                    else:
+                        current_loader = loader.joinedload(attr) if loader else joinedload(attr)
+                    
+                    if not children:
+                        options.append(current_loader)
+                    else:
+                        for child in children:
+                            options.extend(cls._resolve_joins(prop.mapper.class_, child, current_loader))
+
+        return options
+
+    @classmethod
+    def _cls_ops(
+            cls,
+            schema: type[BaseSchema],
+            query: db.Select = None,
+            joins: list[NESTED_JOINS] = None,
+            include: list[str] = None,
+            exclude: list[str] = None,
+    ) -> db.Select:
+        """
+        Improved _ops that can be used as a class method and uses the smarter _resolve_joins.
+        """
+        assert not (include and exclude), "parameters `include` and `exclude` are mutually exclusive"
+        
+        query = db.select(schema) if query is None else query
+        
+        if joins:
+            resolved_options = cls._resolve_joins(schema, joins)
+            if resolved_options:
+                query = query.options(*resolved_options)
+        
+        if include:
+            query = query.options(load_only(
+                *(getattr(schema, col.name) for col in schema.__table__.columns if col.name in include)
+            ))
+            
+        if exclude:
+            query = query.options(defer(*(getattr(schema, col) for col in exclude)))
+            
+        return query
+
+    def _ops(
+            self,
+            query: db.Select = None,
+            joins: list[NESTED_JOINS] = None,
+            include: list[str] = None,
+            exclude: list[str] = None,
+    ) -> db.Select:
+        """Instance-level override to use the new class-level _cls_ops"""
+        return self.__class__._cls_ops(self.Schema, query, joins, include, exclude)
+
     @classmethod
     async def _filter(cls, query: db.Select, filters: NESTED_FILTERS, schema: type[BaseSchema]) -> db.Select:
         """

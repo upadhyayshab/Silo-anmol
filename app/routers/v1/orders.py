@@ -408,11 +408,16 @@ async def get_orders_count_grouped(
 @router.get("/orders-with-lsq")
 async def get_orders_with_lsq(
     filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    limit: int = 50,
+    offset: int = 0,
 ):
     try:
         orders = await order_manager.fetch_all(
             filters=filters,
-            joins = [CustomerOrderSchema.lsq_order_ad])
+            joins = [CustomerOrderSchema.lsq_order_ad , (CustomerOrderSchema.items , OrderItemSchema.product)],
+            limit=limit,
+            offset=offset
+        )
         return orders.model_dump()
     except Exception as e:
         raise HTTPException(
@@ -1134,9 +1139,10 @@ openapi_examples={
             
         return await get_order_response_with_joins(order_id,joins=[
         CustomerOrderSchema.transactions,
-        CustomerOrderSchema.telecaller,       # <--- Add this
-        CustomerOrderSchema.assigned_outlet,  # <--- Add this
-        OrderItemSchema.product               # <--- Add this to prevent the product error!
+        CustomerOrderSchema.telecaller,
+        CustomerOrderSchema.assigned_outlet,
+        CustomerOrderSchema.delivery_person,   # <--- Add this
+        OrderItemSchema.product
     ]  )
         
     except HTTPException:
@@ -1431,10 +1437,11 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
     
     # 4. Extract Top-Level Joins from the Order Model
     # We map the SQLAlchemy relationship names to the response fields
-    telecaller = getattr(order, 'telecaller', None)
-    assigned_outlet = getattr(order, 'assigned_outlet', None)
-    transactions = getattr(order, 'transactions', []) if "transactions" in join_keys else None
-    delivery_tracking = getattr(order, 'delivery_tracking', None) if "delivery_tracking" in join_keys else None
+    # Use __dict__.get to avoid lazy loading on detached instances
+    telecaller = order.__dict__.get('telecaller')
+    assigned_outlet = order.__dict__.get('assigned_outlet')
+    transactions = order.__dict__.get('transactions', []) if "transactions" in join_keys else None
+    delivery_tracking = order.__dict__.get('delivery_tracking') if "delivery_tracking" in join_keys else None
 
     # Handle backward compatibility for pricing
     gross_amount = getattr(order, 'gross_amount', order.total_amount)
@@ -1477,7 +1484,7 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
         priority_level=priority_level,
         lat_lon=getattr(order, 'lat_lon', None),
         delivery_person_id=getattr(order, 'delivery_person_id', None),
-        delivery_person=getattr(order, 'delivery_person', None),
+        delivery_person=order.__dict__.get('delivery_person'),
         items=items,
         created_at=order.created_at,
         
