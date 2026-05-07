@@ -677,56 +677,81 @@ async def get_transfers(
         # Role-based filtering
         if current_user.role == UserRole.OUTLET_MANAGER:
             # Outlet managers see transfers involving their outlet
-            if current_user.outlet_id:
-                # For outlet managers, we need to fetch transfers separately and combine
-                # since SQLAlchemy doesn't support MongoDB-style $or in our current setup
-                to_outlet_id
-                if to_outlet_id :
-                    to_outlet_transfers = await transfer_manager.fetch_all(
-                        filters={"to_outlet_id": to_outlet_id},
-                        limit=limit,
-                        offset=offset
-                    )
-                from_outlet_transfers = await transfer_manager.fetch_all(
-                    filters={"from_outlet_id": current_user.outlet_id},
-                    limit=limit,
-                    offset=offset
+            if not current_user.outlet_id:
+                return ListResponse(items=[], count=0)
+            
+            my_id = current_user.outlet_id
+            
+            # Base filters common to both queries
+            base_filters = {}
+            if transfer_status:
+                base_filters["status"] = transfer_status
+            if requested_by:
+                base_filters["requested_by"] = requested_by
+                
+            all_transfers_items = []
+            
+            # Scenario 1: Incoming 
+            if to_outlet_id is None or to_outlet_id == my_id:
+                in_filters = base_filters.copy()
+                in_filters["to_outlet_id"] = my_id
+                if from_outlet_id is not None:
+                    in_filters["from_outlet_id"] = from_outlet_id
+                
+                # Fetch more than limit to allow for combined filtering/sorting
+                incoming_res = await transfer_manager.fetch_all(
+                    filters=in_filters, 
+                    limit=max(limit + offset, 100)
                 )
+                all_transfers_items.extend(incoming_res.items)
+            
+            # Scenario 2: Outgoing 
+            if from_outlet_id is None or from_outlet_id == my_id:
+                out_filters = base_filters.copy()
+                out_filters["from_outlet_id"] = my_id
+                if to_outlet_id is not None:
+                    out_filters["to_outlet_id"] = to_outlet_id
                 
-                # Combine and deduplicate transfers
-                all_transfers = {}
-                for transfer in to_outlet_transfers.items:
-                    all_transfers[transfer.uid] = transfer
-                for transfer in from_outlet_transfers.items:
-                    all_transfers[transfer.uid] = transfer
+                outgoing_res = await transfer_manager.fetch_all(
+                    filters=out_filters,
+                    limit=max(limit + offset, 100)
+                )
+                all_transfers_items.extend(outgoing_res.items)
                 
-                filtered_transfers = []
-                for transfer in all_transfers.values():
-                    if transfer_status:
-                        filters["status"] = transfer_status
-                    if from_date and transfer.created_at.date() < from_date:
-                        continue
-                    if to_date and transfer.created_at.date() > to_date:
-                        continue
-                    filtered_transfers.append(transfer)
-                
-                # Build responses
-                transfer_responses = []
-                for transfer in filtered_transfers[:limit]:
-                    try:
-                        transfer_response = await get_transfer_response(transfer.uid)
-                        transfer_responses.append(transfer_response)
-                    except Exception as e:
-                        print(f"Error processing transfer {transfer.uid}: {str(e)}")
-                        continue
-                
-                return ListResponse(items=transfer_responses, count=len(transfer_responses))
-        # elif current_user.role == UserRole.WAREHOUSE_MANAGER:
-        #     # Warehouse managers see transfers involving warehouse (from_outlet_id = NULL)
-        #     filters["from_outlet_id"] = None
+            # Deduplicate and sort
+            unique_transfers = {t.uid: t for t in all_transfers_items}
+            sorted_transfers = sorted(
+                unique_transfers.values(), 
+                key=lambda x: x.created_at, 
+                reverse=True
+            )
+            
+            # Apply date filters
+            filtered_transfers = []
+            for transfer in sorted_transfers:
+                if from_date and transfer.created_at.date() < from_date:
+                    continue
+                if to_date and transfer.created_at.date() > to_date:
+                    continue
+                filtered_transfers.append(transfer)
+            
+            # Apply limit and offset
+            final_selection = filtered_transfers[offset : offset + limit]
+            
+            # Build responses
+            transfer_responses = []
+            for transfer in final_selection:
+                try:
+                    transfer_response = await get_transfer_response(transfer.uid)
+                    transfer_responses.append(transfer_response)
+                except Exception as e:
+                    print(f"Error processing transfer {transfer.uid}: {str(e)}")
+                    continue
+            
+            return ListResponse(items=transfer_responses, count=len(filtered_transfers))
         
-        # Apply additional filters for admins or if user has broader access
-        if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN , UserRole.WAREHOUSE_MANAGER]:
+        # Apply filters for admins or if user has broader access
+        if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WAREHOUSE_MANAGER]:
             if transfer_status:
                 filters["status"] = transfer_status
             if from_outlet_id is not None:
@@ -739,31 +764,30 @@ async def get_transfers(
             filters["status"] = transfer_status
         
         # For non-outlet managers, use normal filtering
-        if current_user.role != UserRole.OUTLET_MANAGER:
-            # Fetch transfers without joins to prevent SQLAlchemy loader options error
-            transfers = await transfer_manager.fetch_all(
-                filters=filters,
-                limit=limit,
-                offset=offset
-            )
-            
-            transfer_responses = []
-            for transfer in transfers.items:
-                try:
-                    # Filter by date range if specified
-                    if from_date and transfer.created_at.date() < from_date:
-                        continue
-                    if to_date and transfer.created_at.date() > to_date:
-                        continue
-                    
-                    transfer_response = await get_transfer_response(transfer.uid)
-                    transfer_responses.append(transfer_response)
-                except Exception as e:
-                    # Log error but continue with other transfers
-                    print(f"Error processing transfer {transfer.uid}: {str(e)}")
+        # Fetch transfers without joins to prevent SQLAlchemy loader options error
+        transfers = await transfer_manager.fetch_all(
+            filters=filters,
+            limit=limit,
+            offset=offset
+        )
+        
+        transfer_responses = []
+        for transfer in transfers.items:
+            try:
+                # Filter by date range if specified
+                if from_date and transfer.created_at.date() < from_date:
                     continue
-            
-            return ListResponse(items=transfer_responses, count=len(transfer_responses))
+                if to_date and transfer.created_at.date() > to_date:
+                    continue
+                
+                transfer_response = await get_transfer_response(transfer.uid)
+                transfer_responses.append(transfer_response)
+            except Exception as e:
+                # Log error but continue with other transfers
+                print(f"Error processing transfer {transfer.uid}: {str(e)}")
+                continue
+        
+        return ListResponse(items=transfer_responses, count=len(transfer_responses))
     
     except Exception as e:
         # Handle "record not found" errors gracefully
