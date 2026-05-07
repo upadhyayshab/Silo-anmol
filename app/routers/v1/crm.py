@@ -12,7 +12,7 @@ from managers import (
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
     InventoryManager, ProductManager, OutletManager, UserManager,
     InventorySchema, CustomerOrderSchema, OrderItemSchema, OrderTransactionSchema,
-    ActivityLogManager, ActivityLogSchema, OutletSchema, LSQTelecallerMappingSchema, LSQTelecallerMappingManager
+    ActivityLogManager, ActivityLogSchema, OutletSchema, LSQTelecallerMappingSchema, LSQTelecallerMappingManager ,LSQOrderAdSchema , LSQOrderAdManager
 )
 from services import CRMService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
@@ -34,7 +34,7 @@ outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
 activity_manager = ActivityLogManager(engine)
 lsq_telecaller_manager = LSQTelecallerMappingManager(engine)
-
+lsq_order_ad_manager = LSQOrderAdManager(engine)
 crm_service = CRMService()
 
 router = APIRouter(prefix="/crm", tags=["CRM"])
@@ -90,10 +90,12 @@ async def test(district: Optional[str] = None, pincode: Optional[str] = None, ta
         try:
             resolved_district = get_district(pincode)
             district = resolved_district[0] if isinstance(resolved_district, list) and resolved_district else resolved_district
+            taluk = resolved_district[0].get('taluk')
         except:
             pass
             
     outlet_dict["lib_dictrict"] = district
+    outlet_dict["lib_taluk"] = taluk
     return outlet_dict
     # outlet = await order_manager.fetch(
     #         pincode,
@@ -106,24 +108,7 @@ async def test(district: Optional[str] = None, pincode: Optional[str] = None, ta
     # await order_creation_success_activity(order_id)
 
 @router.post("/webhook")
-async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None, openapi_examples={
-    "new_order": {
-        "summary": "New CRM Order",
-        "description": "Standard payload for a new order received from external CRM.",
-        "value": {
-            "customer_name": "Jane Doe",
-            "customer_phone": "9876543210",
-            "address_line": "3rd main street",
-            "district": "Bangalore",
-            "state": "Karnataka",
-            "pincode": "573001",
-            "items": [
-                {"product_id": "product-uuid-1", "quantity": 1},
-                {"product_id": "product-uuid-2", "quantity": 2}
-            ]
-        }
-    }
-})):
+async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None)):
     """Receives webhook from CRM and processes it in background"""
     background_tasks.add_task(process_crm_orders, payload)
     return {"message": "Webhook received, processing in background"}
@@ -450,7 +435,7 @@ async def process_crm_orders(payload: dict):
                 subtotal=item_data["subtotal"],
                 product_manual_discount=item_data["product_manual_discount"]
             )
-            print(order_item)
+            print(order_item.model_dump())
             await order_item_manager.create(order_item)
             
         # 7. Create Prepaid Transaction if Online
@@ -470,6 +455,26 @@ async def process_crm_orders(payload: dict):
                 print(f"✅ Created prepaid transaction for {prepaid_amt_dec}")
             except Exception as txn_err:
                 print(f"⚠️ Failed to create prepaid transaction: {str(txn_err)}")
+
+                    
+            # lsq ad data on the lead object
+        lsq_order_ad_data = LSQOrderAdSchema(
+            lead_id=customer_data.get("ProspectID"),
+            order_id=created_order.uid,
+            ad_id=customer_data.get("mx_Ad_Id"),
+            ad_set_id=customer_data.get("mx_Ad_Set_Id"),
+            campaign_id=customer_data.get("mx_Campaign_Id"),
+            lead_stage=customer_data.get("ProspectStage"),
+            lead_source=customer_data.get("Source"),
+            source_campaign=customer_data.get("SourceCampaign")
+        )
+        try:
+            lsq_order_ad = await lsq_order_ad_manager.create(lsq_order_ad_data)
+            print(lsq_order_ad.model_dump())
+        except Exception as lsq_order_ad_err:
+            print(lsq_order_ad_data.model_dump())
+            print(f"⚠️ Failed to create LSQ order ad data: {str(lsq_order_ad_err)}")
+
 
         # 8. Auto-assign Outlet
         assigned_outlet = await auto_assign_outlet(
@@ -498,8 +503,8 @@ async def process_crm_orders(payload: dict):
                 )
                 
         # 10. Push order-confirmed (ORDER_STATUS) activity to CRM
-        await push_outlet_assigned(engine, created_order.uid, district, pincode)
-        await order_creation_success_activity(created_order.uid)
+        # await push_outlet_assigned(engine, created_order.uid, district, pincode)
+        # await order_creation_success_activity(created_order.uid)
             
         # 11. Log Activity
         try:

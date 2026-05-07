@@ -927,13 +927,16 @@ class RiderPayoutManager(ERPGenericManager[RiderPayoutSchema]):
 
 class LSQOrderAdSchema(BaseSchema):
     __tablename__ = "lsq_order_ad"
+
     lead_id = db.Column(db.String(255), nullable=False)
     order_id = db.Column(db.String, db.ForeignKey("customer_orders.uid"), nullable=False, index=True)
-    lead_source = db.Column(db.String(255), nullable=False)
-    source_campaign = db.Column(db.String(255), nullable=False)
-    ad_id = db.Column(db.String(255), nullable=False)
-    campaign_id = db.Column(db.String(255), nullable=False)
-    lead_stage = db.Column(db.String(255), nullable=False)
+    lead_source = db.Column(db.String(255), nullable=True)
+    source_campaign = db.Column(db.String(255), nullable=True)
+    ad_id = db.Column(db.String(255), nullable=True)
+    ad_set_id = db.Column(db.String(255), nullable=True)
+    campaign_id = db.Column(db.String(255), nullable=True)
+    lead_stage = db.Column(db.String(255), nullable=True)
+    utm_param = db.Column(db.JSON, nullable=True)
 
     order = relationship("CustomerOrderSchema", foreign_keys=[order_id])
 
@@ -995,6 +998,9 @@ __all__ = [
 
     # Delivery Guys
     "DeliveryGuySchema", "DeliveryGuyManager",
+
+    # LSQ Order Ad
+    "LSQOrderAdSchema", "LSQOrderAdManager",
     
     # Delivery Guy Handovers
     "DeliveryGuyHandoverSchema", "DeliveryGuyHandoverManager",
