@@ -820,6 +820,7 @@ class RateCardResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+    outlet: Optional[OutletResponse] = None
 
     class Config:
         from_attributes = True

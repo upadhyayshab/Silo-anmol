@@ -377,6 +377,48 @@ async def create_order(
             detail=f"Failed to create order: {str(e)}"
         )
 
+@router.get("/orders-count")
+async def get_orders_count(
+    filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
+):
+    try:
+        order_count = await order_manager.get_orders_count(filters=filters)
+        return {"count": order_count}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch orders count: {str(e)}"
+        ) 
+
+@router.get("/orders-count-grouped")
+async def get_orders_count_grouped(
+    group_by: str = Query(..., description="Column to group by (e.g., delivery_person_id)"),
+    filters: Dict[str, Any] = Depends(D.filtering_dependency),
+):
+    try:
+        counts = await order_manager.get_orders_count_grouped(group_by=group_by, filters=filters)
+        return counts
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch grouped orders count: {str(e)}"
+        ) 
+
+@router.get("/orders-with-lsq")
+async def get_orders_with_lsq(
+    filters: Dict[str, Any] = Depends(D.filtering_dependency),
+):
+    try:
+        orders = await order_manager.fetch_all(
+            filters=filters,
+            joins = [CustomerOrderSchema.lsq_order_ad])
+        return orders.model_dump()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch orders with lsq: {str(e)}"
+        )
 
 @router.post("/proxy", response_model=OrderResponse)
 async def create_proxy_order(

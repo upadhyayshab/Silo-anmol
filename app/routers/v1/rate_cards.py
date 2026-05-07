@@ -43,7 +43,13 @@ async def list_rate_cards(
     _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
 ):
     """List all rate cards"""
-    return await rate_card_manager.fetch_all(limit=limit, offset=offset, sorts=sorts, filters=filters)
+    return await rate_card_manager.fetch_all(
+        limit=limit, 
+        offset=offset, 
+        sorts=sorts, 
+        filters=filters,
+        joins=[RateCardSchema.outlet]
+    )
 
 @router.get("/{uid}", response_model=RateCardResponse)
 async def get_rate_card(

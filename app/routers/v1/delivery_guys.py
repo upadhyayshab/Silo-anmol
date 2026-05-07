@@ -108,7 +108,6 @@ async def create_delivery_guy(
     _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
-        # 1. Use email from payload (frontend will send test emails)
         email = payload.email
         
         existing_phone = await user_manager.fetch_all(filters={"phone": payload.phone})
@@ -259,11 +258,28 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
 
             order_uid = order.uid
             updates = {}
+            if item.delivery_person_id:
+                updates["delivery_person_id"] = item.delivery_person_id
+
+            # Determine current attempt number for this order
+            last_tracking = await tracking_manager.fetch_all(
+                filters={"order_id": order_uid}, 
+                sorts=["created_at"], 
+                limit=1
+            )
+            try:
+                # Ensure we treat attempt_number as an integer
+                current_attempt = int(last_tracking.items[0].attempt_number) if last_tracking.items else 0
+            except (ValueError, TypeError):
+                current_attempt = 0
+            new_attempt_number = current_attempt
+
             new_status = order.order_status
             
             if item.status == "delivered":
                 new_status = OrderStatus.DELIVERED
                 updates["actual_delivery_date"] = datetime.utcnow()
+                new_attempt_number = current_attempt + 1
                 
                 # Process reconciliation and inventory only if order status is changing to delivered
                 if order.order_status != OrderStatus.DELIVERED:
@@ -308,6 +324,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
 
             elif item.status in ["postponed", "attempted"]:
                 new_status = OrderStatus.POSTPONED if item.status == "postponed" else OrderStatus.ATTEMPTED
+                new_attempt_number = current_attempt + 1
                 if item.postpone_date:
                     updates["expected_delivery_date"] = item.postpone_date
                 else:
@@ -340,10 +357,11 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 order_id=order_uid,
                 outlet_id=order.assigned_outlet_id,
                 telecaller_id=order.telecaller_id,
-                delivery_person_id=item.delivery_person_id,
+                delivery_person_id=item.delivery_person_id or order.delivery_person_id,
                 status_changed_to=new_status,
                 postpone_date=item.postpone_date,
-                priority_level=updates.get("priority_level", 0),
+                attempt_number=new_attempt_number,
+                priority_level=updates.get("priority_level", order.priority_level or 0),
                 remarks=item.remarks,
                 changed_by=item.delivery_person_id or order.telecaller_id
             )

@@ -3,7 +3,8 @@ from sqlalchemy.orm import relationship, aliased
 from sqlalchemy import and_, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+
 
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
 from SharedBackend.managers.base import NESTED_JOINS, NESTED_FILTERS
@@ -52,7 +53,8 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
 
         # Handle relationship filters first
         relationship_filters = {}
-        mapper = db.inspect(schema)
+        insp = db.inspect(schema)
+        mapper = insp.mapper if hasattr(insp, "mapper") else insp
         for relation in mapper.relationships:
             if relation.key in filters:
                 relationship_filters[relation.key] = filters.pop(relation.key)
@@ -435,10 +437,49 @@ class CustomerOrderSchema(BaseSchema):
     items = relationship("OrderItemSchema", back_populates="order", cascade="all, delete-orphan")
     transactions = relationship("OrderTransactionSchema", back_populates="order", cascade="all, delete-orphan")
     delivery_tracking = relationship("DeliveryTrackingSchema", back_populates="order", cascade="all, delete-orphan")
+    lsq_order_ad = relationship("LSQOrderAdSchema", back_populates="order",cascade="all, delete-orphan")
 
 
 class CustomerOrderManager(ERPGenericManager[CustomerOrderSchema]):
-    pass
+    async def get_orders_count(self, filters: Dict[str, Any] = None, session: AsyncSession = None) -> int:
+        """Get the count of orders based on dynamic filters"""
+        if filters is None:
+            filters = {}
+        
+        # Use the overridden _filter from ERPGenericManager to support dynamic operators
+        query = db.select(db.func.count(CustomerOrderSchema.uid))
+        query = await self._filter(query, filters, CustomerOrderSchema)
+        
+        if session:
+            result = await session.execute(query)
+            return result.scalar() or 0
+        
+        async with self.session_factory() as session:
+            result = await session.execute(query)
+            return result.scalar() or 0
+
+    async def get_orders_count_grouped(self, group_by: str, filters: Dict[str, Any] = None, session: AsyncSession = None) -> List[Dict[str, Any]]:
+        """Get the count of orders grouped by a specific column based on dynamic filters"""
+        if filters is None:
+            filters = {}
+        
+        col_attr = getattr(CustomerOrderSchema, group_by, None)
+        if col_attr is None:
+            raise ValueError(f"Invalid group_by column: {group_by}")
+
+        query = db.select(col_attr, db.func.count(CustomerOrderSchema.uid))
+        query = await self._filter(query, filters, CustomerOrderSchema)
+        query = query.group_by(col_attr)
+        
+        async def execute(s):
+            res = await s.execute(query)
+            return [{"key": row[0], "count": row[1]} for row in res.all()]
+
+        if session:
+            return await execute(session)
+        
+        async with self.session_factory() as session:
+            return await execute(session)
 
 
 class OrderItemSchema(BaseSchema):
@@ -880,7 +921,24 @@ class RiderPayoutSchema(BaseSchema):
 class RiderPayoutManager(ERPGenericManager[RiderPayoutSchema]):
     pass
 
+# ============================================================================
+# LSQ ORDER AD
+# ============================================================================
 
+class LSQOrderAdSchema(BaseSchema):
+    __tablename__ = "lsq_order_ad"
+    lead_id = db.Column(db.String(255), nullable=False)
+    order_id = db.Column(db.String, db.ForeignKey("customer_orders.uid"), nullable=False, index=True)
+    lead_source = db.Column(db.String(255), nullable=False)
+    source_campaign = db.Column(db.String(255), nullable=False)
+    ad_id = db.Column(db.String(255), nullable=False)
+    campaign_id = db.Column(db.String(255), nullable=False)
+    lead_stage = db.Column(db.String(255), nullable=False)
+
+    order = relationship("CustomerOrderSchema", foreign_keys=[order_id])
+
+class LSQOrderAdManager(ERPGenericManager[LSQOrderAdSchema]):
+    pass
 # ============================================================================
 # EXPORTS
 # ============================================================================
