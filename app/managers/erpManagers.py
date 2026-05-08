@@ -5,7 +5,7 @@ from sqlalchemy.orm.attributes import QueryableAttribute
 from sqlalchemy import and_, or_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
@@ -162,6 +162,25 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
             '$in_ci': lambda col, val: and_(*[col.ilike(v) for v in val]) if isinstance(val, list) else col.ilike(val)
         }
 
+        # Expand dot notation into nested dictionaries
+        # e.g., {"items.product.product_name": "foo"} -> {"items": {"product.product_name": "foo"}}
+        # This allows recursive handling of nested relationship filters.
+        expanded_filters = {}
+        for key, value in filters.items():
+            if "." in key:
+                parts = key.split(".", 1)
+                parent, child = parts[0], parts[1]
+                if parent not in expanded_filters:
+                    expanded_filters[parent] = {}
+                if isinstance(expanded_filters[parent], dict):
+                    expanded_filters[parent][child] = value
+                else:
+                    # Fallback if there's a name collision
+                    expanded_filters[key] = value
+            else:
+                expanded_filters[key] = value
+        filters = expanded_filters
+
         # Handle relationship filters first
         relationship_filters = {}
         insp = db.inspect(schema)
@@ -191,30 +210,44 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
             relation = mapper.relationships[relation_key]
             related_model = relation.mapper.class_
 
-            if not relation.uselist:
-                # For single relationships, join the alias and recurse using the alias as the schema
-                # This ensures SQLAlchemy can link the filter to the joined table.
-                related_alias = aliased(related_model)
-                query = query.join(related_alias, getattr(schema, relation_key))
-                query = await cls._filter(query, related_filter, related_alias)
-            else:
-                # For collections, we use .any() which handles filtering via subqueries.
-                # We avoid joining at the root level to prevent duplicate parent rows.
-                if isinstance(related_filter, dict):
-                    subquery = db.select(related_model)
-                    subquery = await cls._filter(subquery, related_filter, related_model)
-                    condition = subquery.whereclause
-                    if condition is not None:
-                        query = query.filter(~getattr(schema, relation_key).any(~condition))
-                elif isinstance(related_filter, list):
-                    conditions = []
-                    for sub_filter in related_filter:
-                        subquery = await cls._filter(db.select(related_model), sub_filter, related_model)
-                        sub_condition = subquery.whereclause
-                        if sub_condition is not None:
-                            conditions.append(getattr(schema, relation_key).any(sub_condition))
-                    if conditions:
-                        query = query.filter(and_(*conditions))
+            if isinstance(related_filter, dict):
+                # Process nested filters by getting the combined condition from a subquery
+                subquery = db.select(related_model)
+                subquery = await cls._filter(subquery, related_filter, related_model)
+                condition = subquery.whereclause
+                
+                if condition is not None:
+                    if not relation.uselist:
+                        # For single relationships (one-to-one, many-to-one)
+                        query = query.filter(getattr(schema, relation_key).has(condition))
+                    else:
+                        # For collections (one-to-many, many-to-many)
+                        query = query.filter(getattr(schema, relation_key).any(condition))
+            
+            elif isinstance(related_filter, list) and relation.uselist:
+                # Handle list of filters for collections (OR logic between items)
+                conditions = []
+                for sub_filter in related_filter:
+                    sub_subquery = db.select(related_model)
+                    sub_subquery = await cls._filter(sub_subquery, sub_filter, related_model)
+                    sub_condition = sub_subquery.whereclause
+                    if sub_condition is not None:
+                        conditions.append(getattr(schema, relation_key).any(sub_condition))
+                if conditions:
+                    query = query.filter(and_(*conditions))
+            
+            elif isinstance(related_filter, list) and not relation.uselist:
+                # Fallback for list on single relationship (though rare)
+                # Treat as OR of conditions on the same related object
+                conditions = []
+                for sub_filter in related_filter:
+                    sub_subquery = db.select(related_model)
+                    sub_subquery = await cls._filter(sub_subquery, sub_filter, related_model)
+                    sub_condition = sub_subquery.whereclause
+                    if sub_condition is not None:
+                        conditions.append(sub_condition)
+                if conditions:
+                    query = query.filter(getattr(schema, relation_key).has(or_(*conditions)))
 
         return query
 
@@ -569,22 +602,37 @@ class CustomerOrderManager(ERPGenericManager[CustomerOrderSchema]):
             result = await session.execute(query)
             return result.scalar() or 0
 
-    async def get_orders_count_grouped(self, group_by: str, filters: Dict[str, Any] = None, session: AsyncSession = None) -> List[Dict[str, Any]]:
-        """Get the count of orders grouped by a specific column based on dynamic filters"""
+    async def get_orders_count_grouped(self, group_by: Union[str, List[str]], filters: Dict[str, Any] = None, session: AsyncSession = None) -> List[Dict[str, Any]]:
+        """Get the count of orders grouped by one or more columns based on dynamic filters"""
         if filters is None:
             filters = {}
         
-        col_attr = getattr(CustomerOrderSchema, group_by, None)
-        if col_attr is None:
-            raise ValueError(f"Invalid group_by column: {group_by}")
+        is_single = isinstance(group_by, str)
+        cols = [group_by] if is_single else group_by
+            
+        group_attrs = []
+        for col in cols:
+            col_attr = getattr(CustomerOrderSchema, col, None)
+            if col_attr is None:
+                raise ValueError(f"Invalid group_by column: {col}")
+            group_attrs.append(col_attr)
 
-        query = db.select(col_attr, db.func.count(CustomerOrderSchema.uid))
+        query = db.select(*group_attrs, db.func.count(CustomerOrderSchema.uid))
         query = await self._filter(query, filters, CustomerOrderSchema)
-        query = query.group_by(col_attr)
+        query = query.group_by(*group_attrs)
         
         async def execute(s):
             res = await s.execute(query)
-            return [{"key": row[0], "count": row[1]} for row in res.all()]
+            all_rows = res.all()
+            results = []
+            for row in all_rows:
+                if is_single:
+                    results.append({"key": row[0], "count": row[1]})
+                else:
+                    item = {cols[i]: row[i] for i in range(len(cols))}
+                    item["count"] = row[-1]
+                    results.append(item)
+            return results
 
         if session:
             return await execute(session)

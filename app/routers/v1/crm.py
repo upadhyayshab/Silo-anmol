@@ -503,8 +503,8 @@ async def process_crm_orders(payload: dict):
                 )
                 
         # 10. Push order-confirmed (ORDER_STATUS) activity to CRM
-        # await push_outlet_assigned(engine, created_order.uid, district, pincode)
-        # await order_creation_success_activity(created_order.uid)
+        await push_outlet_assigned(engine, created_order.uid, district, pincode)
+        await order_creation_success_activity(created_order.uid)
             
         # 11. Log Activity
         try:
