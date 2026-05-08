@@ -60,8 +60,14 @@ def build_crm_payload(order: CustomerOrderSchema):
     
     # Map status for CRM (LeadSquared expects specific strings sometimes)
     status_str = order.order_status.value if hasattr(order.order_status, "value") else str(order.order_status)
-    # If it's a create event, LeadSquared mapping might expect "Active" or similar, 
-    # but we'll send the actual status and let CRMService handle it.
+
+    # Derive payment status
+    if order.total_amount <= 0:
+        payment_status = "paid"
+    elif order.prepaid_amount > 0:
+        payment_status = "partially_paid"
+    else:
+        payment_status = "pending"
     
     payload = {
         "order_id": order.uid,
@@ -73,6 +79,7 @@ def build_crm_payload(order: CustomerOrderSchema):
         "city": order.district, # LeadSquared often uses 'city' for district
         "state": order.state,
         "order_status": status_str,
+        "payment_status": payment_status, # derived field for CRM
         "collection_type": order.collection_type.value if hasattr(order.collection_type, "value") else str(order.collection_type),
         "payment_method": order.payment_method.value if hasattr(order.payment_method, "value") else str(order.payment_method),
         "prepaid_amount": float(order.prepaid_amount),

@@ -453,6 +453,8 @@ async def process_crm_orders(payload: dict):
                 )
                 await transaction_manager.create(transaction)
                 print(f"✅ Created prepaid transaction for {prepaid_amt_dec}")
+                # Sync payment status activity to CRM
+                await sync_order_to_crm(engine, created_order.uid, ActivityType.PAYMENT_STATUS)
             except Exception as txn_err:
                 print(f"⚠️ Failed to create prepaid transaction: {str(txn_err)}")
 
