@@ -89,20 +89,10 @@ async def get_outlet_orders(
         
         # Process orders and apply date filtering
         order_list = []
-        status_counts = {
-            "pending": 0,
-            "delivery_allotted": 0,
-            "delivered": 0,
-            "cancelled": 0
-        }
+        status_counts = {s.value: 0 for s in OrderStatus}
         commission_summary = {
             "total_commission": 0.0,
-            "by_status": {
-                "pending": 0.0,
-                "delivery_allotted": 0.0,
-                "delivered": 0.0,
-                "cancelled": 0.0
-            }
+            "by_status": {s.value: 0.0 for s in OrderStatus}
         }
         
         for order in orders_result.items:
