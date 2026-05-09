@@ -281,6 +281,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 updates["actual_delivery_date"] = datetime.utcnow()
                 new_attempt_number = current_attempt + 1
                 
+                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
                 # Process reconciliation and inventory only if order status is changing to delivered
                 if order.order_status != OrderStatus.DELIVERED:
                     # Auto-reconcile remaining balance (total_amount is the balance to be collected)
@@ -325,6 +326,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
             elif item.status in ["postponed", "attempted"]:
                 new_status = OrderStatus.POSTPONED if item.status == "postponed" else OrderStatus.ATTEMPTED
                 new_attempt_number = current_attempt + 1
+                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
                 if item.postpone_date:
                     updates["expected_delivery_date"] = item.postpone_date
                 else:
@@ -335,6 +337,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 new_status = OrderStatus.CANCELLED
                 updates["status_remarks"] = item.remarks
                 items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
+                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.ORDER_STATUS)
                 for order_item in items.items:
                     inv_records = await inventory_manager.fetch_all(
                         filters={"product_id": order_item.product_id, "outlet_id": order.assigned_outlet_id}
@@ -367,7 +370,6 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
             )
             await tracking_manager.create(tracking_record)
             
-            background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
             if updates.pop("has_auto_reconciled", False):
                 background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.PAYMENT_STATUS)
 
