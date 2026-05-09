@@ -16,7 +16,7 @@ from managers import (
 )
 from services import CRMService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
-from utils.crm_utils import sync_order_to_crm
+from utils.crm_utils import sync_order_to_crm, map_lsq_utm_data
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod, ActivityType, LSQCreateOrder, LSQItems, HASSAN_OUTLET_ID
 from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
 from models import CrmPayload, OrderCreateRequest
@@ -206,6 +206,8 @@ async def process_crm_orders(payload: dict):
             no_of_items = int(products_data.get(LSQCreateOrder.NO_OF_ITEMS.value, 0) or 0)
             order_total = products_data.get(LSQCreateOrder.GRAND_TOTAL.value, 0)
             collection_type = products_data.get(LSQCreateOrder.COLLECTION_TYPE.value)
+            utm_first_touch = products_data.get(LSQCreateOrder.UTM_FIRST_TOUCH.value)
+            utm_last_touch = products_data.get(LSQCreateOrder.UTM_LAST_TOUCH.value)
             
             items_data = []
             item_keys = [
@@ -250,6 +252,12 @@ async def process_crm_orders(payload: dict):
             taluk = cleaned_payload.get("taluk")
             items_data = cleaned_payload.get("items", [])
             crm_order_id = cleaned_payload.get("mx_Custom_8")
+            payment_method_raw = (cleaned_payload.get("payment_method") or "").strip().lower()
+            prepaid_amount_raw = cleaned_payload.get("prepaid_amount")
+            order_total = cleaned_payload.get("order_total") or cleaned_payload.get("grand_total")
+            collection_type = cleaned_payload.get("collection_type")
+            utm_first_touch = cleaned_payload.get("utm_first_touch")
+            utm_last_touch = cleaned_payload.get("utm_last_touch")
         
         # Deduplication check: If crm_order_id is provided, check if it already exists in ERP
         if crm_order_id:
@@ -261,8 +269,6 @@ async def process_crm_orders(payload: dict):
             except Exception as e:
                 # If fetch fails (e.g. order not found), continue with creation
                 pass
-            payment_method_raw = (cleaned_payload.get("payment_method") or "").strip().lower()
-            prepaid_amount_raw = cleaned_payload.get("prepaid_amount")
         
         try:
             if pincode:
@@ -454,12 +460,20 @@ async def process_crm_orders(payload: dict):
                 await transaction_manager.create(transaction)
                 print(f"✅ Created prepaid transaction for {prepaid_amt_dec}")
                 # Sync payment status activity to CRM
+                print("payment status sync")
                 await sync_order_to_crm(engine, created_order.uid, ActivityType.PAYMENT_STATUS)
             except Exception as txn_err:
                 print(f"⚠️ Failed to create prepaid transaction: {str(txn_err)}")
 
                     
-            # lsq ad data on the lead object
+        # Construct utm_param JSON object
+        utm_param_json = {}
+        if utm_first_touch:
+            utm_param_json["utm_source_1"] = map_lsq_utm_data(utm_first_touch)
+        if utm_last_touch:
+            utm_param_json["utm_source_2"] = map_lsq_utm_data(utm_last_touch)
+
+        # lsq ad data on the lead object
         lsq_order_ad_data = LSQOrderAdSchema(
             lead_id=customer_data.get("ProspectID"),
             order_id=created_order.uid,
@@ -468,7 +482,8 @@ async def process_crm_orders(payload: dict):
             campaign_id=customer_data.get("mx_Campaign_Id"),
             lead_stage=customer_data.get("ProspectStage"),
             lead_source=customer_data.get("Source"),
-            source_campaign=customer_data.get("SourceCampaign")
+            source_campaign=customer_data.get("SourceCampaign"),
+            utm_param=utm_param_json
         )
         try:
             lsq_order_ad = await lsq_order_ad_manager.create(lsq_order_ad_data)

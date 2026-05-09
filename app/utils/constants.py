@@ -262,6 +262,8 @@ class LSQCreateOrder(str, Enum):
     PAYMENT_METHOD  = "mx_Custom_10"
     LAT_LON         = "mx_Custom_11"
     SOURCE          = "mx_Custom_12"
+    UTM_FIRST_TOUCH = "mx_Custom_14"
+    UTM_LAST_TOUCH  = "mx_Custom_15"
 
 class LSQItems(str, Enum):
     DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_1"
@@ -277,6 +279,16 @@ class LSQItems(str, Enum):
     TOTAL_PRICE              = "mx_CustomObject_11"
     PRODUCT_ID               = "mx_CustomObject_12"
     PRODUCT_DESCRIPTION      = "mx_CustomObject_81"
+
+class LSQUTMField(str, Enum):
+    UTM_ID         = "mx_CustomObject_1"
+    UTM_TERM       = "mx_CustomObject_2"
+    TIMESTAMP      = "mx_CustomObject_3"
+    SESSION_ID     = "mx_CustomObject_4"
+    UTM_MEDIUM     = "mx_CustomObject_5"
+    UTM_SOURCE     = "mx_CustomObject_6"
+    UTM_CONTENT    = "mx_CustomObject_7"
+    UTM_CAMPAIGN   = "mx_CustomObject_8"
 
 class ActivityType(str, Enum):
     ORDER_STATUS = "order_status"

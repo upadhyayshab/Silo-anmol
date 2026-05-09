@@ -2,7 +2,7 @@ import httpx
 import asyncio
 from typing import Dict, Any, Optional
 from config import get_settings
-from utils.constants import LeadSource , LSQOrderStatusActivityField ,LSQProductField , ActivityType ,LSQDeliveryStatusActivityField , LSQPaymentStatusActivityField , LSQRefundStatusActivityField ,LSQCreateOrder , LSQItems
+from utils.constants import LeadSource , LSQOrderStatusActivityField ,LSQProductField , ActivityType ,LSQDeliveryStatusActivityField , LSQPaymentStatusActivityField , LSQRefundStatusActivityField ,LSQCreateOrder , LSQItems , LSQUTMField
 from models import CrmPayload , OrderCreateRequest
 from pydantic import BaseModel
 import json
@@ -135,7 +135,9 @@ class CRMService:
         "prepaid_amount"  : LSQCreateOrder.PREPAID_AMOUNT,
         "payment_method"  : LSQCreateOrder.PAYMENT_METHOD,
         "lat_lon"         : LSQCreateOrder.LAT_LON,
-        "source"          : LSQCreateOrder.SOURCE
+        "source"          : LSQCreateOrder.SOURCE,
+        "utm_first_touch" : LSQCreateOrder.UTM_FIRST_TOUCH,
+        "utm_last_touch"  : LSQCreateOrder.UTM_LAST_TOUCH
     }
 
     LSQItems={
@@ -152,6 +154,16 @@ class CRMService:
         "total_price"              : LSQItems.TOTAL_PRICE,
         "product_id"               : LSQItems.PRODUCT_ID,
         "product_description"      : LSQItems.PRODUCT_DESCRIPTION
+    }
+    LSQUTMField = {
+        "utm_id" : LSQUTMField.UTM_ID,
+        "utm_term" : LSQUTMField.UTM_TERM,
+        "timestamp" : LSQUTMField.TIMESTAMP,
+        "session_id" : LSQUTMField.SESSION_ID,
+        "utm_medium" : LSQUTMField.UTM_MEDIUM,
+        "utm_source" : LSQUTMField.UTM_SOURCE,
+        "utm_content" : LSQUTMField.UTM_CONTENT,
+        "utm_campaign" : LSQUTMField.UTM_CAMPAIGN
     }
     # SchemaName for the product custom-object container block
     # PRODUCT_OBJECT_SCHEMA is removed as it's no longer used for LeadSquared array mapping

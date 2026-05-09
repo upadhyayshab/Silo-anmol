@@ -1,7 +1,7 @@
 from typing import Optional
 from datetime import datetime
 from decimal import Decimal
-from utils.constants import ActivityType
+from utils.constants import ActivityType, LSQUTMField
 from services import CRMService
 from managers import CustomerOrderManager, CustomerOrderSchema, OrderItemSchema, OutletSchema
 
@@ -120,3 +120,34 @@ def build_crm_payload(order: CustomerOrderSchema):
         payload["source"] = order.telecaller.role.value if hasattr(order.telecaller.role, "value") else str(order.telecaller.role)
     
     return payload
+
+def map_lsq_utm_data(raw_data: dict) -> Optional[dict]:
+    """
+    Maps raw LeadSquared custom object fields (mx_CustomObject_X) 
+    to human-readable keys based on LSQUTMField mapping.
+    Filters out None/empty values.
+    """
+    if not raw_data or not isinstance(raw_data, dict):
+        return None
+        
+    # Standard mapping based on LSQUTMField
+    mapping = {
+        LSQUTMField.UTM_ID.value: "utm_id",
+        LSQUTMField.UTM_TERM.value: "utm_term",
+        LSQUTMField.TIMESTAMP.value: "timestamp",
+        LSQUTMField.SESSION_ID.value: "session_id",
+        LSQUTMField.UTM_MEDIUM.value: "utm_medium",
+        LSQUTMField.UTM_SOURCE.value: "utm_source",
+        LSQUTMField.UTM_CONTENT.value: "utm_content",
+        LSQUTMField.UTM_CAMPAIGN.value: "utm_campaign"
+    }
+    
+    mapped_data = {}
+    for lsq_key, readable_key in mapping.items():
+        val = raw_data.get(lsq_key)
+        # Store all values even if null (to match user's requested format)
+        # or filter them? User's example had nulls for some fields.
+        # "utm_id": null
+        mapped_data[readable_key] = val
+        
+    return mapped_data if any(mapped_data.values()) else None
