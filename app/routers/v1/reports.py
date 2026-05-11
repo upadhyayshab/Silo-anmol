@@ -1066,3 +1066,66 @@ async def get_delivery_overview(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch delivery overview: {str(e)}"
         )
+
+@router.get("/outlet-product-summary")
+async def get_outlet_product_summary(
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    outlet_id: Optional[str] = None,
+    order_status: Optional[OrderStatus] = None,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
+    ))
+):
+    """
+    Get product quantity and amount summary grouped by outlet, status, product and variant (SKU).
+    """
+    try:
+        # Build filters
+        filters = {}
+        
+        # Date range filtering (nested under 'order' relationship)
+        date_filter = {}
+        if from_date:
+            date_filter["$gte"] = datetime.combine(from_date, datetime.min.time())
+        if to_date:
+            date_filter["$lte"] = datetime.combine(to_date, datetime.max.time())
+        
+        if date_filter:
+            filters["order.order_date"] = date_filter
+            
+        # Role-based outlet filtering
+        current_user = await user_manager.fetch(current_user_id)
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            filters["order.assigned_outlet_id"] = current_user.outlet_id
+        elif outlet_id:
+            filters["order.assigned_outlet_id"] = outlet_id
+            
+        if order_status:
+            filters["order.order_status"] = order_status
+            
+        # Fetch summary from manager
+        summary = await order_item_manager.get_outlet_product_summary(filters=filters)
+        
+        return {
+            "items": summary,
+            "filters_applied": {
+                "from_date": from_date,
+                "to_date": to_date,
+                "outlet_id": outlet_id if current_user.role != UserRole.OUTLET_MANAGER else current_user.outlet_id,
+                "order_status": order_status
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch outlet product summary: {str(e)}"
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Error in delivery-overview: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch delivery overview: {str(e)}"
+        )

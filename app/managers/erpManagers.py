@@ -723,10 +723,49 @@ class OrderItemManager(ERPGenericManager[OrderItemSchema]):
             status_enum = row[1]
             quantity = row[2]
             
+        return results
+
+    async def get_outlet_product_summary(self, filters: Dict[str, Any] = None, session: AsyncSession = None) -> List[Dict[str, Any]]:
+        """
+        Get product summary grouped by outlet, status, product name and variant (SKU).
+        """
+        group_by = [
+            OutletSchema.uid,
+            OutletSchema.outlet_name,
+            CustomerOrderSchema.order_status,
+            ProductSchema.uid,
+            ProductSchema.product_name,
+            ProductSchema.sku
+        ]
+        aggregations = [
+            db.func.sum(OrderItemSchema.quantity).label("total_quantity"),
+            db.func.sum(OrderItemSchema.subtotal).label("total_amount")
+        ]
+        joins = [
+            (CustomerOrderSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid),
+            (ProductSchema, OrderItemSchema.product_id == ProductSchema.uid),
+            (OutletSchema, CustomerOrderSchema.assigned_outlet_id == OutletSchema.uid)
+        ]
+        
+        rows = await self.get_aggregated_data(
+            group_by=group_by,
+            aggregations=aggregations,
+            filters=filters,
+            joins=joins,
+            session=session
+        )
+        
+        results = []
+        for row in rows:
             results.append({
-                "product": product_obj, # FastAPI's jsonable_encoder will handle this if it's a model
-                "status": status_enum.value if hasattr(status_enum, 'value') else status_enum,
-                "total_quantity": int(quantity) if quantity is not None else 0
+                "outlet_id": row[0],
+                "outlet": row[1],
+                "status": row[2].value if hasattr(row[2], 'value') else row[2],
+                "product_id": row[3],
+                "product": row[4],
+                "variant": row[5],
+                "quantity": int(row[6]) if row[6] is not None else 0,
+                "amount": float(row[7]) if row[7] is not None else 0.0
             })
             
         return results
