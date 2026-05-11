@@ -624,7 +624,7 @@ async def update_transfer_status(
             await complete_stock_transfer(transfer_id)
         
         elif payload.status == TransferStatus.CANCELLED:
-            if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+            if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Only admins can cancel transfers"
