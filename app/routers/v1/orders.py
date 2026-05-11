@@ -1200,7 +1200,9 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         # Nested join [items, items.product] ensures products are included for each item
         joins = [
             [CustomerOrderSchema.items, OrderItemSchema.product], 
-            CustomerOrderSchema.delivery_person 
+            CustomerOrderSchema.delivery_person,
+            CustomerOrderSchema.telecaller,
+            CustomerOrderSchema.assigned_outlet
         ]
         
         # 1. Role-based isolation (skip for microservice)

@@ -251,6 +251,41 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
 
         return query
 
+    async def get_aggregated_data(
+        self,
+        group_by: List[Any],
+        aggregations: List[Any],
+        filters: Dict[str, Any] = None,
+        joins: List[Any] = None,
+        session: AsyncSession = None
+    ) -> List[Any]:
+        """
+        Generic aggregation method that supports grouping, explicit joins, and dynamic filters.
+        """
+        query = db.select(*group_by, *aggregations)
+        
+        if joins:
+            for join_target in joins:
+                if isinstance(join_target, tuple) and len(join_target) == 2:
+                    query = query.join(join_target[0], join_target[1])
+                else:
+                    query = query.join(join_target)
+        
+        if filters:
+            query = await self._filter(query, filters, self.Schema)
+            
+        query = query.group_by(*group_by)
+        
+        async def execute(s):
+            record = await s.execute(query)
+            return record.unique().all()
+
+        if session:
+            return await execute(session)
+        
+        async with self.session_factory() as session:
+            return await execute(session)
+
 
 class ERPBasePassManager[SchemaType: BaseSchema](BasePassManager[SchemaType], ERPGenericManager[SchemaType]):
     """Extends BasePassManager with the improved filtering logic from ERPGenericManager"""
@@ -663,7 +698,38 @@ class OrderItemSchema(BaseSchema):
 
 
 class OrderItemManager(ERPGenericManager[OrderItemSchema]):
-    pass
+    async def get_quantity_by_status(self, filters: Dict[str, Any] = None, session: AsyncSession = None) -> List[Dict[str, Any]]:
+        """
+        Get product quantity counts grouped by order status.
+        Uses the generic aggregation feature with explicit joins.
+        """
+        group_by = [ProductSchema,CustomerOrderSchema.order_status]
+        aggregations = [db.func.sum(OrderItemSchema.quantity).label("total_quantity")]
+        joins = [
+        (CustomerOrderSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid),
+        (ProductSchema, OrderItemSchema.product_id == ProductSchema.uid)
+        ]
+        
+        rows = await self.get_aggregated_data(
+            group_by=group_by,
+            aggregations=aggregations,
+            filters=filters,
+            joins=joins,
+            session=session
+        )
+        results = []
+        for row in rows:
+            product_obj = row[0]
+            status_enum = row[1]
+            quantity = row[2]
+            
+            results.append({
+                "product": product_obj, # FastAPI's jsonable_encoder will handle this if it's a model
+                "status": status_enum.value if hasattr(status_enum, 'value') else status_enum,
+                "total_quantity": int(quantity) if quantity is not None else 0
+            })
+            
+        return results
 
 
 class OrderTransactionSchema(BaseSchema):

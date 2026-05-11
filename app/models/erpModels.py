@@ -363,6 +363,8 @@ class OrderResponse(BaseModel):
     priority_level: int 
     delivery_person_id: Optional[str] = None
     delivery_person: Optional[dict] = None
+    telecaller: Optional[UserResponse] = None
+    assigned_outlet: Optional[OutletResponse] = None
     items: List[OrderItemResponse] = []
     created_at: datetime
 

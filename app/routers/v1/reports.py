@@ -7,7 +7,7 @@ from config import get_settings, get_engine
 from managers import (
     SalesInvoiceManager, CustomerOrderManager, InventoryManager,
     ProductManager, OutletManager, UserManager, StockTransferOrderManager,
-    ActivityLogManager,CustomerOrderSchema,
+    ActivityLogManager,CustomerOrderSchema, OrderItemManager, OrderItemSchema,
     DeliveryGuyManager, DeliveryGuyHandoverManager, OrderTransactionManager,
     DeliveryGuySchema, DeliveryGuyHandoverSchema, OrderTransactionSchema
 )
@@ -15,6 +15,7 @@ from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, PaymentMethod, OutletCollectionStatus
 from utils.functions import ensure_date
 import calendar
+from utils import dependencies as D
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -31,8 +32,28 @@ activity_manager = ActivityLogManager(engine)
 delivery_guy_manager = DeliveryGuyManager(engine)
 handover_manager = DeliveryGuyHandoverManager(engine)
 transaction_manager = OrderTransactionManager(engine)
+order_item_manager = OrderItemManager(engine)
 
 router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
+
+@router.get("/order-products-quantity-count")
+async def order_products_quantity_count(
+    filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    # _: str = Depends(require_roles(
+    #     UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
+    # ))
+):
+    try:
+        # Fetch the flat aggregation data from manager
+        flat_results = await order_item_manager.get_quantity_by_status(filters=filters)
+        
+        return flat_results
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch products quantity count: {str(e)}"
+        )
+
 
 
 @router.get("/dashboard-overview")

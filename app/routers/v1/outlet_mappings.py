@@ -158,6 +158,55 @@ def map_to_response(mapping, outlet_name=None):
     )
 
 
+
+@router.get("/lookup")
+async def lookup_pincode(pincode: str = Query(..., description="Pincode to lookup")):
+    """
+    Resolve a pincode to a location and find the assigned outlet.
+    Returns the resolved location (state, district, taluk) and the mapped outlet.
+    """
+    from pypinindia import get_pincode_info
+    try:
+        # Use get_pincode_info which is already imported in some contexts or available in pypinindia
+        pin_data = get_pincode_info(pincode)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Pincode lookup failed: {str(e)}")
+
+    if not pin_data or not isinstance(pin_data, list) or len(pin_data) == 0:
+        raise HTTPException(status_code=404, detail="Pincode not found")
+
+    # Get the first result
+    info = pin_data[0]
+    res_district = info.get('districtname') or info.get('district')
+    res_taluk = info.get('taluk')
+    res_state = info.get('statename')
+
+    if not res_district:
+        raise HTTPException(status_code=404, detail="Could not resolve district for this pincode")
+
+    from utils.outlet_assignment import auto_assign_outlet
+    
+    # Get the mapped outlet (without assigning it to an order)
+    outlet = await auto_assign_outlet(
+        engine,
+        order_id=None,
+        district=res_district,
+        pincode=pincode,
+        state=res_state,
+        taluk=res_taluk
+    )
+
+    return {
+        "resolved_location": {
+            "state": res_state,
+            "district": res_district,
+            "taluk": res_taluk,
+            "pincode": pincode
+        },
+        "outlet": outlet.model_dump() if outlet else None
+    }
+
+
 @router.get("/locations")
 async def get_locations():
     """
