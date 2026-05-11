@@ -1067,6 +1067,46 @@ async def get_delivery_overview(
             detail=f"Failed to fetch delivery overview: {str(e)}"
         )
 
+@router.get("/daily-order-summary")
+async def get_daily_order_summary(
+    from_date: date,
+    to_date: date,
+    outlet_id: Optional[str] = None,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
+    ))
+):
+    """ Get daily order summary including volume, revenue, and quantity by status. """
+    try:
+        # Role-based outlet filtering
+        current_user = await user_manager.fetch(current_user_id)
+        target_outlet_id = outlet_id
+        
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            target_outlet_id = current_user.outlet_id
+            
+        summary = await order_manager.get_daily_order_summary(
+            start_date=from_date,
+            end_date=to_date,
+            outlet_id=target_outlet_id
+        )
+        
+        return {
+            "summary": summary,
+            "filters_applied": {
+                "from_date": from_date,
+                "to_date": to_date,
+                "outlet_id": target_outlet_id
+            }
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch daily order summary: {str(e)}"
+        )
+
 @router.get("/outlet-product-summary")
 async def get_outlet_product_summary(
     from_date: Optional[date] = None,
@@ -1120,12 +1160,4 @@ async def get_outlet_product_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch outlet product summary: {str(e)}"
-        )
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"Error in delivery-overview: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch delivery overview: {str(e)}"
         )

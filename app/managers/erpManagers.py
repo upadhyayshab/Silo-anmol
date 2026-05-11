@@ -2,9 +2,10 @@ import sqlalchemy as db
 from sqlalchemy.orm import relationship, aliased, joinedload, selectinload, load_only, defer
 from sqlalchemy.orm.relationships import RelationshipProperty
 from sqlalchemy.orm.attributes import QueryableAttribute
-from sqlalchemy import and_, or_, not_
+from sqlalchemy import and_, or_, not_, case, func
+from sqlalchemy.sql import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List, Dict, Any, Union
 
 
@@ -667,6 +668,105 @@ class CustomerOrderManager(ERPGenericManager[CustomerOrderSchema]):
                     item = {cols[i]: row[i] for i in range(len(cols))}
                     item["count"] = row[-1]
                     results.append(item)
+            return results
+
+        if session:
+            return await execute(session)
+        
+        async with self.session_factory() as session:
+            return await execute(session)
+
+    async def get_daily_order_summary(
+        self, 
+        start_date: date, 
+        end_date: date, 
+        outlet_id: Optional[str] = None,
+        session: AsyncSession = None
+    ) -> List[Dict[str, Any]]:
+        """ Get daily order summary including volume, revenue, and quantity by status. """
+                
+        # Subquery for total quantity per order
+        item_subq = (
+            db.select(
+                OrderItemSchema.order_id,
+                func.sum(OrderItemSchema.quantity).label("total_qty")
+            )
+            .group_by(OrderItemSchema.order_id)
+            .subquery()
+        )
+        
+        # Timezone conversion for order_date (Asia/Kolkata)
+        # Assuming co.order_date is stored in UTC
+        date_col = func.date(CustomerOrderSchema.order_date.op('AT TIME ZONE')('Asia/Kolkata'))
+        
+        # Revenue calculation: gross_amount - discount_applied
+        revenue_expr = CustomerOrderSchema.gross_amount - CustomerOrderSchema.discount_applied
+        qty_expr = func.coalesce(item_subq.c.total_qty, 0)
+        
+        # Helper for status-based filtering in aggregations
+        def status_case(status, expr):
+            return func.sum(case((CustomerOrderSchema.order_status == status, expr), else_=0))
+
+        def status_count(status):
+            return func.count(case((CustomerOrderSchema.order_status == status, CustomerOrderSchema.uid), else_=None))
+
+        query = (
+            db.select(
+                date_col.label("date"),
+                # Total Placed
+                func.count(CustomerOrderSchema.uid).label("total_placed_orders"),
+                func.sum(revenue_expr).label("total_placed_revenue"),
+                func.sum(qty_expr).label("total_placed_quantity"),
+                # Delivered
+                status_count(OrderStatus.DELIVERED).label("delivered_orders"),
+                status_case(OrderStatus.DELIVERED, revenue_expr).label("delivered_revenue"),
+                status_case(OrderStatus.DELIVERED, qty_expr).label("delivered_quantity"),
+                # Cancelled
+                status_count(OrderStatus.CANCELLED).label("cancelled_orders"),
+                status_case(OrderStatus.CANCELLED, revenue_expr).label("cancelled_revenue"),
+                status_case(OrderStatus.CANCELLED, qty_expr).label("cancelled_quantity"),
+                # Pending
+                status_count(OrderStatus.PENDING).label("pending_orders"),
+                status_case(OrderStatus.PENDING, revenue_expr).label("pending_revenue"),
+                status_case(OrderStatus.PENDING, qty_expr).label("pending_quantity")
+            )
+            .outerjoin(item_subq, CustomerOrderSchema.uid == item_subq.c.order_id)
+            .where(date_col.between(start_date, end_date))
+        )
+        
+        if outlet_id:
+            query = query.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
+            
+        query = query.group_by(date_col).order_by(text("date ASC"))
+        
+        async def execute(s):
+            res = await s.execute(query)
+            rows = res.all()
+            results = []
+            for row in rows:
+                results.append({
+                    "date": row.date.isoformat() if hasattr(row.date, 'isoformat') else str(row.date),
+                    "total_placed": {
+                        "orders": int(row.total_placed_orders),
+                        "revenue": float(row.total_placed_revenue or 0),
+                        "quantity": int(row.total_placed_quantity or 0)
+                    },
+                    "delivered": {
+                        "orders": int(row.delivered_orders),
+                        "revenue": float(row.delivered_revenue or 0),
+                        "quantity": int(row.delivered_quantity or 0)
+                    },
+                    "cancelled": {
+                        "orders": int(row.cancelled_orders),
+                        "revenue": float(row.cancelled_revenue or 0),
+                        "quantity": int(row.cancelled_quantity or 0)
+                    },
+                    "pending": {
+                        "orders": int(row.pending_orders),
+                        "revenue": float(row.pending_revenue or 0),
+                        "quantity": int(row.pending_quantity or 0)
+                    }
+                })
             return results
 
         if session:
