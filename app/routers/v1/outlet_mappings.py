@@ -324,13 +324,13 @@ async def create_mapping(
     if not outlet:
         raise HTTPException(status_code=400, detail="Outlet not found")
 
-    mapping_data = {
-        "state": payload.state.lower(),
-        "district": payload.district.lower(),
-        "taluk": payload.taluk.lower() if payload.taluk else None,
-        "outlet_id": payload.outlet_id,
-        "is_active": payload.is_active
-    }
+    mapping_data = OutletMappingSchema(
+        state = payload.state.lower(),
+        district = payload.district.lower(),
+        taluk = payload.taluk.lower() if payload.taluk else None,
+        outlet_id = payload.outlet_id,
+        is_active = payload.is_active
+    )
 
     mapping = await outlet_mapping_manager.create(mapping_data)
     return map_to_response(mapping, outlet.outlet_name)
