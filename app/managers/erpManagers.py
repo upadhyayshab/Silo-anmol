@@ -822,7 +822,14 @@ class OrderItemManager(ERPGenericManager[OrderItemSchema]):
             product_obj = row[0]
             status_enum = row[1]
             quantity = row[2]
-            
+            results.append({
+                "product": {
+                    "uid": product_obj.uid,
+                    "product_name": product_obj.product_name
+                },
+                "order_status": status_enum.value,
+                "quantity": quantity
+            })
         return results
 
     async def get_outlet_product_summary(self, filters: Dict[str, Any] = None, session: AsyncSession = None) -> List[Dict[str, Any]]:
