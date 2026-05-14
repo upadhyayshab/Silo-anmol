@@ -18,7 +18,8 @@ async def sync_order_to_crm(engine, order_id: str, activity_event: ActivityType)
         order = await order_manager.fetch(order_id, joins=[
             (CustomerOrderSchema.items, OrderItemSchema.product),
             (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
-            (CustomerOrderSchema.telecaller)
+            (CustomerOrderSchema.telecaller),
+            (CustomerOrderSchema.delivery_person)
         ])
         
         if not order:
@@ -115,6 +116,15 @@ def build_crm_payload(order: CustomerOrderSchema):
             }
         }
         
+    # Include delivery guy info if assigned
+    if order.delivery_person:
+        payload["delivery_guy"] = {
+            "full_name": order.delivery_person.full_name,
+            "phone": order.delivery_person.phone
+        }
+    else:
+        payload["delivery_guy"] = None
+
     # Include source/telecaller info
     if order.telecaller:
         payload["source"] = order.telecaller.role.value if hasattr(order.telecaller.role, "value") else str(order.telecaller.role)

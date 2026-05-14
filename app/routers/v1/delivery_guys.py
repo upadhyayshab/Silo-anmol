@@ -323,11 +323,12 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                         # Fallback to 0 if no rate card found
                         updates["rider_earning"] = Decimal('0.00')
 
-            elif item.status in ["postponed", "attempted"]:
-                new_status = OrderStatus.POSTPONED if item.status == "postponed" else OrderStatus.ATTEMPTED
+            elif item.status in ["postponed", "attempted" , "customer_not_available", "unable_to_contact", "unable_to_locate", "payment_not_ready"]:
+                new_status = OrderStatus(item.status)
                 new_attempt_number = current_attempt + 1
-                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
-                if item.postpone_date:
+                if item.status in ["postponed" , "attempted"]:
+                    background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
+                if item.status in ["postponed", "payment_not_ready"] and item.postpone_date:
                     updates["expected_delivery_date"] = item.postpone_date
                 else:
                     updates["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)

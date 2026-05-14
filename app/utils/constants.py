@@ -17,7 +17,12 @@ class OrderStatus(str, Enum):
     DELIVERED = "delivered"
     CANCELLED = "cancelled"
     POSTPONED = "postponed"
+    # these are the status req from logistics
     ATTEMPTED = "attempted"
+    CUSTOMER_NOT_AVAILABLE = "customer_not_available"
+    UNABLE_TO_CONTACT = "unable_to_contact"
+    UNABLE_TO_LOCATE = "unable_to_locate"
+    PAYMENT_NOT_READY = "payment_not_ready"
 
 
 class CollectionType(str, Enum):
