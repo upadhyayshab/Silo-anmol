@@ -6,14 +6,16 @@ from decimal import Decimal
 from config import get_settings, get_engine
 from managers import (
     OutletDailyCollectionManager, OutletManager, UserManager,
-    OutletDailyCollectionSchema
+    OutletDailyCollectionSchema, CustomerOrderManager
 )
 from models import (
     OutletCollectionCreateRequest, OutletCollectionStatusUpdateRequest,
-    OutletCollectionResponse, ListResponse, StatusResponse
+    OutletCollectionResponse, OutletCollectionSummaryResponse,
+    ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OutletCollectionStatus
+from utils.constants import UserRole, OutletCollectionStatus, OrderStatus
+from utils.functions import ensure_date
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -21,6 +23,7 @@ engine = get_engine(settings.name)
 collection_manager = OutletDailyCollectionManager(engine)
 outlet_manager = OutletManager(engine)
 user_manager = UserManager(engine)
+order_manager = CustomerOrderManager(engine)
 
 router = APIRouter(prefix="/outlet-collections", tags=["Outlet Collections"])
 
@@ -85,6 +88,129 @@ async def create_collection(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create collection: {str(e)}"
+        )
+
+
+@router.get("/summary", response_model=OutletCollectionSummaryResponse)
+async def get_collection_summary(
+    outlet_id: Optional[str] = Query(None, description="Filter by outlet (ignored for OUTLET_MANAGER)"),
+    date_from: Optional[date] = Query(None, description="Filter delivered orders from this date (actual_delivery_date)"),
+    date_to: Optional[date] = Query(None, description="Filter delivered orders up to this date (actual_delivery_date)"),
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
+    ))
+):
+    """
+    Collection summary for an outlet.
+
+    Returns three figures:
+
+    - **to_be_collected**: sum of `total_amount` from DELIVERED orders.
+      When `date_from`/`date_to` are supplied, only orders whose
+      `actual_delivery_date` falls in that window are counted.
+
+    - **confirmed_collections**: sum of ALL CONFIRMED outlet-collection
+      records for the outlet — always all-time, no date filter.
+      Outstanding is a running balance, so the full history must be used.
+
+    - **outstanding**: all-time `to_be_collected` (no date filter) minus
+      all-time `confirmed_collections`.  This is always the true current
+      balance regardless of any date filter supplied.
+
+    Access: SUPER_ADMIN, ADMIN, OUTLET_MANAGER
+    """
+    try:
+        current_user = await user_manager.fetch(current_user_id)
+
+        # OUTLET_MANAGER is always scoped to their own outlet
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if not current_user.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Outlet manager is not assigned to any outlet"
+                )
+            resolved_outlet_id = current_user.outlet_id
+        else:
+            resolved_outlet_id = outlet_id  # all outlets
+
+        # ------------------------------------------------------------------ #
+        # Fetch ALL delivered orders for this outlet (once)                   #
+        # ------------------------------------------------------------------ #
+        order_filters = {"order_status": OrderStatus.DELIVERED}
+        if resolved_outlet_id:
+            order_filters["assigned_outlet_id"] = resolved_outlet_id
+
+        all_delivered = await order_manager.fetch_all(
+            filters=order_filters,
+            limit=0  # fetch all
+        )
+
+        # ------------------------------------------------------------------ #
+        # 1. TO-BE-COLLECTED (period)                                         #
+        #    Sum of total_amount from DELIVERED orders in the requested       #
+        #    date window (actual_delivery_date).  When no date filter is      #
+        #    supplied this equals the all-time total.                         #
+        # ------------------------------------------------------------------ #
+        to_be_collected = Decimal("0.00")
+        for order in all_delivered.items:
+            if date_from or date_to:
+                if not order.actual_delivery_date:
+                    continue
+                delivery_date = ensure_date(order.actual_delivery_date)
+                if date_from and delivery_date < date_from:
+                    continue
+                if date_to and delivery_date > date_to:
+                    continue
+            to_be_collected += Decimal(str(order.total_amount or 0))
+
+        # ------------------------------------------------------------------ #
+        # 2. TO-BE-COLLECTED (all-time) — needed for outstanding              #
+        # ------------------------------------------------------------------ #
+        to_be_collected_alltime = sum(
+            Decimal(str(o.total_amount or 0)) for o in all_delivered.items
+        )
+
+        # ------------------------------------------------------------------ #
+        # 3. CONFIRMED COLLECTIONS (always all-time)                          #
+        #    Outstanding is a running balance; applying a date filter here    #
+        #    would ignore older uncleared remittances and give a wrong total. #
+        # ------------------------------------------------------------------ #
+        collection_filters = {
+            "confirmation_status": OutletCollectionStatus.CONFIRMED
+        }
+        if resolved_outlet_id:
+            collection_filters["outlet_id"] = resolved_outlet_id
+
+        all_confirmed = await collection_manager.fetch_all(
+            filters=collection_filters,
+            limit=0  # fetch all
+        )
+
+        confirmed_collections = sum(
+            Decimal(str(col.amount or 0)) for col in all_confirmed.items
+        )
+
+        # ------------------------------------------------------------------ #
+        # 4. OUTSTANDING (always all-time)                                    #
+        #    = all-time deliveries − all-time confirmed remittances           #
+        # ------------------------------------------------------------------ #
+        outstanding = to_be_collected_alltime - confirmed_collections
+
+        return OutletCollectionSummaryResponse(
+            outlet_id=resolved_outlet_id,
+            date_from=date_from,
+            date_to=date_to,
+            to_be_collected=to_be_collected,          # period figure (date-filtered)
+            confirmed_collections=confirmed_collections,  # all-time
+            outstanding=outstanding                   # all-time true balance
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to compute collection summary: {str(e)}"
         )
 
 
