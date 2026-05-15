@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
 
 from config import get_settings, get_engine
-from managers import UserManager
+from managers import UserManager, LSQTelecallerMappingManager, UserSchema, LSQTelecallerMappingSchema
+from services.crmService import CRMService
 from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
@@ -13,11 +14,105 @@ from utils.constants import UserRole
 settings = get_settings()
 engine = get_engine(settings.name)
 user_manager = UserManager(engine)
+lsq_mapping_manager = LSQTelecallerMappingManager(engine)
+crm_service = CRMService()
 
 router = APIRouter(prefix="/users", tags=["User Management"])
 
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+@router.post("/sync/telecallers", response_model=StatusResponse)
+async def sync_lsq_telecallers(
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """
+    Sync telecallers from LeadSquared to ERP.
+    1. Fetches telecallers from LSQ.
+    2. Creates new users in ERP if not present (password is email).
+    3. Maps LSQ ID to ERP User ID.
+    4. Deactivates ERP users who are no longer in LSQ payload.
+    """
+    try:
+        # 1. Fetch telecallers from LSQ
+        lsq_users = await crm_service.get_lsq_telecallers()
+        if not isinstance(lsq_users, list):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to fetch telecallers from LSQ"
+            )
+
+        # 2. Get all existing mappings
+        mappings_res = await lsq_mapping_manager.fetch_all()
+        existing_mappings = mappings_res.items
+        mapped_email_to_mapping = {m.lsq_email: m for m in existing_mappings}
+        
+        lsq_emails = {u.get("EmailAddress") for u in lsq_users if u.get("EmailAddress")}
+        
+        # 3. Process LSQ Users
+        for user_data in lsq_users:
+            email = user_data.get("EmailAddress")
+            if not email:
+                continue
+            
+            lsq_id = user_data.get("ID")
+            first_name = user_data.get("FirstName", "")
+            last_name = user_data.get("LastName", "")
+            full_name = f"{first_name} {last_name}".strip() or "LSQ User"
+            phone = user_data.get("Phone")
+            
+            mapping = mapped_email_to_mapping.get(email)
+            
+            if mapping:
+                # User already mapped, ensure they are active
+                await user_manager.update(mapping.telecaller_id, {"is_active": True, "role": UserRole.TELECALLER})
+            else:
+                # Check if user exists in ERP by email
+                erp_users = await user_manager.fetch_all(filters={"email": email})
+                if erp_users.items:
+                    erp_user = erp_users.items[0]
+                    # Update role and status
+                    await user_manager.update(erp_user.uid, {"is_active": True, "role": UserRole.TELECALLER})
+                    # Create mapping
+                    new_mapping = LSQTelecallerMappingSchema(
+                        lsq_id=lsq_id,
+                        telecaller_id=erp_user.uid,
+                        lsq_email=email
+                    )
+                    await lsq_mapping_manager.create(new_mapping)
+                else:
+                    # Create new user
+                    new_user = UserSchema(
+                        email=email,
+                        full_name=full_name,
+                        role=UserRole.TELECALLER,
+                        phone=phone,
+                        password_hash=get_password_hash(email), # Password is email
+                        is_active=True
+                    )
+                    created_user = await user_manager.create(new_user)
+                    
+                    # Create mapping
+                    new_mapping = LSQTelecallerMappingSchema(
+                        lsq_id=lsq_id,
+                        telecaller_id=created_user.uid,
+                        lsq_email=email
+                    )
+                    await lsq_mapping_manager.create(new_mapping)
+
+        # 4. Deactivate users who are in mapping but NOT in LSQ payload
+        for email, mapping in mapped_email_to_mapping.items():
+            if email not in lsq_emails:
+                await user_manager.update(mapping.telecaller_id, {"is_active": False})
+
+        return StatusResponse(status="success", message=f"Synced {len(lsq_users)} telecallers from LeadSquared.")
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Sync failed: {str(e)}"
+        )
+
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(

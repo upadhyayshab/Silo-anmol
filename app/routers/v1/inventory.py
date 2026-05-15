@@ -9,7 +9,7 @@ from managers import (
     CustomerOrderSchema, OrderItemSchema
 )
 from models import (
-    InventoryResponse, StockAdjustmentRequest,
+    InventoryResponse, InventoryAuditResponse, StockAdjustmentRequest,
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
@@ -198,7 +198,7 @@ async def get_reserved_stock(
 
 # GENERIC ROUTE LAST (after all specific routes)
 
-@router.get("", response_model=ListResponse[InventoryResponse])
+@router.get("", response_model=ListResponse[InventoryAuditResponse])
 async def get_inventory(
     outlet_id: Optional[str] = None,  # NULL for warehouse
     product_id: Optional[str] = None,
@@ -345,19 +345,16 @@ async def get_inventory(
         inventory_responses = []
         for inventory_item, total_received, total_sold, total_transferred_out in rows:
 
-            # WAREHOUSE vs OUTLET LOGIC
-            # Note: Hassan outlet is now the primary pool for warehouse inventory
-            if is_hassan_or_warehouse(inventory_item.outlet_id):
-                # Hassan/Warehouse: Quantity reflects DB, Delivered reflects stock sent to outlets
-                # Since Hassan is now the warehouse pool, we treat its sales as delivered
-                actual_quantity = inventory_item.quantity
-                delivered = int(total_sold)
-                display_received = int(total_received)
-            else:
-                # Other outlets: Quantity reflects total received from warehouse minus total sold
-                delivered = int(total_sold)
-                actual_quantity = inventory_item.quantity
-                display_received = int(total_received)
+            # Recalculate quantity: Received - Sold - Transferred Out
+            actual_quantity = (total_received or 0) - (total_sold or 0) - (total_transferred_out or 0)
+            
+            # For response mapping:
+            # - quantity: Recalculated value
+            # - db_quantity: Raw value from inventory table
+            # - delivered: Total sold (orders)
+            delivered = int(total_sold or 0)
+            display_received = int(total_received or 0)
+            display_transferred_out = int(total_transferred_out or 0)
 
             available_quantity = max(0, actual_quantity - inventory_item.reserved_quantity)
             
@@ -371,16 +368,18 @@ async def get_inventory(
                     continue
 
             inventory_responses.append(
-                InventoryResponse(
+                InventoryAuditResponse(
                     uid=inventory_item.uid,
                     product_id=inventory_item.product_id,
                     outlet_id=inventory_item.outlet_id,
                     quantity=actual_quantity,
+                    db_quantity=inventory_item.quantity,
                     reserved_quantity=inventory_item.reserved_quantity,
                     available_quantity=available_quantity,
                     last_updated=inventory_item.last_updated,
                     total_received=display_received,
-                    delivered=delivered
+                    delivered=delivered,
+                    total_transferred_out=display_transferred_out
                 )
             )
             

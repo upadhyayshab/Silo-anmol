@@ -220,6 +220,11 @@ class InventoryResponse(BaseModel):
         from_attributes = True
 
 
+class InventoryAuditResponse(InventoryResponse):
+    db_quantity: int
+    total_transferred_out: int = 0
+
+
 class StockAdjustmentRequest(BaseModel):
     product_id: str
     outlet_id: Optional[str] = None  # NULL for warehouse
@@ -911,7 +916,7 @@ __all__ = [
     "ProductCreateRequest", "ProductUpdateRequest", "ProductResponse",
     
     # Inventory
-    "InventoryResponse", "StockAdjustmentRequest",
+    "InventoryResponse", "StockAdjustmentRequest","InventoryAuditResponse",
     
     # Order
     "OrderItemRequest", "OrderCreateRequest", "ProxyOrderCreateRequest", "OrderUpdateRequest",

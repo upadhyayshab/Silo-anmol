@@ -582,6 +582,13 @@ class CRMService:
         else:
             return {"status": "failed", "message": "Failed to create lead", "details": create_response}
 
+    async def get_lsq_telecallers(self):
+        get_endpoint = "UserManagement.svc/Users.Get" 
+        response = await self._await_request("GET", get_endpoint)
+        if isinstance(response, list):
+            return [user for user in response if user.get("Role") == "Sales_User"]
+        return response
+
     async def get_or_create_lead(self, payload: dict) -> dict:
         """
         1. Checks if a Lead exists by phone number.
