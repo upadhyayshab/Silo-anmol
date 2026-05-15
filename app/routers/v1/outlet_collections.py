@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from config import get_settings, get_engine
 from managers import (
-    OutletDailyCollectionManager, OutletManager,
+    OutletDailyCollectionManager, OutletManager, UserManager,
     OutletDailyCollectionSchema
 )
 from models import (
@@ -20,6 +20,7 @@ engine = get_engine(settings.name)
 
 collection_manager = OutletDailyCollectionManager(engine)
 outlet_manager = OutletManager(engine)
+user_manager = UserManager(engine)
 
 router = APIRouter(prefix="/outlet-collections", tags=["Outlet Collections"])
 
@@ -96,21 +97,27 @@ async def list_collections(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT , UserRole.OUTLET_MANAGER
     ))
 ):
     """
     List outlet collections with filters
     
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT, OUTLET_MANAGER
     """
     try:
         # Build filters
         filters = {}
+        current_user = await user_manager.fetch(current_user_id)
+       
         if outlet_id:
             filters["outlet_id"] = outlet_id
         if confirmation_status:
             filters["confirmation_status"] = confirmation_status
+        
+        if current_user.role == UserRole.OUTLET_MANAGER:
+            if current_user.outlet_id:
+                filters["outlet_id"] = current_user.outlet_id
         
         # Note: Date filtering has issues with SharedBackend's filter syntax
         # For now, we'll fetch all and filter in Python if date filters are provided
