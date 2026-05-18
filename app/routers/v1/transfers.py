@@ -11,12 +11,12 @@ from managers import (
 from models import (
     StockTransferCreateRequest, StockTransferStatusUpdateRequest,
     StockTransferApproveQuantitiesRequest,
-    StockTransferResponse, TransferItemResponse,
+    StockTransferResponse, TransferItemResponse, ProductBrief, OutletBrief, UserBrief,
     ListResponse, StatusResponse , BulkTransferResponse , StockTransferCreateRequestBulk
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, TransferStatus, HASSAN_OUTLET_ID
-from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
+from utils.constants import UserRole, TransferStatus, OutletType
+from utils.warehouse_utils import get_default_warehouse_id
 import uuid
 
 settings = get_settings()
@@ -110,38 +110,43 @@ async def create_transfer_request(
                     detail=f"Product not found: {item.product_id}"
                 )
             
-            # Check stock availability at source location
-            source_inventory = await inventory_manager.fetch_all(
-                filters={
-                    "product_id": item.product_id,
-                    "outlet_id": payload.from_outlet_id
-                }
-            )
-            
-            if not source_inventory.items:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"No stock available for {product.product_name} at source location"
+            # Skip stock check if source is a factory (infinite supply)
+            source_is_factory = False
+            if payload.from_outlet_id:
+                try:
+                    src = await outlet_manager.fetch(payload.from_outlet_id)
+                    source_is_factory = src.outlet_type == OutletType.FACTORY
+                except Exception:
+                    pass
+
+            if not source_is_factory:
+                warehouse_id = await get_default_warehouse_id(engine)
+                source_outlet_id = payload.from_outlet_id if payload.from_outlet_id else warehouse_id
+                source_inventory = await inventory_manager.fetch_all(
+                    filters={
+                        "product_id": item.product_id,
+                        "outlet_id": source_outlet_id
+                    }
                 )
-            
-            inventory_item = source_inventory.items[0]
-            
-            # If transfer is from warehouse/hassan, neglect reserved quantity
-            if is_hassan_or_warehouse(payload.from_outlet_id):
+
+                if not source_inventory.items:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"No stock available for {product.product_name} at source location"
+                    )
+
+                inventory_item = source_inventory.items[0]
                 available_stock = inventory_item.quantity
-            else:
-                available_stock = inventory_item.quantity - inventory_item.reserved_quantity
-            
-            if available_stock < item.quantity_requested:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Insufficient stock for {product.product_name}. Available: {available_stock}, Requested: {item.quantity_requested}"
-                )
+
+                if available_stock < item.quantity_requested:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Insufficient stock for {product.product_name}. Available: {available_stock}, Requested: {item.quantity_requested}"
+                    )
             
             validated_items.append({
                 "product": product,
-                "quantity_requested": item.quantity_requested,
-                "inventory_item": inventory_item
+                "quantity_requested": item.quantity_requested
             })
         
         # Create transfer order
@@ -236,30 +241,36 @@ async def mass_upload_transfer_requests(
                 except Exception as e:
                     raise ValueError(str(e))
                 
-                # Check stock availability at source location
-                source_inventory = await inventory_manager.fetch_all(
-                    filters={
-                        "product_id": product.uid,
-                        "outlet_id": from_outlet_id
-                    }
-                )
-                
-                if not source_inventory.items:
-                    raise ValueError(f"No stock available for {product.product_name} at source location")
-                
-                inventory_item = source_inventory.items[0]
-                
-                # If transfer is from warehouse/hassan, neglect reserved quantity
-                if is_hassan_or_warehouse(from_outlet_id):
-                    available_stock = inventory_item.quantity
-                else:
-                    available_stock = inventory_item.quantity - inventory_item.reserved_quantity
-                
-                if available_stock < item.quantity_requested:
-                    raise ValueError(
-                        f"Insufficient stock for {product.product_name}. "
-                        f"Available: {available_stock}, Requested: {item.quantity_requested}"
+                # Skip stock check if source is a factory (infinite supply)
+                bulk_source_is_factory = False
+                if from_outlet_id:
+                    try:
+                        src = await outlet_manager.fetch(from_outlet_id)
+                        bulk_source_is_factory = src.outlet_type == OutletType.FACTORY
+                    except Exception:
+                        pass
+
+                if not bulk_source_is_factory:
+                    warehouse_id = await get_default_warehouse_id(engine)
+                    source_outlet_id = from_outlet_id if from_outlet_id else warehouse_id
+                    source_inventory = await inventory_manager.fetch_all(
+                        filters={
+                            "product_id": product.uid,
+                            "outlet_id": source_outlet_id
+                        }
                     )
+
+                    if not source_inventory.items:
+                        raise ValueError(f"No stock available for {product.product_name} at source location")
+
+                    inventory_item = source_inventory.items[0]
+                    available_stock = inventory_item.quantity
+
+                    if available_stock < item.quantity_requested:
+                        raise ValueError(
+                            f"Insufficient stock for {product.product_name}. "
+                            f"Available: {available_stock}, Requested: {item.quantity_requested}"
+                        )
                 
                 validated_items.append({
                     "product": product,
@@ -312,8 +323,138 @@ async def test_deployment():
     return {"message": "Code updated successfully", "timestamp": datetime.now()}
 
 
+async def get_transfer_responses_batch(transfers: List[StockTransferOrderSchema]) -> List[StockTransferResponse]:
+    """Helper to build complete transfer responses in batch to prevent N+1 database queries."""
+    if not transfers:
+        return []
+
+    # 1. Collect all IDs
+    to_outlet_ids = list({t.to_outlet_id for t in transfers if t.to_outlet_id})
+    from_outlet_ids = list({t.from_outlet_id for t in transfers if t.from_outlet_id})
+    all_outlet_ids = list(set(to_outlet_ids + from_outlet_ids))
+
+    user_ids = list(
+        {t.requested_by for t in transfers if t.requested_by} |
+        {t.approved_by for t in transfers if t.approved_by} |
+        {t.delivery_person_id for t in transfers if t.delivery_person_id}
+    )
+
+    transfer_ids = [t.uid for t in transfers]
+
+    # 2. Fetch outlets, users, and transfer items in parallel/batch
+    outlets_map = {}
+    users_map = {}
+    items_by_transfer = {}
+    products_map = {}
+
+    if all_outlet_ids:
+        try:
+            outlets_res = await outlet_manager.fetch_all(filters={"uid": all_outlet_ids}, limit=len(all_outlet_ids))
+            outlets_map = {o.uid: o for o in outlets_res.items}
+        except Exception as e:
+            print(f"Error fetching outlets batch: {str(e)}")
+
+    if user_ids:
+        try:
+            users_res = await user_manager.fetch_all(filters={"uid": user_ids}, limit=len(user_ids))
+            users_map = {u.uid: u for u in users_res.items}
+        except Exception as e:
+            print(f"Error fetching users batch: {str(e)}")
+
+    # Fetch all items for all transfers in one query
+    all_items = []
+    if transfer_ids:
+        try:
+            items_res = await transfer_item_manager.fetch_all(
+                filters={"transfer_id": transfer_ids},
+                limit=10000  # Large enough limit to fetch all items at once
+            )
+            all_items = items_res.items
+            for item in all_items:
+                if item.transfer_id not in items_by_transfer:
+                    items_by_transfer[item.transfer_id] = []
+                items_by_transfer[item.transfer_id].append(item)
+        except Exception as e:
+            print(f"Error fetching transfer items batch: {str(e)}")
+
+    # Fetch all products for these items in one query
+    product_ids = list({item.product_id for item in all_items if item.product_id})
+    if product_ids:
+        try:
+            products_res = await product_manager.fetch_all(filters={"uid": product_ids}, limit=len(product_ids))
+            products_map = {p.uid: p for p in products_res.items}
+        except Exception as e:
+            print(f"Error fetching products batch: {str(e)}")
+
+    # 3. Assemble responses
+    responses = []
+    for transfer in transfers:
+        # Nested: destination outlet
+        to_outlet = None
+        if transfer.to_outlet_id and transfer.to_outlet_id in outlets_map:
+            outlet = outlets_map[transfer.to_outlet_id]
+            to_outlet = OutletBrief(
+                uid=outlet.uid,
+                outlet_name=outlet.outlet_name,
+                outlet_code=outlet.outlet_code,
+            )
+
+        # Nested: requesting user
+        requested_by_user = None
+        if transfer.requested_by and transfer.requested_by in users_map:
+            requester = users_map[transfer.requested_by]
+            requested_by_user = UserBrief(
+                uid=requester.uid,
+                full_name=requester.full_name,
+                email=requester.email,
+                role=requester.role.value if hasattr(requester.role, "value") else str(requester.role),
+            )
+
+        # Assemble transfer items
+        transfer_items = items_by_transfer.get(transfer.uid, [])
+        items = []
+        for item in transfer_items:
+            product_brief = None
+            if item.product_id and item.product_id in products_map:
+                product = products_map[item.product_id]
+                product_brief = ProductBrief(
+                    uid=product.uid,
+                    product_name=product.product_name,
+                    sku=product.sku,
+                )
+            items.append(TransferItemResponse(
+                uid=item.uid,
+                product_id=item.product_id,
+                product=product_brief,
+                quantity_requested=item.quantity_requested,
+                quantity_delivered=item.quantity_delivered,
+            ))
+
+        responses.append(StockTransferResponse(
+            uid=transfer.uid,
+            transfer_number=transfer.transfer_number,
+            from_outlet_id=transfer.from_outlet_id,
+            to_outlet_id=transfer.to_outlet_id,
+            to_outlet=to_outlet,
+            status=transfer.status,
+            requested_by=transfer.requested_by,
+            requested_by_user=requested_by_user,
+            approved_by=transfer.approved_by,
+            delivery_person_id=transfer.delivery_person_id,
+            scheduled_date=transfer.scheduled_date,
+            delivered_date=transfer.delivered_date,
+            notes=transfer.notes,
+            items=items,
+            created_at=transfer.created_at,
+        ))
+
+    return responses
+
+
 @router.get("/pending-approvals", response_model=ListResponse[StockTransferResponse])
 async def get_pending_approvals(
+    limit: int = 50,
+    offset: int = 0,
     current_user_id: str = Depends(require_roles(
         UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN , UserRole.OUTLET_MANAGER
     ))
@@ -324,56 +465,15 @@ async def get_pending_approvals(
         
         filters = {"status": TransferStatus.PENDING}
         
-        # Warehouse managers only see transfers from warehouse
-        if current_user.role == UserRole.WAREHOUSE_MANAGER:
-            filters["from_outlet_id"] = None
+        # Warehouse managers see all transfers (since warehouse is now Hassan outlet)
         
         # Fetch transfers without problematic joins
-        transfers = await transfer_manager.fetch_all(filters=filters)
+        transfers = await transfer_manager.fetch_all(filters=filters, limit=limit, offset=offset)
         
-        transfer_responses = []
-        for transfer in transfers.items:
-            try:
-                # Get transfer items separately
-                items = []
-                try:
-                    transfer_items = await transfer_item_manager.fetch_all(
-                        filters={"transfer_id": transfer.uid}
-                    )
-                    items = [
-                        TransferItemResponse(
-                            uid=item.uid,
-                            product_id=item.product_id,
-                            quantity_requested=item.quantity_requested,
-                            quantity_delivered=item.quantity_delivered
-                        )
-                        for item in transfer_items.items
-                    ]
-                except Exception as e:
-                    print(f"Error fetching items for transfer {transfer.uid}: {str(e)}")
-                
-                # Build response directly
-                transfer_response = StockTransferResponse(
-                    uid=transfer.uid,
-                    from_outlet_id=transfer.from_outlet_id,
-                    to_outlet_id=transfer.to_outlet_id,
-                    status=transfer.status,
-                    requested_by=transfer.requested_by,
-                    approved_by=transfer.approved_by,
-                    delivery_person_id=transfer.delivery_person_id,
-                    scheduled_date=transfer.scheduled_date,
-                    delivered_date=transfer.delivered_date,
-                    notes=transfer.notes,
-                    items=items,
-                    created_at=transfer.created_at
-                )
-                transfer_responses.append(transfer_response)
-                
-            except Exception as e:
-                print(f"Error processing transfer {transfer.uid}: {str(e)}")
-                continue
+        # Build responses in batch to avoid slow N+1 queries
+        transfer_responses = await get_transfer_responses_batch(transfers.items)
         
-        return ListResponse(items=transfer_responses, count=len(transfer_responses))
+        return ListResponse(items=transfer_responses, count=transfers.count)
     
     except Exception as e:
         error_msg = str(e)
@@ -611,26 +711,22 @@ async def update_transfer_status(
             "notes": payload.notes
         }
         
-        # Handle status-specific logic
+        # Handle status-specific logic (no reservation)
         if payload.status == TransferStatus.APPROVED:
             updates["approved_by"] = current_user_id
-            # Reserve stock at source location
-            await reserve_transfer_stock(transfer_id)
         
         elif payload.status == TransferStatus.DELIVERED:
             from datetime import datetime
             updates["delivered_date"] = datetime.utcnow()
-            # Complete the stock transfer - this creates inventory records
+            # Complete the stock transfer
             await complete_stock_transfer(transfer_id)
         
         elif payload.status == TransferStatus.CANCELLED:
             if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only admins can cancel transfers"
+                    detail="Only authorized roles can cancel transfers"
                 )
-            # Release reserved stock if any
-            await release_transfer_stock(transfer_id)
         
         await transfer_manager.update(transfer_id, updates)
         
@@ -689,6 +785,14 @@ async def get_transfers(
             if requested_by:
                 base_filters["requested_by"] = requested_by
                 
+            if from_date or to_date:
+                from datetime import datetime, time
+                base_filters["created_at"] = {}
+                if from_date:
+                    base_filters["created_at"][">="] = datetime.combine(from_date, time.min)
+                if to_date:
+                    base_filters["created_at"]["<="] = datetime.combine(to_date, time.max)
+                
             all_transfers_items = []
             
             # Scenario 1: Incoming 
@@ -701,7 +805,8 @@ async def get_transfers(
                 # Fetch more than limit to allow for combined filtering/sorting
                 incoming_res = await transfer_manager.fetch_all(
                     filters=in_filters, 
-                    limit=max(limit + offset, 100)
+                    limit=max(limit + offset, 100),
+                    sorts=["-created_at"]
                 )
                 all_transfers_items.extend(incoming_res.items)
             
@@ -714,7 +819,8 @@ async def get_transfers(
                 
                 outgoing_res = await transfer_manager.fetch_all(
                     filters=out_filters,
-                    limit=max(limit + offset, 100)
+                    limit=max(limit + offset, 100),
+                    sorts=["-created_at"]
                 )
                 all_transfers_items.extend(outgoing_res.items)
                 
@@ -725,30 +831,13 @@ async def get_transfers(
                 key=lambda x: x.created_at, 
                 reverse=True
             )
-            
-            # Apply date filters
-            filtered_transfers = []
-            for transfer in sorted_transfers:
-                if from_date and transfer.created_at.date() < from_date:
-                    continue
-                if to_date and transfer.created_at.date() > to_date:
-                    continue
-                filtered_transfers.append(transfer)
-            
             # Apply limit and offset
-            final_selection = filtered_transfers[offset : offset + limit]
+            final_selection = sorted_transfers[offset : offset + limit]
             
-            # Build responses
-            transfer_responses = []
-            for transfer in final_selection:
-                try:
-                    transfer_response = await get_transfer_response(transfer.uid)
-                    transfer_responses.append(transfer_response)
-                except Exception as e:
-                    print(f"Error processing transfer {transfer.uid}: {str(e)}")
-                    continue
+            # Build responses in batch to avoid slow N+1 queries
+            transfer_responses = await get_transfer_responses_batch(final_selection)
             
-            return ListResponse(items=transfer_responses, count=len(filtered_transfers))
+            return ListResponse(items=transfer_responses, count=len(sorted_transfers))
         
         # Apply filters for admins or if user has broader access
         if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WAREHOUSE_MANAGER]:
@@ -762,32 +851,29 @@ async def get_transfers(
                 filters["requested_by"] = requested_by
         elif transfer_status:
             filters["status"] = transfer_status
+            
+        if from_date or to_date:
+            from datetime import datetime, time
+            if "created_at" not in filters:
+                filters["created_at"] = {}
+            if from_date:
+                filters["created_at"][">="] = datetime.combine(from_date, time.min)
+            if to_date:
+                filters["created_at"]["<="] = datetime.combine(to_date, time.max)
         
         # For non-outlet managers, use normal filtering
         # Fetch transfers without joins to prevent SQLAlchemy loader options error
         transfers = await transfer_manager.fetch_all(
             filters=filters,
             limit=limit,
-            offset=offset
+            offset=offset,
+            sorts=["-created_at"]
         )
         
-        transfer_responses = []
-        for transfer in transfers.items:
-            try:
-                # Filter by date range if specified
-                if from_date and transfer.created_at.date() < from_date:
-                    continue
-                if to_date and transfer.created_at.date() > to_date:
-                    continue
-                
-                transfer_response = await get_transfer_response(transfer.uid)
-                transfer_responses.append(transfer_response)
-            except Exception as e:
-                # Log error but continue with other transfers
-                print(f"Error processing transfer {transfer.uid}: {str(e)}")
-                continue
+        # Build responses in batch to avoid slow N+1 queries
+        transfer_responses = await get_transfer_responses_batch(transfers.items)
         
-        return ListResponse(items=transfer_responses, count=len(transfer_responses))
+        return ListResponse(items=transfer_responses, count=transfers.count)
     
     except Exception as e:
         # Handle "record not found" errors gracefully
@@ -858,9 +944,6 @@ async def approve_transfer_with_quantities(
                 )
             )
             await session.commit()
-            
-        # Refresh and Reserve stock based on updated quantities
-        await reserve_transfer_stock(transfer_id)
         
         return StatusResponse(
             status="ok",
@@ -877,46 +960,80 @@ async def approve_transfer_with_quantities(
 
 
 async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
-    """Helper to build complete transfer response with items"""
+    """Helper to build complete transfer response with nested outlet, user and product details."""
     try:
-        # Fetch transfer without joins
         transfer = await transfer_manager.fetch(transfer_id)
-        
-        # Get transfer items
+
+        # Nested: destination outlet
+        to_outlet = None
+        try:
+            outlet = await outlet_manager.fetch(transfer.to_outlet_id)
+            to_outlet = OutletBrief(
+                uid=outlet.uid,
+                outlet_name=outlet.outlet_name,
+                outlet_code=outlet.outlet_code,
+            )
+        except Exception:
+            pass
+
+        # Nested: requesting user
+        requested_by_user = None
+        try:
+            requester = await user_manager.fetch(transfer.requested_by)
+            requested_by_user = UserBrief(
+                uid=requester.uid,
+                full_name=requester.full_name,
+                email=requester.email,
+                role=requester.role.value if hasattr(requester.role, "value") else str(requester.role),
+            )
+        except Exception:
+            pass
+
+        # Transfer items with nested product info
         items = []
         try:
             transfer_items = await transfer_item_manager.fetch_all(
                 filters={"transfer_id": transfer_id}
             )
-            
-            items = [
-                TransferItemResponse(
+            for item in transfer_items.items:
+                product_brief = None
+                try:
+                    product = await product_manager.fetch(item.product_id)
+                    product_brief = ProductBrief(
+                        uid=product.uid,
+                        product_name=product.product_name,
+                        sku=product.sku,
+                    )
+                except Exception:
+                    pass
+                items.append(TransferItemResponse(
                     uid=item.uid,
                     product_id=item.product_id,
+                    product=product_brief,
                     quantity_requested=item.quantity_requested,
-                    quantity_delivered=item.quantity_delivered
-                )
-                for item in transfer_items.items
-            ]
+                    quantity_delivered=item.quantity_delivered,
+                ))
         except Exception as e:
             print(f"Error fetching transfer items for {transfer_id}: {str(e)}")
-            # Continue with empty items list
-        
+
         return StockTransferResponse(
             uid=transfer.uid,
+            transfer_number=transfer.transfer_number,
             from_outlet_id=transfer.from_outlet_id,
             to_outlet_id=transfer.to_outlet_id,
+            to_outlet=to_outlet,
             status=transfer.status,
             requested_by=transfer.requested_by,
+            requested_by_user=requested_by_user,
             approved_by=transfer.approved_by,
             delivery_person_id=transfer.delivery_person_id,
             scheduled_date=transfer.scheduled_date,
             delivered_date=transfer.delivered_date,
             notes=transfer.notes,
             items=items,
-            created_at=transfer.created_at
+            created_at=transfer.created_at,
         )
-    
+
     except Exception as e:
         if "not found" in str(e).lower():
             raise HTTPException(
@@ -943,84 +1060,62 @@ def is_valid_transfer_status_transition(current_status: TransferStatus, new_stat
 
 
 async def complete_stock_transfer(transfer_id: str):
-    """Complete stock transfer by moving inventory between locations"""
+    """Complete stock transfer by moving inventory between locations (direct quantity update)"""
     transfer = await transfer_manager.fetch(transfer_id)
     transfer_items = await transfer_item_manager.fetch_all(
         filters={"transfer_id": transfer_id}
     )
     
     for item in transfer_items.items:
-        # Reduce stock at source location
-        if transfer.from_outlet_id is None or is_hassan_or_warehouse(transfer.from_outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=item.product_id,
-                target_outlet_id=transfer.from_outlet_id,
-                quantity_delta=-item.quantity_requested,
-                reserved_delta=-item.quantity_requested
-            )
-        elif transfer.from_outlet_id:  # Only if transferring from another outlet
+        # 1. Reduce stock at source location (normalized)
+        source_outlet_id = transfer.from_outlet_id
+        if not source_outlet_id:
+            source_outlet_id = await get_default_warehouse_id(engine)
+
+        source_is_factory = False
+        if source_outlet_id:
+            try:
+                src = await outlet_manager.fetch(source_outlet_id)
+                source_is_factory = src.outlet_type == OutletType.FACTORY
+            except Exception:
+                pass
+
+        if not source_is_factory:
             source_inventory = await inventory_manager.fetch_all(
-                filters={
-                    "product_id": item.product_id,
-                    "outlet_id": transfer.from_outlet_id
-                }
+                filters={"product_id": item.product_id, "outlet_id": source_outlet_id}
             )
             
             if source_inventory.items:
                 source_item = source_inventory.items[0]
-                new_quantity = source_item.quantity - item.quantity_requested
-                new_reserved = source_item.reserved_quantity - item.quantity_requested
-                
                 await inventory_manager.update(
                     source_item.uid,
                     {
-                        "quantity": max(0, new_quantity),
-                        "reserved_quantity": max(0, new_reserved),
+                        "quantity": max(0, source_item.quantity - item.quantity_requested),
                         "last_updated": datetime.utcnow()
                     }
                 )
+
+        # 2. Add stock at destination location
+        dest_inventory = await inventory_manager.fetch_all(
+            filters={"product_id": item.product_id, "outlet_id": transfer.to_outlet_id}
+        )
         
-        # Add stock at destination location
-        if is_hassan_or_warehouse(transfer.to_outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=item.product_id,
-                target_outlet_id=transfer.to_outlet_id,
-                quantity_delta=item.quantity_requested
-            )
-        else:
-            dest_inventory = await inventory_manager.fetch_all(
-                filters={
-                    "product_id": item.product_id,
-                    "outlet_id": transfer.to_outlet_id
+        if dest_inventory.items:
+            dest_item = dest_inventory.items[0]
+            await inventory_manager.update(
+                dest_item.uid,
+                {
+                    "quantity": dest_item.quantity + item.quantity_requested,
+                    "last_updated": datetime.utcnow()
                 }
             )
-            
-            if dest_inventory.items:
-                # Update existing inventory
-                dest_item = dest_inventory.items[0]
-                new_quantity = dest_item.quantity + item.quantity_requested
-                
-                await inventory_manager.update(
-                    dest_item.uid,
-                    {
-                        "quantity": new_quantity,
-                        "last_updated": datetime.utcnow()
-                    }
-                )
-            else:
-                # Create new inventory record at destination
-                new_inventory = InventorySchema(
-                    product_id=item.product_id,
-                    outlet_id=transfer.to_outlet_id,
-                    quantity=item.quantity_requested,
-                    reserved_quantity=0,
-                    last_updated=datetime.utcnow()
-                )
-                await inventory_manager.create(new_inventory)
+        else:
+            await inventory_manager.create(InventorySchema(
+                product_id=item.product_id,
+                outlet_id=transfer.to_outlet_id,
+                quantity=item.quantity_requested,
+                last_updated=datetime.utcnow()
+            ))
         
         # Update delivered quantity
         await transfer_item_manager.update(
@@ -1030,84 +1125,13 @@ async def complete_stock_transfer(transfer_id: str):
 
 
 async def reserve_transfer_stock(transfer_id: str):
-    """Reserve stock at source location when transfer is approved"""
-    transfer = await transfer_manager.fetch(transfer_id)
-    transfer_items = await transfer_item_manager.fetch_all(
-        filters={"transfer_id": transfer_id}
-    )
-    
-    for item in transfer_items.items:
-        # Find inventory at source location
-        if is_hassan_or_warehouse(transfer.from_outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=item.product_id,
-                target_outlet_id=transfer.from_outlet_id,
-                reserved_delta=item.quantity_requested
-            )
-        else:
-            inventory_items = await inventory_manager.fetch_all(
-                filters={
-                    "product_id": item.product_id,
-                    "outlet_id": transfer.from_outlet_id
-                }
-            )
-            
-            if inventory_items.items:
-                inventory_item = inventory_items.items[0]
-                new_reserved = inventory_item.reserved_quantity + item.quantity_requested
-                
-                await inventory_manager.update(
-                    inventory_item.uid,
-                    {
-                        "reserved_quantity": new_reserved,
-                        "last_updated": datetime.utcnow()
-                    }
-                )
+    """Stock reservation logic removed."""
+    return
 
 
 async def release_transfer_stock(transfer_id: str):
-    """Release reserved stock when transfer is cancelled"""
-    transfer = await transfer_manager.fetch(transfer_id)
-    
-    # Only release if transfer was approved (stock was reserved)
-    if transfer.status not in [TransferStatus.APPROVED, TransferStatus.IN_TRANSIT]:
-        return
-    
-    transfer_items = await transfer_item_manager.fetch_all(
-        filters={"transfer_id": transfer_id}
-    )
-    
-    for item in transfer_items.items:
-        # Find inventory at source location
-        if is_hassan_or_warehouse(transfer.from_outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=item.product_id,
-                target_outlet_id=transfer.from_outlet_id,
-                reserved_delta=-item.quantity_requested
-            )
-        elif transfer.from_outlet_id:  # Only if transferring from another outlet
-            inventory_items = await inventory_manager.fetch_all(
-                filters={
-                    "product_id": item.product_id,
-                    "outlet_id": transfer.from_outlet_id
-                }
-            )
-            
-            if inventory_items.items:
-                inventory_item = inventory_items.items[0]
-                new_reserved = inventory_item.reserved_quantity - item.quantity_requested
-                
-                await inventory_manager.update(
-                    inventory_item.uid,
-                    {
-                        "reserved_quantity": max(0, new_reserved),
-                        "last_updated": datetime.utcnow()
-                    }
-                )
+    """Stock reservation logic removed."""
+    return
 
 
 

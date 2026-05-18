@@ -17,8 +17,9 @@ from managers import (
 from services import CRMService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm, map_lsq_utm_data
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod, ActivityType, LSQCreateOrder, LSQItems, HASSAN_OUTLET_ID
-from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod
+from utils.crm_constants import ActivityType, LSQCreateOrder, LSQItems
+from utils.warehouse_utils import get_default_warehouse_id
 from models import CrmPayload, OrderCreateRequest
 
 
@@ -116,55 +117,22 @@ async def webhook(background_tasks: BackgroundTasks, payload: dict = Body(None))
 
 
 async def _find_crm_inventory_for_product(product_id: str, outlet_id: str):
-    """Find inventory record with unified warehouse-Hassan pool support."""
-    # If the requested outlet is Warehouse (None) or Hassan Outlet,
-    # always use the Hassan Outlet ID for inventory lookup.
+    """Find inventory record for a product at a given outlet."""
     target_outlet_id = outlet_id
-    if outlet_id is None or outlet_id == HASSAN_OUTLET_ID:
-        target_outlet_id = HASSAN_OUTLET_ID
+    if target_outlet_id is None or target_outlet_id == "null":
+        target_outlet_id = await get_default_warehouse_id(engine)
 
     inventory_items = await inventory_manager.fetch_all(
         filters={"product_id": product_id, "outlet_id": target_outlet_id}
     )
     if inventory_items.items:
         return inventory_items.items[0]
-
     return None
 
 
 async def reserve_crm_stock(order_id: str, outlet_id: str, validated_items: List[dict]):
-    """Reserve stock for order items at assigned outlet (warehouse-Hassan coupled)."""
-    for item_data in validated_items:
-        product_id = item_data["product"].uid
-        quantity = item_data["quantity"]
-
-        inventory_item = await _find_crm_inventory_for_product(product_id, outlet_id)
-
-        if inventory_item is None:
-            logging.warning(f"No stock available for product {item_data['product'].product_name}")
-            continue
-
-        available = inventory_item.quantity - inventory_item.reserved_quantity
-        if available < quantity:
-            logging.warning(f"Insufficient stock for {item_data['product'].product_name}. Available: {available}, Required: {quantity}")
-            continue
-
-        if is_hassan_or_warehouse(outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=product_id,
-                target_outlet_id=outlet_id,
-                reserved_delta=quantity
-            )
-        else:
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": inventory_item.reserved_quantity + quantity,
-                    "last_updated": datetime.utcnow()
-                }
-            )
+    """Stock reservation logic removed."""
+    return
 
 
 def generate_order_number() -> str:
@@ -509,15 +477,7 @@ async def process_crm_orders(payload: dict):
                 {"assigned_outlet_id": assigned_outlet.uid}
             )
             
-            # 9. Reserve Stock
-            try:
-                await reserve_crm_stock(created_order.uid, assigned_outlet.uid, validated_items)
-            except Exception as e:
-                print(f"⚠️ Stock reservation failed: {str(e)}")
-                await order_manager.update(
-                    created_order.uid,
-                    {"status_remarks": f"Order received via CRM, but stock reservation failed: {str(e)}"}
-                )
+            # Stock reservation removed
                 
         # 10. Push order-confirmed (ORDER_STATUS) activity to CRM
         await push_outlet_assigned(engine, created_order.uid, district, pincode)

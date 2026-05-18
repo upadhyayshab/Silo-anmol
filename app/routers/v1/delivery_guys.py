@@ -17,8 +17,10 @@ from models import (
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
 from utils.auth import require_roles, get_current_user_id, get_password_hash
-from utils.constants import UserRole, OrderStatus, PaymentStatus, ActivityType, PaymentMethod
+from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod
+from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
+from utils.delivery_utils import build_cumulative_remarks
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -261,15 +263,13 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
             if item.delivery_person_id:
                 updates["delivery_person_id"] = item.delivery_person_id
 
-            # Determine current attempt number for this order
-            last_tracking = await tracking_manager.fetch_all(
-                filters={"order_id": order_uid}, 
-                sorts=["created_at"], 
-                limit=1
+            # Fetch all tracking records for history building and attempt count
+            all_tracking = await tracking_manager.fetch_all(
+                filters={"order_id": order_uid},
+                sorts=["created_at"]
             )
             try:
-                # Ensure we treat attempt_number as an integer
-                current_attempt = int(last_tracking.items[0].attempt_number) if last_tracking.items else 0
+                current_attempt = int(all_tracking.items[-1].attempt_number) if all_tracking.items else 0
             except (ValueError, TypeError):
                 current_attempt = 0
             new_attempt_number = current_attempt
@@ -366,7 +366,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 postpone_date=item.postpone_date,
                 attempt_number=new_attempt_number,
                 priority_level=updates.get("priority_level", order.priority_level or 0),
-                remarks=item.remarks,
+                remarks=build_cumulative_remarks(all_tracking.items, new_status, item.remarks),
                 changed_by=item.delivery_person_id or order.telecaller_id
             )
             await tracking_manager.create(tracking_record)

@@ -12,10 +12,10 @@ from typing import Optional, List, Dict, Any, Union
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
 from SharedBackend.managers.base import NESTED_JOINS, NESTED_FILTERS
 from utils.constants import (
-    UserRole, OrderStatus, CollectionType, PaymentMethod, 
+    UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus, PayoutFrequency
+    PayoutStatus, PayoutFrequency, OutletType
 )
 
 
@@ -199,12 +199,30 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
                 # Process each operator in the dictionary
                 for op, value in condition.items():
                     if op in operator_mapping:
-                        query = query.filter(operator_mapping[op](col_attr, value))
+                        # Handle Date-only comparison with DateTime columns
+                        # We use func.date() for equality, inequality, and between to ignore the time part
+                        target_col = col_attr
+                        is_date = isinstance(value, date) and not isinstance(value, datetime)
+                        is_date_list = isinstance(value, list) and len(value) > 0 and all(isinstance(v, date) and not isinstance(v, datetime) for v in value)
+                        
+                        if isinstance(col_attr.type, (db.DateTime, db.DATETIME)) and (is_date or is_date_list):
+                            if op in ['==', '$eq', '!=', '$neq', 'between', '$between', 'in', '$in', '$nin']:
+                                target_col = func.date(col_attr)
+                        
+                        query = query.filter(operator_mapping[op](target_col, value))
             elif isinstance(condition, list):
-                query = query.filter(col_attr.in_(condition))
+                # Check if it's a list of dates
+                if isinstance(col_attr.type, (db.DateTime, db.DATETIME)) and condition and all(isinstance(v, date) and not isinstance(v, datetime) for v in condition):
+                    query = query.filter(func.date(col_attr).in_(condition))
+                else:
+                    query = query.filter(col_attr.in_(condition))
             else:
                 # Simple scalar equality
-                query = query.filter(col_attr == condition)
+                if isinstance(col_attr.type, (db.DateTime, db.DATETIME)) and isinstance(condition, date) and not isinstance(condition, datetime):
+                    query = query.filter(func.date(col_attr) == condition)
+                else:
+                    query = query.filter(col_attr == condition)
+
 
         # Handle relationship joins and nested filters
         for relation_key, related_filter in relationship_filters.items():
@@ -368,6 +386,7 @@ class OutletSchema(BaseSchema):
     lat_lon = db.Column(db.JSON, nullable=True) # [lat, lon]
     manager_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    outlet_type = db.Column(db.Enum(OutletType, values_callable=lambda x: [e.value for e in x]), default=OutletType.OUTLET, nullable=False)
 
     # Relationships
     manager = relationship("UserSchema", foreign_keys=[manager_id])
@@ -874,8 +893,65 @@ class OrderItemManager(ERPGenericManager[OrderItemSchema]):
                 "quantity": int(row[6]) if row[6] is not None else 0,
                 "amount": float(row[7]) if row[7] is not None else 0.0
             })
-            
+
         return results
+
+    async def get_product_quantity_report(
+        self,
+        start_date: date,
+        end_date: date,
+        session: AsyncSession = None
+    ) -> List[Dict[str, Any]]:
+        """Get product quantity grouped by date, outlet, status, and product for reporting."""
+        date_col = func.date(
+            CustomerOrderSchema.order_date.op('AT TIME ZONE')('Asia/Kolkata')
+        )
+        outlet_name = func.coalesce(OutletSchema.outlet_name, 'Unassigned')
+
+        query = (
+            db.select(
+                date_col.label("date"),
+                outlet_name.label("outlet"),
+                CustomerOrderSchema.order_status,
+                ProductSchema.product_name,
+                ProductSchema.sku,
+                func.sum(OrderItemSchema.quantity).label("total_quantity"),
+                func.count(CustomerOrderSchema.uid.distinct()).label("order_count"),
+                func.string_agg(CustomerOrderSchema.order_number.distinct(), ', ').label("order_numbers")
+            )
+            .join(CustomerOrderSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
+            .join(ProductSchema, OrderItemSchema.product_id == ProductSchema.uid)
+            .outerjoin(OutletSchema, CustomerOrderSchema.assigned_outlet_id == OutletSchema.uid)
+            .where(date_col.between(start_date, end_date))
+            .group_by(
+                date_col, outlet_name,
+                CustomerOrderSchema.order_status,
+                ProductSchema.product_name, ProductSchema.sku
+            )
+            .order_by(text("date DESC"), func.sum(OrderItemSchema.quantity).desc())
+        )
+
+        async def execute(s):
+            res = await s.execute(query)
+            rows = res.all()
+            return [
+                {
+                    "date": row.date.isoformat() if hasattr(row.date, 'isoformat') else str(row.date),
+                    "outlet": row.outlet,
+                    "status": row.order_status.value if hasattr(row.order_status, 'value') else row.order_status,
+                    "product": row.product_name,
+                    "sku": row.sku,
+                    "total_quantity": int(row.total_quantity or 0),
+                    "order_count": int(row.order_count or 0),
+                    "order_numbers": row.order_numbers or ""
+                }
+                for row in rows
+            ]
+
+        if session:
+            return await execute(session)
+        async with self.session_factory() as session:
+            return await execute(session)
 
 
 class OrderTransactionSchema(BaseSchema):
@@ -1156,7 +1232,7 @@ class LSQTelecallerMappingSchema(BaseSchema):
     """LSQ Telecaller Mapping"""
     __tablename__ = "lsq_telecaller_mapping"
 
-    lsq_id = db.Column(db.String, nullable=False, index=True)
+    lsq_id = db.Column(db.String, nullable=False, unique=True, index=True)
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
     lsq_email = db.Column(db.String, nullable=False)
     

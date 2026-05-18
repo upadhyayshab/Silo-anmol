@@ -1,23 +1,78 @@
-from fastapi import APIRouter, HTTPException, Depends, status
-from typing import List
+from fastapi import APIRouter, HTTPException, Depends, status, Query
+from typing import List, Optional
+from datetime import date
+from sqlalchemy import text
 
 from config import get_settings, get_engine
-from managers import OutletManager
+from managers import OutletManager, UserManager
 from models import (
     OutletCreateRequest, OutletUpdateRequest, OutletResponse,
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles
-from utils.constants import UserRole
+from utils.constants import UserRole, OutletType
 
 settings = get_settings()
 engine = get_engine(settings.name)
 outlet_manager = OutletManager(engine)
+user_manager = UserManager(engine)
 
 router = APIRouter(prefix="/outlets", tags=["Outlet Management"])
 
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
+
+@router.get("/{outlet_id}/collections/summary")
+async def get_outlet_collections_summary(
+    outlet_id: str,
+    from_date: Optional[date] = Query(None, description="Filter start date YYYY-MM-DD"),
+    to_date: Optional[date] = Query(None, description="Filter end date YYYY-MM-DD"),
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
+    ))
+):
+    """
+    Aggregate collection totals for one outlet by status.
+    Replaces fetching up to 500 rows client-side to compute a single sum.
+    """
+    SUMMARY_QUERY = text("""
+    SELECT
+        COALESCE(SUM(amount) FILTER (WHERE confirmation_status = 'CONFIRMED'), 0) AS confirmed_total,
+        COALESCE(SUM(amount) FILTER (WHERE confirmation_status = 'PENDING'), 0)   AS pending_total,
+        COALESCE(SUM(amount) FILTER (WHERE confirmation_status = 'NOT_RECEIVED'), 0) AS not_received_total,
+        COALESCE(SUM(amount), 0) AS total,
+        COUNT(*) FILTER (WHERE confirmation_status = 'CONFIRMED')    AS confirmed_count,
+        COUNT(*) FILTER (WHERE confirmation_status = 'PENDING')      AS pending_count,
+        COUNT(*) FILTER (WHERE confirmation_status = 'NOT_RECEIVED') AS not_received_count
+    FROM outlet_daily_collections
+    WHERE outlet_id = :outlet_id
+      AND (CAST(:from_date AS DATE) IS NULL OR date >= CAST(:from_date AS DATE))
+      AND (CAST(:to_date AS DATE) IS NULL OR date <= CAST(:to_date AS DATE))
+    """)
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                SUMMARY_QUERY,
+                {"outlet_id": outlet_id, "from_date": from_date, "to_date": to_date}
+            )
+            row = result.one()
+
+        return {
+            "outlet_id": outlet_id,
+            "confirmed_total": float(row.confirmed_total),
+            "pending_total": float(row.pending_total),
+            "not_received_total": float(row.not_received_total),
+            "total": float(row.total),
+            "confirmed_count": int(row.confirmed_count),
+            "pending_count": int(row.pending_count),
+            "not_received_count": int(row.not_received_count),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch collections summary: {str(e)}"
+        )
+
 
 @router.get("/{outlet_id}", response_model=OutletResponse)
 async def get_outlet(
@@ -43,9 +98,10 @@ async def get_outlet(
             pan=outlet.pan,
             manager_id=outlet.manager_id,
             is_active=outlet.is_active,
+            outlet_type=outlet.outlet_type,
             created_at=outlet.created_at
         )
-    
+
     except Exception as e:
         if "not found" in str(e).lower():
             raise HTTPException(
@@ -65,6 +121,7 @@ async def list_outlets(
     is_active: bool = None,
     city: str = None,
     state: str = None,
+    outlet_type: Optional[OutletType] = None,
     limit: int = 50,
     offset: int = 0,
     _: str = Depends(require_roles(
@@ -85,7 +142,9 @@ async def list_outlets(
             filters["city"] = city
         if state:
             filters["state"] = state
-        
+        if outlet_type is not None:
+            filters["outlet_type"] = outlet_type
+
         outlets = await outlet_manager.fetch_all(
             limit=limit,
             offset=offset,
@@ -108,6 +167,7 @@ async def list_outlets(
                 pan=outlet.pan,
                 manager_id=outlet.manager_id,
                 is_active=outlet.is_active,
+                outlet_type=outlet.outlet_type,
                 created_at=outlet.created_at
             )
             for outlet in outlets.items
@@ -158,7 +218,8 @@ async def create_outlet(
             state_code=payload.state_code,
             pan=payload.pan,
             manager_id=payload.manager_id,
-            is_active=True
+            is_active=True,
+            outlet_type=payload.outlet_type
         )
         
         created_outlet = await outlet_manager.create(outlet)
@@ -178,6 +239,7 @@ async def create_outlet(
             pan=created_outlet.pan,
             manager_id=created_outlet.manager_id,
             is_active=created_outlet.is_active,
+            outlet_type=created_outlet.outlet_type,
             created_at=created_outlet.created_at
         )
     

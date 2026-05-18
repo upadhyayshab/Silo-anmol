@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timedelta
 from decimal import Decimal
+from sqlalchemy import text
 
 from config import get_settings, get_engine
 from managers import (
@@ -1077,20 +1078,109 @@ async def get_daily_order_summary(
     ))
 ):
     """ Get daily order summary including volume, revenue, and quantity by status. """
+    DAILY_REV_QUERY = text("""
+    WITH dates AS (
+        SELECT generate_series(CAST(:start_date AS DATE), CAST(:end_date AS DATE), '1 day'::interval)::date AS d
+    ),
+    order_stats AS (
+        SELECT co.uid, co.order_date, co.actual_delivery_date, co.updated_at, co.order_status,
+               co.gross_amount - co.discount_applied AS net_amount, ot.total_qty
+        FROM customer_orders co
+        LEFT JOIN (SELECT order_id, SUM(quantity) AS total_qty FROM order_items GROUP BY order_id) ot
+            ON co.uid = ot.order_id
+        WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
+    ),
+    placed AS (
+        SELECT DATE(order_date AT TIME ZONE 'Asia/Kolkata') AS d,
+               COUNT(uid) AS total_placed_orders,
+               COALESCE(SUM(net_amount), 0) AS total_placed_revenue,
+               COALESCE(SUM(total_qty), 0) AS total_placed_quantity,
+               COUNT(uid) FILTER (WHERE order_status = 'PENDING') AS pending_orders,
+               COALESCE(SUM(net_amount) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_revenue,
+               COALESCE(SUM(total_qty) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_quantity
+        FROM order_stats
+        WHERE (order_date AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        GROUP BY 1
+    ),
+    delivered AS (
+        SELECT DATE(actual_delivery_date AT TIME ZONE 'Asia/Kolkata') AS d,
+               COUNT(uid) AS delivered_orders,
+               COALESCE(SUM(net_amount), 0) AS delivered_revenue,
+               COALESCE(SUM(total_qty), 0) AS delivered_quantity
+        FROM order_stats
+        WHERE order_status = 'DELIVERED'
+          AND (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        GROUP BY 1
+    ),
+    cancelled AS (
+        SELECT DATE(updated_at AT TIME ZONE 'Asia/Kolkata') AS d,
+               COUNT(uid) AS cancelled_orders,
+               COALESCE(SUM(net_amount), 0) AS cancelled_revenue,
+               COALESCE(SUM(total_qty), 0) AS cancelled_quantity
+        FROM order_stats
+        WHERE order_status = 'CANCELLED'
+          AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        GROUP BY 1
+    )
+    SELECT dates.d AS date,
+           COALESCE(p.total_placed_orders, 0) AS total_placed_orders,
+           COALESCE(p.total_placed_revenue, 0) AS total_placed_revenue,
+           COALESCE(p.total_placed_quantity, 0) AS total_placed_quantity,
+           COALESCE(d_stats.delivered_orders, 0) AS delivered_orders,
+           COALESCE(d_stats.delivered_revenue, 0) AS delivered_revenue,
+           COALESCE(d_stats.delivered_quantity, 0) AS delivered_quantity,
+           COALESCE(c_stats.cancelled_orders, 0) AS cancelled_orders,
+           COALESCE(c_stats.cancelled_revenue, 0) AS cancelled_revenue,
+           COALESCE(c_stats.cancelled_quantity, 0) AS cancelled_quantity,
+           COALESCE(p.pending_orders, 0) AS pending_orders,
+           COALESCE(p.pending_revenue, 0) AS pending_revenue,
+           COALESCE(p.pending_quantity, 0) AS pending_quantity
+    FROM dates
+    LEFT JOIN placed p ON dates.d = p.d
+    LEFT JOIN delivered d_stats ON dates.d = d_stats.d
+    LEFT JOIN cancelled c_stats ON dates.d = c_stats.d
+    ORDER BY date ASC;
+    """)
     try:
         # Role-based outlet filtering
         current_user = await user_manager.fetch(current_user_id)
         target_outlet_id = outlet_id
-        
         if current_user.role == UserRole.OUTLET_MANAGER:
             target_outlet_id = current_user.outlet_id
-            
-        summary = await order_manager.get_daily_order_summary(
-            start_date=from_date,
-            end_date=to_date,
-            outlet_id=target_outlet_id
-        )
-        
+
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                DAILY_REV_QUERY,
+                {"start_date": from_date, "end_date": to_date, "outlet_id": target_outlet_id}
+            )
+            rows = result.all()
+
+        summary = [
+            {
+                "date": str(row.date),
+                "total_placed": {
+                    "orders": int(row.total_placed_orders),
+                    "revenue": float(row.total_placed_revenue),
+                    "quantity": int(row.total_placed_quantity),
+                },
+                "delivered": {
+                    "orders": int(row.delivered_orders),
+                    "revenue": float(row.delivered_revenue),
+                    "quantity": int(row.delivered_quantity),
+                },
+                "cancelled": {
+                    "orders": int(row.cancelled_orders),
+                    "revenue": float(row.cancelled_revenue),
+                    "quantity": int(row.cancelled_quantity),
+                },
+                "pending": {
+                    "orders": int(row.pending_orders),
+                    "revenue": float(row.pending_revenue),
+                    "quantity": int(row.pending_quantity),
+                },
+            }
+            for row in rows
+        ]
         return {
             "summary": summary,
             "filters_applied": {
@@ -1105,6 +1195,217 @@ async def get_daily_order_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch daily order summary: {str(e)}"
+        )
+
+
+@router.get("/outlet-financial-summary")
+async def get_outlet_financial_summary(
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
+    ))
+):
+    """
+    Per-outlet financial aggregation for the SuperAdmin dashboard.
+    Replaces 51+ individual API calls with a single DB-side aggregation.
+    """
+    FINANCIAL_QUERY = text("""
+    WITH delivered_orders AS (
+        SELECT
+            assigned_outlet_id,
+            SUM(gross_amount)      AS revenue,
+            SUM(discount_applied)  AS discounts,
+            SUM(total_commission)  AS commission,
+            SUM(prepaid_amount)    AS prepaid,
+            SUM(total_amount)      AS collected_at_outlet,
+            COUNT(*)               AS order_count
+        FROM customer_orders
+        WHERE order_status = 'DELIVERED'
+          AND assigned_outlet_id IS NOT NULL
+          AND (CAST(:from_date AS DATE) IS NULL OR (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date >= CAST(:from_date AS DATE))
+          AND (CAST(:to_date AS DATE) IS NULL OR (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date <= CAST(:to_date AS DATE))
+        GROUP BY assigned_outlet_id
+    ),
+    all_orders AS (
+        SELECT assigned_outlet_id, COUNT(*) AS all_order_count
+        FROM customer_orders
+        WHERE assigned_outlet_id IS NOT NULL
+        GROUP BY assigned_outlet_id
+    ),
+    collections AS (
+        SELECT outlet_id, SUM(amount) AS collections
+        FROM outlet_daily_collections
+        WHERE confirmation_status = 'CONFIRMED'
+          AND (CAST(:from_date AS DATE) IS NULL OR (confirmed_at AT TIME ZONE 'Asia/Kolkata')::date >= CAST(:from_date AS DATE))
+          AND (CAST(:to_date AS DATE) IS NULL OR (confirmed_at AT TIME ZONE 'Asia/Kolkata')::date <= CAST(:to_date AS DATE))
+        GROUP BY outlet_id
+    )
+    SELECT
+        o.uid,
+        o.outlet_name,
+        o.outlet_code,
+        o.is_active,
+        COALESCE(d.revenue, 0)             AS revenue,
+        COALESCE(d.discounts, 0)           AS discounts,
+        COALESCE(d.commission, 0)          AS commission,
+        COALESCE(d.prepaid, 0)             AS prepaid,
+        COALESCE(d.collected_at_outlet, 0) AS collected_at_outlet,
+        COALESCE(c.collections, 0)         AS collections,
+        COALESCE(d.order_count, 0)         AS order_count,
+        COALESCE(a.all_order_count, 0)     AS all_order_count
+    FROM outlets o
+    LEFT JOIN delivered_orders d ON o.uid = d.assigned_outlet_id
+    LEFT JOIN all_orders a       ON o.uid = a.assigned_outlet_id
+    LEFT JOIN collections c      ON o.uid = c.outlet_id
+    ORDER BY o.outlet_name
+    """)
+
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                FINANCIAL_QUERY,
+                {"from_date": from_date,
+                 "to_date":   to_date}
+            )
+            rows = result.all()
+
+        outlets = []
+        totals = {
+            "revenue": 0.0, "discounts": 0.0, "commission": 0.0,
+            "prepaid": 0.0, "collected_at_outlet": 0.0, "collections": 0.0,
+            "outstanding": 0.0, "net_revenue": 0.0,
+            "total_orders": 0, "delivered_orders": 0,
+        }
+
+        for row in rows:
+            revenue            = float(row.revenue)
+            discounts          = float(row.discounts)
+            commission         = float(row.commission)
+            prepaid            = float(row.prepaid)
+            collected_at_outlet = float(row.collected_at_outlet)
+            collections        = float(row.collections)
+            order_count        = int(row.order_count)
+            all_order_count    = int(row.all_order_count)
+            outstanding        = collected_at_outlet - collections
+            net_revenue        = prepaid + collected_at_outlet
+
+            outlets.append({
+                "uid": row.uid,
+                "outlet_name": row.outlet_name,
+                "outlet_code": row.outlet_code,
+                "is_active": row.is_active,
+                "summary": {
+                    "revenue": revenue,
+                    "discounts": discounts,
+                    "commission": commission,
+                    "prepaid": prepaid,
+                    "collected_at_outlet": collected_at_outlet,
+                    "collections": collections,
+                    "outstanding": outstanding,
+                    "net_revenue": net_revenue,
+                    "order_count": order_count,
+                    "all_order_count": all_order_count,
+                },
+            })
+
+            totals["revenue"]             += revenue
+            totals["discounts"]           += discounts
+            totals["commission"]          += commission
+            totals["prepaid"]             += prepaid
+            totals["collected_at_outlet"] += collected_at_outlet
+            totals["collections"]         += collections
+            totals["total_orders"]        += all_order_count
+            totals["delivered_orders"]    += order_count
+
+        totals["outstanding"]  = totals["collected_at_outlet"] - totals["collections"]
+        totals["net_revenue"]  = totals["prepaid"] + totals["collected_at_outlet"]
+
+        return {"totals": totals, "outlets": outlets}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch outlet financial summary: {str(e)}"
+        )
+
+
+@router.get("/inventory-pivot")
+async def get_inventory_pivot(
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
+    ))
+):
+    """
+    Inventory pivot: all active outlets × all active products with quantities.
+    Replaces 3 parallel frontend calls + client-side matrix construction.
+    """
+    PIVOT_QUERY = text("""
+    SELECT
+        o.uid          AS outlet_uid,
+        o.outlet_name,
+        o.outlet_code,
+        p.uid          AS product_uid,
+        p.product_name,
+        p.sku,
+        COALESCE(i.quantity, 0) AS quantity
+    FROM outlets o
+    CROSS JOIN products p
+    LEFT JOIN inventory i ON i.outlet_id = o.uid AND i.product_id = p.uid
+    WHERE o.is_active = true AND p.is_active = true
+    ORDER BY o.outlet_name, p.product_name
+    """)
+
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(PIVOT_QUERY)
+            rows = result.all()
+
+        outlets_map = {}
+        products_map = {}
+        matrix: Dict[str, Dict[str, int]] = {}
+        row_totals: Dict[str, int] = {}
+        col_totals: Dict[str, int] = {}
+        grand_total = 0
+
+        for row in rows:
+            oid = row.outlet_uid
+            pid = row.product_uid
+            qty = int(row.quantity)
+
+            if oid not in outlets_map:
+                outlets_map[oid] = {"uid": oid, "outlet_name": row.outlet_name, "outlet_code": row.outlet_code}
+                matrix[oid] = {}
+                row_totals[oid] = 0
+
+            if pid not in products_map:
+                products_map[pid] = {"uid": pid, "product_name": row.product_name, "sku": row.sku}
+                col_totals[pid] = 0
+
+            if qty > 0:
+                matrix[oid][pid] = qty
+
+            row_totals[oid] += qty
+            col_totals[pid] += qty
+            grand_total += qty
+
+        return {
+            "outlets": list(outlets_map.values()),
+            "products": list(products_map.values()),
+            "matrix": matrix,
+            "row_totals": row_totals,
+            "col_totals": col_totals,
+            "grand_total": grand_total,
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch inventory pivot: {str(e)}"
         )
 
 @router.get("/outlet-product-summary")
@@ -1160,4 +1461,27 @@ async def get_outlet_product_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch outlet product summary: {str(e)}"
+        )
+
+
+@router.get("/product-quantity-report")
+async def get_product_quantity_report(
+    from_date: date,
+    to_date: date,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+):
+    """Product quantity report grouped by date, outlet, status, and product."""
+    try:
+        data = await order_item_manager.get_product_quantity_report(
+            start_date=from_date,
+            end_date=to_date
+        )
+        return {
+            "items": data,
+            "filters_applied": {"from_date": from_date, "to_date": to_date}
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch product quantity report: {str(e)}"
         )

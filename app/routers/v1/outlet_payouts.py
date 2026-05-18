@@ -10,7 +10,7 @@ from managers import (
 )
 from models import (
     PayoutCreateRequest, PayoutUpdateRequest, PayoutStatusUpdateRequest,
-    PayoutResponse, ListResponse, StatusResponse
+    PayoutResponse, MarkPayoutPaidRequest, ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
 from utils.constants import UserRole, PayoutStatus
@@ -264,6 +264,82 @@ async def list_payouts(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch payouts: {str(e)}"
+        )
+
+
+@router.post("/{payout_id}/mark-paid", response_model=PayoutResponse)
+async def mark_payout_paid(
+    payout_id: str,
+    payload: MarkPayoutPaidRequest,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
+    ))
+):
+    """
+    Atomically transition a payout to PAID in a single request.
+    - PENDING → APPROVED → PAID
+    - APPROVED → PAID
+    - Already PAID → 400
+    """
+    try:
+        payout = await payout_manager.fetch(payout_id)
+
+        if payout.status == PayoutStatus.PAID:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Payout is already marked as PAID."
+            )
+
+        now = datetime.utcnow()
+
+        if payout.status == PayoutStatus.PENDING:
+            await payout_manager.update(payout_id, {
+                "status": PayoutStatus.APPROVED,
+                "approved_by": current_user_id,
+                "approved_at": now,
+            })
+
+        await payout_manager.update(payout_id, {
+            "status": PayoutStatus.PAID,
+            "paid_by": current_user_id,
+            "paid_at": now,
+            "payment_date": payload.payment_date,
+            **({"remarks": payload.notes} if payload.notes else {}),
+        })
+
+        updated = await payout_manager.fetch(payout_id)
+        outlet = await outlet_manager.fetch(updated.outlet_id)
+        manager_user = await user_manager.fetch(updated.outlet_manager_id)
+
+        return PayoutResponse(
+            uid=updated.uid,
+            outlet_id=updated.outlet_id,
+            outlet_name=outlet.outlet_name,
+            outlet_manager_id=updated.outlet_manager_id,
+            outlet_manager_name=manager_user.full_name,
+            period_from=updated.period_from,
+            period_to=updated.period_to,
+            amount=updated.amount,
+            payment_date=updated.payment_date,
+            payment_method=updated.payment_method,
+            transaction_id=updated.transaction_id,
+            status=updated.status,
+            remarks=updated.remarks,
+            created_by=updated.created_by,
+            approved_by=updated.approved_by,
+            approved_at=updated.approved_at,
+            paid_by=updated.paid_by,
+            paid_at=updated.paid_at,
+            created_at=updated.created_at,
+            updated_at=updated.updated_at,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to mark payout as paid: {str(e)}"
         )
 
 

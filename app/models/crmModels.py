@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
-from utils.constants import LeadSource
+from utils.crm_constants import LeadSource
 
 class CrmPayload:
     class Lead(BaseModel):

@@ -13,8 +13,8 @@ from models import (
     ListResponse, StatusResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole , TransferStatus, OrderStatus, HASSAN_OUTLET_ID
-from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
+from utils.constants import UserRole, TransferStatus, OrderStatus, OutletType
+from utils.warehouse_utils import get_default_warehouse_id
 
 import sqlalchemy as db
 from sqlalchemy import func, and_
@@ -70,8 +70,8 @@ async def get_product_inventory(
                     product_id=item.product_id,
                     outlet_id=item.outlet_id,
                     quantity=item.quantity,
-                    reserved_quantity=item.reserved_quantity,
-                    available_quantity=item.quantity - item.reserved_quantity,
+                    reserved_quantity=0,
+                    available_quantity=item.quantity,
                     last_updated=item.last_updated
                 ))
             except Exception as e:
@@ -115,7 +115,7 @@ async def get_low_stock_alerts(
                 product = await product_manager.fetch(item.product_id)
                 
                 # Check if stock is below minimum level
-                available_quantity = item.quantity - item.reserved_quantity
+                available_quantity = item.quantity
                 if available_quantity <= product.min_stock_level:
                     outlet = None
                     if item.outlet_id:
@@ -126,8 +126,8 @@ async def get_low_stock_alerts(
                         product_id=item.product_id,
                         outlet_id=item.outlet_id,
                         quantity=item.quantity,
-                        reserved_quantity=item.reserved_quantity,
-                        available_quantity=available_quantity,
+                        reserved_quantity=0,
+                        available_quantity=item.quantity,
                         last_updated=item.last_updated
                     ))
             except Exception as e:
@@ -163,31 +163,8 @@ async def get_reserved_stock(
         elif outlet_id:
             filters["outlet_id"] = outlet_id
         
-        inventory_items = await inventory_manager.fetch_all(filters=filters)
-        
-        reserved_items = []
-        for item in inventory_items.items:
-            if item.reserved_quantity > 0:
-                try:
-                    product = await product_manager.fetch(item.product_id)
-                    outlet = None
-                    if item.outlet_id:
-                        outlet = await outlet_manager.fetch(item.outlet_id)
-                    
-                    reserved_items.append(InventoryResponse(
-                        uid=item.uid,
-                        product_id=item.product_id,
-                        outlet_id=item.outlet_id,
-                        quantity=item.quantity,
-                        reserved_quantity=item.reserved_quantity,
-                        available_quantity=item.quantity - item.reserved_quantity,
-                        last_updated=item.last_updated
-                    ))
-                except Exception as e:
-                    print(f"Error processing inventory item {item.uid}: {str(e)}")
-                    continue
-        
-        return ListResponse(items=reserved_items, count=len(reserved_items))
+        # Reserved quantity logic removed. Always returning empty list.
+        return ListResponse(items=[], count=0)
     
     except Exception as e:
         raise HTTPException(
@@ -212,42 +189,51 @@ async def get_inventory(
 ):
     """
     Get inventory across locations with filters
-    - outlet_id: specific outlet (NULL for warehouse)
+    - outlet_id: specific outlet
     - product_id: specific product
     - low_stock_only: only show items below minimum stock level
     """
     try:
-        # 1. Subquery: 'total_received' per product & to_outlet (for outlets)
-        transfer_in_subq = (
+        # Resolve the warehouse ID at runtime (supports multiple warehouses)
+        warehouse_id = await get_default_warehouse_id(engine)
+
+        # Define coalesced expressions for consistent grouping
+        # NULL outlet_id rows are legacy records that belong to the warehouse
+        to_outlet_expr = func.coalesce(StockTransferOrderSchema.to_outlet_id, warehouse_id)
+        from_outlet_expr = func.coalesce(StockTransferOrderSchema.from_outlet_id, warehouse_id)
+        assigned_outlet_expr = func.coalesce(CustomerOrderSchema.assigned_outlet_id, warehouse_id)
+
+        # 1. CTE: 'total_received' per product & to_outlet
+        transfer_in_cte = (
             db.select(
                 TransferItemSchema.product_id,
-                StockTransferOrderSchema.to_outlet_id,
+                to_outlet_expr.label("to_outlet_id"),
                 func.sum(TransferItemSchema.quantity_delivered).label("total_received")
             )
             .join(StockTransferOrderSchema, TransferItemSchema.transfer_id == StockTransferOrderSchema.uid)
             .where(StockTransferOrderSchema.status == TransferStatus.DELIVERED)
-            .group_by(TransferItemSchema.product_id, StockTransferOrderSchema.to_outlet_id)
-            .subquery()
+            .group_by(TransferItemSchema.product_id, to_outlet_expr)
+            .cte("transfer_in")
         )
 
-        # 2. Subquery: 'total_transferred_out' per product & from_outlet (for warehouse)
-        transfer_out_subq = (
+        # 2. CTE: 'total_transferred_out' per product & from_outlet
+        transfer_out_cte = (
             db.select(
                 TransferItemSchema.product_id,
-                StockTransferOrderSchema.from_outlet_id,
+                from_outlet_expr.label("from_outlet_id"),
                 func.sum(TransferItemSchema.quantity_delivered).label("total_transferred_out")
             )
             .join(StockTransferOrderSchema, TransferItemSchema.transfer_id == StockTransferOrderSchema.uid)
             .where(StockTransferOrderSchema.status == TransferStatus.DELIVERED)
-            .group_by(TransferItemSchema.product_id, StockTransferOrderSchema.from_outlet_id)
-            .subquery()
+            .group_by(TransferItemSchema.product_id, from_outlet_expr)
+            .cte("transfer_out")
         )
 
-        # 3. Subquery: 'total_sold' per product & assigned_outlet
-        orders_query = (
+        # 3. CTE: 'total_sold' per product & assigned_outlet
+        orders_query_base = (
             db.select(
                 OrderItemSchema.product_id,
-                CustomerOrderSchema.assigned_outlet_id,
+                assigned_outlet_expr.label("assigned_outlet_id"),
                 func.sum(OrderItemSchema.quantity).label("total_sold")
             )
             .join(CustomerOrderSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
@@ -259,68 +245,69 @@ async def get_inventory(
             )
         )
         
-        # Unified Pool: count sales from both warehouse-assigned (None) and Hassan-assigned orders
-        if outlet_id is not None and (outlet_id.lower() == "null" or outlet_id == HASSAN_OUTLET_ID):
-            orders_query = orders_query.where(
-                db.or_(
-                    CustomerOrderSchema.assigned_outlet_id.is_(None),
-                    CustomerOrderSchema.assigned_outlet_id == HASSAN_OUTLET_ID
+        if outlet_id is not None:
+            if outlet_id.lower() == "null" or outlet_id == warehouse_id:
+                orders_query_base = orders_query_base.where(
+                    assigned_outlet_expr == warehouse_id
                 )
-            )
-        elif outlet_id is not None:
-            orders_query = orders_query.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
+            else:
+                orders_query_base = orders_query_base.where(CustomerOrderSchema.assigned_outlet_id == outlet_id)
             
         if product_id:
-            orders_query = orders_query.where(OrderItemSchema.product_id == product_id)
+            orders_query_base = orders_query_base.where(OrderItemSchema.product_id == product_id)
             
-        orders_subq = orders_query.group_by(OrderItemSchema.product_id, CustomerOrderSchema.assigned_outlet_id).subquery()
+        orders_cte = orders_query_base.group_by(
+            OrderItemSchema.product_id, 
+            assigned_outlet_expr
+        ).cte("orders_sold")
 
-        # 4. Build the main query joining Inventory with the three Subqueries
+        # 4. Build the main query joining Inventory with the three CTEs
         stmt = (
             db.select(
-                InventorySchema,
-                func.coalesce(transfer_in_subq.c.total_received, 0).label("total_received"),
-                func.coalesce(orders_subq.c.total_sold, 0).label("total_sold"),
-                func.coalesce(transfer_out_subq.c.total_transferred_out, 0).label("total_transferred_out")
+                InventorySchema.uid,
+                InventorySchema.product_id,
+                InventorySchema.outlet_id,
+                InventorySchema.quantity,
+                InventorySchema.last_updated,
+                func.coalesce(transfer_in_cte.c.total_received, 0).label("total_received"),
+                func.coalesce(orders_cte.c.total_sold, 0).label("total_sold"),
+                func.coalesce(transfer_out_cte.c.total_transferred_out, 0).label("total_transferred_out")
             )
             .outerjoin(
-                transfer_in_subq,
+                transfer_in_cte,
                 and_(
-                    InventorySchema.product_id == transfer_in_subq.c.product_id,
-                    db.or_(
-                        InventorySchema.outlet_id == transfer_in_subq.c.to_outlet_id,
-                        db.and_(InventorySchema.outlet_id.is_(None), transfer_in_subq.c.to_outlet_id.is_(None))
-                    )
+                    InventorySchema.product_id == transfer_in_cte.c.product_id,
+                    InventorySchema.outlet_id == transfer_in_cte.c.to_outlet_id
                 )
             )
             .outerjoin(
-                transfer_out_subq,
+                transfer_out_cte,
                 and_(
-                    InventorySchema.product_id == transfer_out_subq.c.product_id,
-                    db.or_(
-                        InventorySchema.outlet_id == transfer_out_subq.c.from_outlet_id,
-                        db.and_(InventorySchema.outlet_id.is_(None), transfer_out_subq.c.from_outlet_id.is_(None))
-                    )
+                    InventorySchema.product_id == transfer_out_cte.c.product_id,
+                    InventorySchema.outlet_id == transfer_out_cte.c.from_outlet_id
                 )
             )
             .outerjoin(
-                orders_subq,
+                orders_cte,
                 and_(
-                    InventorySchema.product_id == orders_subq.c.product_id,
-                    db.or_(
-                        InventorySchema.outlet_id == orders_subq.c.assigned_outlet_id,
-                        db.and_(InventorySchema.outlet_id.is_(None), orders_subq.c.assigned_outlet_id.is_(None))
-                    )
+                    InventorySchema.product_id == orders_cte.c.product_id,
+                    InventorySchema.outlet_id == orders_cte.c.assigned_outlet_id
                 )
             )
         )
 
-        # 5. Apply Filters with Unified Hassan/Warehouse Pool
+        # 5. Apply Filters — never show factory outlets in inventory
+        from managers import OutletSchema as _OutletSchema
+        stmt = stmt.outerjoin(_OutletSchema, InventorySchema.outlet_id == _OutletSchema.uid).where(
+            db.or_(
+                InventorySchema.outlet_id.is_(None),
+                _OutletSchema.outlet_type != OutletType.FACTORY
+            )
+        )
+
         if outlet_id is not None:
-            if outlet_id.lower() == "null" or outlet_id == HASSAN_OUTLET_ID:
-                # Unified Pool request: specifically show records for Hassan Outlet
-                # (Inventory is now stored under Hassan Outlet ID for both)
-                stmt = stmt.where(InventorySchema.outlet_id == HASSAN_OUTLET_ID)
+            if outlet_id.lower() == "null" or outlet_id == warehouse_id:
+                stmt = stmt.where(InventorySchema.outlet_id == warehouse_id)
             else:
                 stmt = stmt.where(InventorySchema.outlet_id == outlet_id)
                 
@@ -329,9 +316,17 @@ async def get_inventory(
 
         # 6. Execute the query using AsyncSession
         async with AsyncSession(engine) as session:
-            # Get total count for pagination
-            count_stmt = db.select(func.count()).select_from(stmt.subquery())
-            total_count = await session.scalar(count_stmt)
+            # Get total count for pagination (simplified to avoid subquery complexities)
+            count_stmt = db.select(func.count(InventorySchema.uid)).select_from(InventorySchema)
+            if outlet_id is not None:
+                if outlet_id.lower() == "null" or outlet_id == warehouse_id:
+                    count_stmt = count_stmt.where(InventorySchema.outlet_id == warehouse_id)
+                else:
+                    count_stmt = count_stmt.where(InventorySchema.outlet_id == outlet_id)
+            if product_id:
+                count_stmt = count_stmt.where(InventorySchema.product_id == product_id)
+                
+            total_count = await session.scalar(count_stmt) or 0
 
             # Apply pagination
             if limit > 0:
@@ -343,25 +338,20 @@ async def get_inventory(
 
         # 7. Process Results
         inventory_responses = []
-        for inventory_item, total_received, total_sold, total_transferred_out in rows:
-
-            # Recalculate quantity: Received - Sold - Transferred Out
-            actual_quantity = (total_received or 0) - (total_sold or 0) - (total_transferred_out or 0)
+        for uid, p_id, o_id, qty, last_upd, total_received, total_sold, total_transferred_out in rows:
+            # Recalculate quantity: Received - Sold - Transferred Out (cast to int for Pydantic)
+            actual_quantity = int((total_received or 0) - (total_sold or 0) - (total_transferred_out or 0))
             
-            # For response mapping:
-            # - quantity: Recalculated value
-            # - db_quantity: Raw value from inventory table
-            # - delivered: Total sold (orders)
             delivered = int(total_sold or 0)
             display_received = int(total_received or 0)
             display_transferred_out = int(total_transferred_out or 0)
 
-            available_quantity = max(0, actual_quantity - inventory_item.reserved_quantity)
+            available_quantity = max(0, actual_quantity)
             
             # Apply low stock filter dynamically if requested
             if low_stock_only:
                 try:
-                    product = await product_manager.fetch(inventory_item.product_id)
+                    product = await product_manager.fetch(p_id)
                     if available_quantity >= product.min_stock_level:
                         continue
                 except:
@@ -369,14 +359,15 @@ async def get_inventory(
 
             inventory_responses.append(
                 InventoryAuditResponse(
-                    uid=inventory_item.uid,
-                    product_id=inventory_item.product_id,
-                    outlet_id=inventory_item.outlet_id,
-                    quantity=actual_quantity,
-                    db_quantity=inventory_item.quantity,
-                    reserved_quantity=inventory_item.reserved_quantity,
-                    available_quantity=available_quantity,
-                    last_updated=inventory_item.last_updated,
+                    uid=uid,
+                    product_id=p_id,
+                    outlet_id=o_id,
+                    quantity=int(qty or 0), # Use Physical Stock for display
+                    db_quantity=int(qty or 0),
+                    audited_quantity=actual_quantity, # Use Calculated Stock for audit
+                    reserved_quantity=0,
+                    available_quantity=int(qty or 0),
+                    last_updated=last_upd or datetime.utcnow(),
                     total_received=display_received,
                     delivered=delivered,
                     total_transferred_out=display_transferred_out
@@ -386,6 +377,8 @@ async def get_inventory(
         return ListResponse(items=inventory_responses, count=total_count)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch inventory: {str(e)}"
@@ -414,25 +407,14 @@ async def adjust_stock(
     Negative quantity_change = stock reduction
     """
     try:
+        # Normalize outlet_id: None or "null" becomes HASSAN_OUTLET_ID
+        if payload.outlet_id is None or (isinstance(payload.outlet_id, str) and payload.outlet_id.lower() == "null"):
+            payload.outlet_id = HASSAN_OUTLET_ID
+
         # Verify product exists
-        try:
-            await product_manager.fetch(payload.product_id)
-        except:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Product not found"
-            )
-        
-        # Verify outlet exists (if specified)
-        if payload.outlet_id:
-            try:
-                await outlet_manager.fetch(payload.outlet_id)
-            except:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Outlet not found"
-                )
-        
+        product = await product_manager.fetch(payload.product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
         # Find existing inventory record
         existing_inventory = await inventory_manager.fetch_all(
             filters={
@@ -453,29 +435,15 @@ async def adjust_stock(
                     detail=f"Insufficient stock. Current: {inventory_item.quantity}, Requested change: {payload.quantity_change}"
                 )
             
-            # Prevent reducing below reserved quantity
-            if new_quantity < inventory_item.reserved_quantity:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Cannot reduce stock below reserved quantity. Reserved: {inventory_item.reserved_quantity}"
-                )
+            # Reserved quantity check removed
             
-            if is_hassan_or_warehouse(payload.outlet_id):
-                await sync_unified_inventory(
-                    inventory_manager,
-                    InventorySchema,
-                    product_id=payload.product_id,
-                    target_outlet_id=payload.outlet_id,
-                    quantity_delta=payload.quantity_change
-                )
-            else:
-                await inventory_manager.update(
-                    inventory_item.uid,
-                    {
-                        "quantity": new_quantity,
-                        "last_updated": datetime.utcnow()
-                    }
-                )
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "quantity": new_quantity,
+                    "last_updated": datetime.utcnow()
+                }
+            )
             
             return StatusResponse(
                 status="ok",
@@ -490,23 +458,14 @@ async def adjust_stock(
                     detail="Cannot create inventory with zero or negative quantity"
                 )
             
-            if is_hassan_or_warehouse(payload.outlet_id):
-                await sync_unified_inventory(
-                    inventory_manager,
-                    InventorySchema,
-                    product_id=payload.product_id,
-                    target_outlet_id=payload.outlet_id,
-                    quantity_delta=payload.quantity_change
-                )
-            else:
-                new_inventory = InventorySchema(
-                    product_id=payload.product_id,
-                    outlet_id=payload.outlet_id,
-                    quantity=payload.quantity_change,
-                    reserved_quantity=0,
-                    last_updated=datetime.utcnow()
-                )
-                await inventory_manager.create(new_inventory)
+            new_inventory = InventorySchema(
+                product_id=payload.product_id,
+                outlet_id=payload.outlet_id,
+                quantity=payload.quantity_change,
+                reserved_quantity=0,
+                last_updated=datetime.utcnow()
+            )
+            await inventory_manager.create(new_inventory)
             
             return StatusResponse(
                 status="ok",
@@ -566,28 +525,10 @@ async def reserve_stock(
                 detail=f"Insufficient stock. Available: {available_quantity}, Requested: {quantity}"
             )
         
-        if is_hassan_or_warehouse(outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=product_id,
-                target_outlet_id=outlet_id,
-                reserved_delta=quantity
-            )
-        else:
-            # Update reserved quantity
-            new_reserved = inventory_item.reserved_quantity + quantity
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": new_reserved,
-                    "last_updated": datetime.utcnow()
-                }
-            )
-        
+        # Reservation logic removed. Stock is only deducted when delivered.
         return StatusResponse(
             status="ok",
-            message=f"Reserved {quantity} units. Total reserved: {new_reserved}"
+            message=f"Reservation skipped. Stock will be deducted on delivery."
         )
     
     except HTTPException:
@@ -642,28 +583,10 @@ async def release_reserved_stock(
                 detail=f"Cannot release more than reserved. Reserved: {inventory_item.reserved_quantity}, Requested: {quantity}"
             )
         
-        if is_hassan_or_warehouse(outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=product_id,
-                target_outlet_id=outlet_id,
-                reserved_delta=-quantity
-            )
-        else:
-            # Update reserved quantity
-            new_reserved = inventory_item.reserved_quantity - quantity
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": new_reserved,
-                    "last_updated": datetime.utcnow()
-                }
-            )
-        
+        # Reservation logic removed.
         return StatusResponse(
             status="ok",
-            message=f"Released {quantity} units. Total reserved: {new_reserved}"
+            message=f"Release skipped. No stock was reserved."
         )
     
     except HTTPException:
@@ -713,47 +636,32 @@ async def consume_reserved_stock(
         
         inventory_item = inventory_items.items[0]
         
-        if inventory_item.reserved_quantity < quantity:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot consume more than reserved. Reserved: {inventory_item.reserved_quantity}, Requested: {quantity}"
-            )
-        
+        # Now simply consumes stock by decreasing quantity
         if inventory_item.quantity < quantity:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Insufficient total stock. Available: {inventory_item.quantity}, Requested: {quantity}"
             )
         
-        if is_hassan_or_warehouse(outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=product_id,
-                target_outlet_id=outlet_id,
-                quantity_delta=-quantity,
-                reserved_delta=-quantity
-            )
-            # Need these for the response message
-            new_quantity = inventory_item.quantity - quantity
-            new_reserved = inventory_item.reserved_quantity - quantity
-        else:
-            # Update both quantity and reserved quantity
-            new_quantity = inventory_item.quantity - quantity
-            new_reserved = inventory_item.reserved_quantity - quantity
+        new_quantity = max(0, inventory_item.quantity - quantity)
+        
+        # Normalize outlet_id for update
+        target_outlet_id = outlet_id
+        if target_outlet_id is None or (isinstance(target_outlet_id, str) and target_outlet_id.lower() == "null"):
+            target_outlet_id = HASSAN_OUTLET_ID
             
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "quantity": new_quantity,
-                    "reserved_quantity": new_reserved,
-                    "last_updated": datetime.utcnow()
-                }
-            )
+        await inventory_manager.update(
+            inventory_item.uid,
+            {
+                "quantity": new_quantity,
+                "outlet_id": target_outlet_id,
+                "last_updated": datetime.utcnow()
+            }
+        )
         
         return StatusResponse(
             status="ok",
-            message=f"Consumed {quantity} units. New quantity: {new_quantity}, Reserved: {new_reserved}"
+            message=f"Consumed {quantity} units. New quantity: {new_quantity}"
         )
     
     except HTTPException:

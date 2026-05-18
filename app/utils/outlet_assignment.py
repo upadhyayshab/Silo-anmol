@@ -11,7 +11,8 @@ from config import get_engine
 
 from managers import OutletManager, OutletMappingManager
 from utils.crm_utils import sync_order_to_crm
-from utils.constants import ActivityType
+from utils.crm_constants import ActivityType
+from utils.warehouse_utils import get_fallback_warehouse
 
 # Mirrors the aliases used in seed_outlet_mappings.py so raw order values
 # (which may use xlsx/local spellings) resolve to the same canonical names
@@ -313,20 +314,18 @@ async def auto_assign_outlet(
                     outlet.is_fallback = False
                     return outlet
 
-        # Fallback: If no mapping found, use Hassan outlet as fallback
-        print(f"FALLBACK: No outlet mapping found, using fallback logic")
-        
-        # Try to find Hassan outlet specifically
-        hassan_outlet = next((o for o in all_outlets.items if "hassan" in o.outlet_name.lower()), None)
-        
-        if hassan_outlet:
-            print(f"FALLBACK: Fallback outlet (Hassan): {hassan_outlet.outlet_name}")
-            hassan_outlet.is_fallback = True
-            return hassan_outlet
-            
-        # Final fallback: use the first active outlet if Hassan not found
+        # Fallback: no outlet mapping found — use the warehouse in the same state
+        print(f"FALLBACK: No outlet mapping found, looking for warehouse fallback (state={state})")
+
+        warehouse = await get_fallback_warehouse(engine, state=state)
+        if warehouse:
+            print(f"FALLBACK: Warehouse fallback: {warehouse.outlet_name}")
+            warehouse.is_fallback = True
+            return warehouse
+
+        # Final safety: first active outlet of any kind
         first_outlet = all_outlets.items[0]
-        print(f"FALLBACK: Fallback outlet (First Active): {first_outlet.outlet_name}")
+        print(f"FALLBACK: First active outlet fallback: {first_outlet.outlet_name}")
         first_outlet.is_fallback = True
         return first_outlet
 

@@ -15,7 +15,8 @@ from managers import (
     TransferItemManager, CustomerOrderSchema, OutletSchema, ProductSchema, InventorySchema
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, HASSAN_OUTLET_ID
+from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, OutletType
+from utils.warehouse_utils import get_default_warehouse_id
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -309,11 +310,11 @@ async def get_inventory_overview(
             # Apply Outlet Filter
             if outlet_id:
                 if outlet_id.lower() == "warehouse":
-                    # Special case: 'warehouse' now uses the unified pool (None and Hassan)
+                    warehouse_id = await get_default_warehouse_id(engine)
                     query = query.where(
                         db.or_(
                             InventorySchema.outlet_id.is_(None),
-                            InventorySchema.outlet_id == HASSAN_OUTLET_ID
+                            InventorySchema.outlet_id == warehouse_id
                         )
                     )
                 else:
@@ -354,11 +355,11 @@ async def get_inventory_overview(
             total_global_quantity += qty
             product_consolidation[pid]["total_quantity"] += qty
 
-            # Unified Hassan/Warehouse Pool logic
-            # Both outlet_id=None and HASSAN_OUTLET_ID are treated as Warehouse inventory
+            # Warehouse pool: NULL rows (legacy) + warehouse-type outlets
             outlet_id_str = str(row.outlet_id) if row.outlet_id else None
-            
-            if outlet_id_str is None or outlet_id_str == HASSAN_OUTLET_ID:
+            warehouse_id = await get_default_warehouse_id(engine)
+
+            if outlet_id_str is None or outlet_id_str == warehouse_id:
                 product_consolidation[pid]["warehouse_quantity"] += qty
             else:
                 product_consolidation[pid]["outlets"].append({
@@ -552,12 +553,12 @@ async def get_warehouse_manager_dashboard(
                     detail="Access denied"
                 )
         
-        # Get warehouse inventory (now unified under Hassan Outlet ID)
-        # Fetch all and filter to include both NULL and Hassan Outlet ID
+        # Get warehouse inventory — includes NULL (legacy) + warehouse-type outlet rows
+        warehouse_id = await get_default_warehouse_id(engine)
         all_inventory = await inventory_manager.fetch_all()
         warehouse_items = [
-            inv for inv in all_inventory.items 
-            if inv.outlet_id is None or str(inv.outlet_id) == HASSAN_OUTLET_ID
+            inv for inv in all_inventory.items
+            if inv.outlet_id is None or str(inv.outlet_id) == warehouse_id
         ]
         
         # Get pending transfer requests (no joins - fetch items separately)

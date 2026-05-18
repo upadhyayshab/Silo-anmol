@@ -18,12 +18,14 @@ from models import (
     ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, ActivityType, HASSAN_OUTLET_ID
-from utils.inventory_utils import is_hassan_or_warehouse, sync_unified_inventory
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType
+from utils.crm_constants import ActivityType
+from utils.warehouse_utils import get_default_warehouse_id
 from services import CRMService, storeService, deliveryService
 from services.deliveryService import ScheduledDeliveryRequest, ScheduledAssignment, ScheduledOrder
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
+from utils.delivery_utils import build_cumulative_remarks
 import uuid
 
 settings = get_settings()
@@ -293,19 +295,7 @@ async def create_order(
                 created_order.assigned_outlet_id = assigned_outlet.uid
                 assigned_outlet_id = assigned_outlet.uid
         
-        # Reserve stock at assigned outlet
-        if assigned_outlet_id:
-            try:
-                await reserve_order_stock(created_order.uid, assigned_outlet_id, validated_items)
-            except Exception as e:
-                # If stock reservation fails, keep order as pending
-                await order_manager.update(
-                    created_order.uid,
-                    {
-                        "status_remarks": f"Stock reservation failed: {str(e)}",
-                        "order_status": OrderStatus.PENDING
-                    }
-                )
+        # Stock reservation removed - stock only deducted on delivery
         
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.CREATE_ORDER)
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.ORDER_STATUS)
@@ -644,18 +634,7 @@ async def create_proxy_order(
             created_order.assigned_outlet_id = assigned_outlet.uid
             assigned_outlet_id = assigned_outlet.uid
         
-        # Step 9: Reserve stock
-        if assigned_outlet_id:
-            try:
-                await reserve_order_stock(created_order.uid, assigned_outlet_id, validated_items)
-            except Exception as e:
-                await order_manager.update(
-                    created_order.uid,
-                    {
-                        "status_remarks": f"Stock reservation failed: {str(e)}",
-                        "order_status": OrderStatus.PENDING
-                    }
-                )
+        # Stock reservation removed
         
         # Step 10: Log proxy order creation for audit trail
         try:
@@ -744,58 +723,27 @@ async def create_proxy_order(
 
 
 async def _find_inventory_for_product(product_id: str, outlet_id: str):
-    """
-    Find the best inventory record for a product at a given outlet.
-    When the outlet is the Hassan outlet or Warehouse, they are treated
-    as a unified pool using the Hassan Outlet ID.
-    """
-    # If the requested outlet is Warehouse (None) or Hassan Outlet,
-    # always use the Hassan Outlet ID for inventory lookup.
+    """Find inventory record for a product at a given outlet."""
     target_outlet_id = outlet_id
-    if outlet_id is None or outlet_id == HASSAN_OUTLET_ID:
-        target_outlet_id = HASSAN_OUTLET_ID
+    if target_outlet_id is None or target_outlet_id == "null":
+        target_outlet_id = await get_default_warehouse_id(engine)
 
     inventory_items = await inventory_manager.fetch_all(
         filters={"product_id": product_id, "outlet_id": target_outlet_id}
     )
-    
     if inventory_items.items:
         return inventory_items.items[0]
-
     return None
 
 
 async def reserve_order_stock(order_id: str, outlet_id: str, validated_items: List[dict]):
-    """Reserve stock for order items at assigned outlet"""
-    for item_data in validated_items:
-        product_id = item_data["product"].uid
-        quantity = item_data["quantity"]
+    """Stock reservation logic removed."""
+    return
 
-        inventory_item = await _find_inventory_for_product(product_id, outlet_id)
 
-        if inventory_item is None:
-            raise Exception(f"No stock available for product {item_data['product'].product_name}")
-
-        available = inventory_item.quantity - inventory_item.reserved_quantity
-        if available < quantity:
-            raise Exception(f"Insufficient stock for {item_data['product'].product_name}. Available: {available}, Required: {quantity}")
-
-        if is_hassan_or_warehouse(outlet_id):
-            await sync_unified_inventory(
-                inventory_manager,
-                InventorySchema,
-                product_id=product_id,
-                target_outlet_id=outlet_id,
-                reserved_delta=quantity
-            )
-        else:
-            await inventory_manager.update(
-                inventory_item.uid,
-                {
-                    "reserved_quantity": inventory_item.reserved_quantity + quantity,
-                    "last_updated": datetime.utcnow()
-                }
-            )
+async def release_order_stock(order_id: str):
+    """Stock reservation logic removed."""
+    return
 
 @router.post("/bulk/assign-delivery", response_model=BulkAssignmentResponse)
 async def bulk_assign_delivery_guy_to_orders(
@@ -874,13 +822,19 @@ async def bulk_assign_delivery_guy_to_orders(
                 background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
                 
                 # 4. Log the status change in tracking table
+                existing_tracking = await tracking_manager.fetch_all(
+                    filters={"order_id": order_id}, sorts=["created_at"]
+                )
+                allotment_remark = f"Order assigned to {user.full_name} by outlet manager."
                 tracking_record = DeliveryTrackingSchema(
                     order_id=order_id,
                     outlet_id=dg_profile.outlet_id,
                     telecaller_id=order.telecaller_id,
                     delivery_person_id=user.uid,
                     status_changed_to=OrderStatus.DELIVERY_ALLOTTED,
-                    remarks=f"Order assigned to {user.full_name} by outlet manager.",
+                    remarks=build_cumulative_remarks(
+                        existing_tracking.items, OrderStatus.DELIVERY_ALLOTTED, allotment_remark
+                    ),
                     changed_by=current_user_id
                 )
                 await tracking_manager.create(tracking_record)
@@ -1109,9 +1063,7 @@ openapi_examples={
             "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
     
-        # Only release stock if the order status meant the stock was previously reserved (e.g. PENDING)
-        if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
-            await release_order_stock(order_id)
+        # Stock reservation/release removed
 
         # 6. Replace items (delete old, create new)
         async with order_manager.session_factory() as session:
@@ -1131,13 +1083,7 @@ openapi_examples={
                 product_manual_discount=item_data["product_manual_discount"]
             ))
 
-        # 7. Reserve Stock for New Items
-        if order.order_status == OrderStatus.PENDING and order.assigned_outlet_id:
-            try:
-                await reserve_order_stock(order_id, order.assigned_outlet_id, validated_items)
-            except Exception as e:
-                # If new stock reservation fails, log it in status_remarks (similar to create_order)
-                update_data["status_remarks"] = f"Stock reservation failed after update: {str(e)}"
+        # Stock reservation removed
                 
         # Commit order level updates to database
         updated_order = await order_manager.update(order_id, update_data)
@@ -1239,15 +1185,18 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
                 date_filter["<="] = datetime.combine(to_date, time.max)
             filters["order_date"] = date_filter
 
-        # 4. Handle type coercion for dynamic filters (expected_delivery_date is a Date column)
-        if "expected_delivery_date" in dynamic_filters:
-            val = dynamic_filters["expected_delivery_date"]
-            if isinstance(val, datetime):
-                dynamic_filters["expected_delivery_date"] = val.date()
-            elif isinstance(val, dict):
-                for op, v in val.items():
-                    if isinstance(v, datetime):
-                        val[op] = v.date()
+        # 4. Handle type coercion for dynamic filters (Date-only columns or columns where date-level filtering is common)
+        date_columns = ["expected_delivery_date", "created_at", "updated_at", "order_date", "actual_delivery_date"]
+        for date_col in date_columns:
+            if date_col in dynamic_filters:
+                val = dynamic_filters[date_col]
+                if isinstance(val, datetime):
+                    dynamic_filters[date_col] = val.date()
+                elif isinstance(val, dict):
+                    for op, v in val.items():
+                        if isinstance(v, datetime):
+                            val[op] = v.date()
+
 
         # 5. Merge dynamic filters
         filters.update(dynamic_filters)
@@ -1650,8 +1599,7 @@ async def update_order_status(
 
             # push activity to crm           
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.ORDER_STATUS)
-            # Release reserved stock
-            await release_order_stock(order_id)
+            # Stock reservation logic removed
 
         elif payload.order_status == OrderStatus.DELIVERY_ALLOTTED:
             update_data["actual_delivery_date"] = datetime.utcnow()
@@ -1695,7 +1643,7 @@ def is_valid_status_transition(current_status: OrderStatus, new_status: OrderSta
 
 
 async def consume_order_stock(order_id: str):
-    """Consume reserved stock when order is delivered"""
+    """Decrease quantity when order is delivered"""
     order = await order_manager.fetch(order_id)
     order_items = await order_item_manager.fetch_all(filters={"order_id": order_id})
 
@@ -1703,51 +1651,17 @@ async def consume_order_stock(order_id: str):
         inventory_item = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
 
         if inventory_item:
-            if is_hassan_or_warehouse(order.assigned_outlet_id):
-                await sync_unified_inventory(
-                    inventory_manager,
-                    InventorySchema,
-                    product_id=item.product_id,
-                    target_outlet_id=order.assigned_outlet_id,
-                    quantity_delta=-item.quantity,
-                    reserved_delta=-item.quantity
-                )
-            else:
-                await inventory_manager.update(
-                    inventory_item.uid,
-                    {
-                        "quantity": max(0, inventory_item.quantity - item.quantity),
-                        "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
-                        "last_updated": datetime.utcnow()
-                    }
-                )
+            # Simply decrease quantity (no reserved_quantity logic)
+            await inventory_manager.update(
+                inventory_item.uid,
+                {
+                    "quantity": max(0, inventory_item.quantity - item.quantity),
+                    "last_updated": datetime.utcnow()
+                }
+            )
 
 
-async def release_order_stock(order_id: str):
-    """Release reserved stock when order is cancelled"""
-    order = await order_manager.fetch(order_id)
-    order_items = await order_item_manager.fetch_all(filters={"order_id": order_id})
-
-    for item in order_items.items:
-        inventory_item = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
-
-        if inventory_item:
-            if is_hassan_or_warehouse(order.assigned_outlet_id):
-                await sync_unified_inventory(
-                    inventory_manager,
-                    InventorySchema,
-                    product_id=item.product_id,
-                    target_outlet_id=order.assigned_outlet_id,
-                    reserved_delta=-item.quantity
-                )
-            else:
-                await inventory_manager.update(
-                    inventory_item.uid,
-                    {
-                        "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
-                        "last_updated": datetime.utcnow()
-                    }
-                )
+# release_order_stock removed (handled by dummy function above)
 
 
 @router.put("/{order_id}/assign", response_model=StatusResponse)
@@ -1780,38 +1694,11 @@ async def assign_order_to_outlet(
                 detail="Outlet not found"
             )
         
-        # Release stock from old outlet if assigned
-        if order.assigned_outlet_id:
-            await release_order_stock(order_id)
-        
-        # Update assignment
+        # Update assignment (no stock reservation/release)
         await order_manager.update(
             order_id,
             {"assigned_outlet_id": payload.assigned_outlet_id}
         )
-        
-        # Reserve stock at new outlet
-        order_items = await order_item_manager.fetch_all(
-            filters={"order_id": order_id}
-        )
-        
-        validated_items = []
-        for item in order_items.items:
-            product = await product_manager.fetch(item.product_id)
-            validated_items.append({
-                "product": product,
-                "quantity": item.quantity,
-                "unit_price": item.unit_price,
-                "subtotal": item.subtotal
-            })
-        
-        try:
-            await reserve_order_stock(order_id, payload.assigned_outlet_id, validated_items)
-        except Exception as e:
-            await order_manager.update(
-                order_id,
-                {"status_remarks": f"Stock reservation failed: {str(e)}"}
-            )
         
         return StatusResponse(
             status="ok",
@@ -2047,32 +1934,7 @@ async def delete_order(
             filters={"order_id": order_id}
         )
         
-        # Release reserved inventory (only for PENDING and CANCELLED orders)
-        if order.order_status in [OrderStatus.PENDING, OrderStatus.CANCELLED]:
-            for item in order_items.items:
-                try:
-                    inventory_item = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
-
-                    # Only release if order is PENDING (CANCELLED already released)
-                    if inventory_item and order.order_status == OrderStatus.PENDING:
-                        if is_hassan_or_warehouse(order.assigned_outlet_id):
-                            await sync_unified_inventory(
-                                inventory_manager,
-                                InventorySchema,
-                                product_id=item.product_id,
-                                target_outlet_id=order.assigned_outlet_id,
-                                reserved_delta=-item.quantity
-                            )
-                        else:
-                            await inventory_manager.update(
-                                inventory_item.uid,
-                                {
-                                    "reserved_quantity": max(0, inventory_item.reserved_quantity - item.quantity),
-                                    "last_updated": datetime.utcnow()
-                                }
-                            )
-                except Exception as inv_error:
-                    print(f"Warning: Failed to release inventory for item {item.product_id}: {inv_error}")
+        # Inventory reservation logic removed.
         
         # Log deletion to activity_logs (if you have ActivityLogManager)
         try:
@@ -2213,56 +2075,16 @@ async def revoke_order(
                 inventory_item = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
 
                 if inventory_item:
-                    # Different logic based on previous status
+                    # Stock restored only if revoking from DELIVERED
                     if order.order_status == OrderStatus.DELIVERED:
-                        # DELIVERED → PENDING: Restore consumed stock + reserve it
-                        if is_hassan_or_warehouse(order.assigned_outlet_id):
-                            await sync_unified_inventory(
-                                inventory_manager,
-                                InventorySchema,
-                                product_id=item.product_id,
-                                target_outlet_id=order.assigned_outlet_id,
-                                quantity_delta=item.quantity,
-                                reserved_delta=item.quantity
-                            )
-                        else:
-                            await inventory_manager.update(
-                                inventory_item.uid,
-                                {
-                                    "quantity": inventory_item.quantity + item.quantity,
-                                    "reserved_quantity": inventory_item.reserved_quantity + item.quantity,
-                                    "last_updated": datetime.utcnow()
-                                }
-                            )
-
-                    elif order.order_status == OrderStatus.CANCELLED:
-                        # CANCELLED → PENDING: Re-reserve stock (quantity unchanged)
-                        available_stock = inventory_item.quantity - inventory_item.reserved_quantity
-
-                        if available_stock < item.quantity:
-                            raise HTTPException(
-                                status_code=status.HTTP_400_BAD_REQUEST,
-                                detail=f"Cannot reactivate order: Insufficient stock for product {item.product_id}. "
-                                       f"Available: {available_stock}, Required: {item.quantity}. "
-                                       f"Stock may have been sold after cancellation."
-                            )
-
-                        if is_hassan_or_warehouse(order.assigned_outlet_id):
-                            await sync_unified_inventory(
-                                inventory_manager,
-                                InventorySchema,
-                                product_id=item.product_id,
-                                target_outlet_id=order.assigned_outlet_id,
-                                reserved_delta=item.quantity
-                            )
-                        else:
-                            await inventory_manager.update(
-                                inventory_item.uid,
-                                {
-                                    "reserved_quantity": inventory_item.reserved_quantity + item.quantity,
-                                    "last_updated": datetime.utcnow()
-                                }
-                            )
+                        await inventory_manager.update(
+                            inventory_item.uid,
+                            {
+                                "quantity": inventory_item.quantity + item.quantity,
+                                "last_updated": datetime.utcnow()
+                            }
+                        )
+                    # For CANCELLED orders, no stock was reserved/consumed, so no change
                 else:
                     print(f"Warning: No inventory record found for product {item.product_id} at outlet {order.assigned_outlet_id}")
                     

@@ -8,7 +8,7 @@ from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus, PayoutFrequency
+    PayoutStatus, PayoutFrequency, OutletType
 )
 
 
@@ -78,6 +78,7 @@ class OutletCreateRequest(BaseModel):
     pan: str = Field(..., max_length=10)
     lat_lon: Optional[List[Decimal]] = None
     manager_id: Optional[str] = None
+    outlet_type: OutletType = OutletType.OUTLET
 
 
 class OutletUpdateRequest(BaseModel):
@@ -94,24 +95,26 @@ class OutletUpdateRequest(BaseModel):
     lat_lon: Optional[List[Decimal]] = None
     manager_id: Optional[str] = None
     is_active: Optional[bool] = None
+    outlet_type: Optional[OutletType] = None
 
 
 class OutletResponse(BaseModel):
     uid: str
     outlet_name: str
     outlet_code: str
-    address: str
-    city: str
-    state: str
-    pincode: str
-    phone: str
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    phone: Optional[str] = None
     email: Optional[str] = None
-    gstin: str
-    state_code: str
-    pan: str
+    gstin: Optional[str] = None
+    state_code: Optional[str] = None
+    pan: Optional[str] = None
     lat_lon: Optional[List[Decimal]] = None
     manager_id: Optional[str] = None
     is_active: bool
+    outlet_type: OutletType = OutletType.OUTLET
     created_at: datetime
 
     class Config:
@@ -209,9 +212,9 @@ class InventoryResponse(BaseModel):
     uid: str
     product_id: str
     outlet_id: Optional[str] = None
-    quantity: int
-    reserved_quantity: int
-    available_quantity: int  # Computed: quantity - reserved_quantity
+    quantity: int = Field(..., description="Total physical stock available at the outlet")
+    reserved_quantity: int = Field(0, description="[DEPRECATED] Previously used for pending orders, now always 0")
+    available_quantity: int = Field(..., description="[DEPRECATED] Equal to quantity in the simplified system")
     last_updated: datetime
     total_received: int = 0
     delivered: int = 0
@@ -222,6 +225,7 @@ class InventoryResponse(BaseModel):
 
 class InventoryAuditResponse(InventoryResponse):
     db_quantity: int
+    audited_quantity: int
     total_transferred_out: int = 0
 
 
@@ -555,9 +559,38 @@ class StockTransferApproveQuantitiesRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class ProductBrief(BaseModel):
+    uid: str
+    product_name: str
+    sku: str
+
+    class Config:
+        from_attributes = True
+
+
+class OutletBrief(BaseModel):
+    uid: str
+    outlet_name: str
+    outlet_code: str
+
+    class Config:
+        from_attributes = True
+
+
+class UserBrief(BaseModel):
+    uid: str
+    full_name: str
+    email: Optional[str] = None
+    role: str
+
+    class Config:
+        from_attributes = True
+
+
 class TransferItemResponse(BaseModel):
     uid: str
     product_id: str
+    product: Optional[ProductBrief] = None
     quantity_requested: int
     quantity_delivered: int
 
@@ -567,10 +600,13 @@ class TransferItemResponse(BaseModel):
 
 class StockTransferResponse(BaseModel):
     uid: str
+    transfer_number: Optional[str] = None
     from_outlet_id: Optional[str] = None
     to_outlet_id: str
+    to_outlet: Optional[OutletBrief] = None
     status: TransferStatus
     requested_by: str
+    requested_by_user: Optional[UserBrief] = None
     approved_by: Optional[str] = None
     delivery_person_id: Optional[str] = None
     scheduled_date: Optional[date] = None
@@ -696,7 +732,9 @@ class PayoutStatusUpdateRequest(BaseModel):
 class PayoutResponse(BaseModel):
     uid: str
     outlet_id: str
+    outlet_name: Optional[str] = None
     outlet_manager_id: str
+    outlet_manager_name: Optional[str] = None
     period_from: date
     period_to: date
     amount: Decimal
@@ -715,6 +753,11 @@ class PayoutResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MarkPayoutPaidRequest(BaseModel):
+    payment_date: date = Field(..., description="Date of payment YYYY-MM-DD")
+    notes: Optional[str] = Field(None, description="Optional remarks for the payment")
 
 # ============================================================================
 # DELIVERY GUY MODELS
@@ -935,7 +978,7 @@ __all__ = [
     # Stock Transfer
     "TransferItemRequest", "StockTransferCreateRequest",
     "StockTransferStatusUpdateRequest", "TransferItemApproveRequest", "StockTransferApproveQuantitiesRequest",
-    "TransferItemResponse", "StockTransferResponse","BulkTransferResponse" , "StockTransferCreateRequestBulk",
+    "TransferItemResponse", "StockTransferResponse","BulkTransferResponse" , "StockTransferCreateRequestBulk", "ProductBrief", "OutletBrief", "UserBrief",
     
     # System
     "SystemConfigurationUpdateRequest", "SystemConfigurationResponse",
@@ -945,7 +988,7 @@ __all__ = [
     "OutletCollectionResponse",
     
     # Outlet Manager Payouts
-    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest", "PayoutResponse",
+    "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest", "PayoutResponse", "MarkPayoutPaidRequest",
     
     # Delivery Guy
     "DeliveryGuyCreateRequest", "DeliveryGuyUpdateRequest", "DeliveryGuyResponse",
