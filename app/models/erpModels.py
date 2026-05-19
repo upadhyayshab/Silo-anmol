@@ -694,6 +694,25 @@ class OutletCollectionResponse(BaseModel):
         from_attributes = True
 
 
+class OutletCollectionSummaryResponse(BaseModel):
+    """
+    Summary of outlet collection figures.
+
+    - to_be_collected: Sum of total_amount from DELIVERED orders filtered by actual_delivery_date.
+    - confirmed_collections: Sum of amount from outlet-collection records with status CONFIRMED.
+    - outstanding: to_be_collected minus confirmed_collections.
+    """
+    outlet_id: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    to_be_collected: Decimal = Decimal("0.00")
+    confirmed_collections: Decimal = Decimal("0.00")
+    outstanding: Decimal = Decimal("0.00")
+
+    class Config:
+        from_attributes = True
+
+
 # ============================================================================
 # OUTLET MANAGER PAYOUT MODELS
 # ============================================================================
@@ -985,7 +1004,7 @@ __all__ = [
     
     # Outlet Collections
     "OutletCollectionCreateRequest", "OutletCollectionStatusUpdateRequest",
-    "OutletCollectionResponse",
+    "OutletCollectionResponse", "OutletCollectionSummaryResponse",
     
     # Outlet Manager Payouts
     "PayoutCreateRequest", "PayoutUpdateRequest", "PayoutStatusUpdateRequest", "PayoutResponse", "MarkPayoutPaidRequest",
