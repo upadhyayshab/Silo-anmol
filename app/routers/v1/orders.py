@@ -886,7 +886,7 @@ async def get_order(
 ):
     """Get specific order details"""
     try:
-        order = await order_manager.fetch(order_id  ,joins = [CustomerOrderSchema.items])
+        order = await order_manager.fetch(order_id, joins = [CustomerOrderSchema.items, CustomerOrderSchema.telecaller])
         
         if current_user_id != "microservice":
             # Check access permissions
