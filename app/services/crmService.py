@@ -3,7 +3,7 @@ from typing import Any
 from config import get_settings
 from models import CrmPayload
 from utils.crm_constants import ActivityType, LSQ_STATUS_MAP
-from services.crm_activity_configs import ACTIVITY_REGISTRY, LSQ_ITEMS_FIELD_MAPPING
+from services.crm_activity_configs import ACTIVITY_REGISTRY, LSQ_ITEMS_FIELD_MAPPING, LSQ_ITEMS3_FIELD_MAPPING
 from services.lsq_client import LeadSquaredClient
 
 
@@ -104,7 +104,9 @@ class CRMService:
                 "discount":      discount_val if discount_val is not None else 0.0,
                 "total_price":   total_price_val,
             }
-            inner_fields = self._build_custom_object_array(enriched_item, item_mapping)
+            # If this is Item 3 (idx == 2) and we're using LSQ_ITEMS_FIELD_MAPPING, switch to LSQ_ITEMS3_FIELD_MAPPING
+            current_item_mapping = LSQ_ITEMS3_FIELD_MAPPING if (idx == 2 and item_mapping == LSQ_ITEMS_FIELD_MAPPING) else item_mapping
+            inner_fields = self._build_custom_object_array(enriched_item, current_item_mapping)
             if inner_fields:
                 schema_str = item_schemas[idx].value if hasattr(item_schemas[idx], "value") else str(item_schemas[idx])
                 fields.append({"SchemaName": schema_str, "Value": "", "Fields": inner_fields})

@@ -6,6 +6,7 @@ from utils.crm_constants import (
     LSQPaymentStatusActivityField,
     LSQCreateOrder,
     LSQItems,
+    LSQItems3,
     LSQUTMField,
     LSQProductField,
 )
@@ -124,6 +125,23 @@ LSQ_ITEMS_FIELD_MAPPING: dict = {
     "total_price":              LSQItems.TOTAL_PRICE,
     "product_id":               LSQItems.PRODUCT_ID,
     "product_description":      LSQItems.PRODUCT_DESCRIPTION,
+}
+
+# Maps readable field names -> LSQ custom object schema names for order Item 3 specifically.
+LSQ_ITEMS3_FIELD_MAPPING: dict = {
+    "discount_amount_per_unit": LSQItems3.DISCOUNT_AMOUNT_PER_UNIT,
+    "product_name":             LSQItems3.PRODUCT_NAME,
+    "category":                 LSQItems3.CATEGORY,
+    "brand_name":               LSQItems3.BRAND_NAME,
+    "sku_code":                 LSQItems3.SKU_CODE,
+    "unit_type":                LSQItems3.UNIT_TYPE,
+    "size":                     LSQItems3.SIZE,
+    "mrp":                      LSQItems3.MRP,
+    "selling_price":            LSQItems3.SELLING_PRICE,
+    "quantity":                 LSQItems3.QUANTITY,
+    "total_price":              LSQItems3.TOTAL_PRICE,
+    "product_id":               LSQItems3.PRODUCT_ID,
+    "product_description":      LSQItems3.PRODUCT_DESCRIPTION,
 }
 
 # Maps readable field names -> LSQ custom object schema names for product items in ORDER_STATUS (code 203).

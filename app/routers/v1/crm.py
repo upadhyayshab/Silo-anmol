@@ -18,7 +18,7 @@ from services import CRMService
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm, map_lsq_utm_data
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, PaymentMethod
-from utils.crm_constants import ActivityType, LSQCreateOrder, LSQItems
+from utils.crm_constants import ActivityType, LSQCreateOrder, LSQItems, LSQItems3
 from utils.warehouse_utils import get_default_warehouse_id
 from models import CrmPayload, OrderCreateRequest
 
@@ -189,26 +189,28 @@ async def process_crm_orders(payload: dict):
                     break
                 raw_item = products_data.get(item_keys[i])
                 if raw_item and isinstance(raw_item, dict):
-                    product_uid = raw_item.get(LSQItems.PRODUCT_ID.value, "")
-                    sku_code = raw_item.get(LSQItems.SKU_CODE.value, "")
-                    quantity = int(raw_item.get(LSQItems.QUANTITY.value, 1) or 1)
+                    # Item 3 (i == 2) uses LSQItems3 due to a mapping mismatch in CRM
+                    item_mapping_enum = LSQItems3 if i == 2 else LSQItems
+                    product_uid = raw_item.get(item_mapping_enum.PRODUCT_ID.value, "")
+                    sku_code = raw_item.get(item_mapping_enum.SKU_CODE.value, "")
+                    quantity = int(raw_item.get(item_mapping_enum.QUANTITY.value, 1) or 1)
                     
                     if product_uid or sku_code:
                         items_data.append({
                             "product_id": product_uid,
                             "sku_code": sku_code,
                             "quantity": quantity,
-                            "product_name": raw_item.get(LSQItems.PRODUCT_NAME.value),
-                            "category": raw_item.get(LSQItems.CATEGORY.value),
-                            "brand_name": raw_item.get(LSQItems.BRAND_NAME.value),
-                            "unit_type": raw_item.get(LSQItems.UNIT_TYPE.value),
-                            "size": raw_item.get(LSQItems.SIZE.value),
-                            "mrp": raw_item.get(LSQItems.MRP.value),
-                            "selling_price": raw_item.get(LSQItems.SELLING_PRICE.value),
-                            "total_price": raw_item.get(LSQItems.TOTAL_PRICE.value),
-                            "subtotal": raw_item.get(LSQItems.TOTAL_PRICE.value),
-                            "discount_amount_per_unit": raw_item.get(LSQItems.DISCOUNT_AMOUNT_PER_UNIT.value),
-                            "product_description": raw_item.get(LSQItems.PRODUCT_DESCRIPTION.value)
+                            "product_name": raw_item.get(item_mapping_enum.PRODUCT_NAME.value),
+                            "category": raw_item.get(item_mapping_enum.CATEGORY.value),
+                            "brand_name": raw_item.get(item_mapping_enum.BRAND_NAME.value),
+                            "unit_type": raw_item.get(item_mapping_enum.UNIT_TYPE.value),
+                            "size": raw_item.get(item_mapping_enum.SIZE.value),
+                            "mrp": raw_item.get(item_mapping_enum.MRP.value),
+                            "selling_price": raw_item.get(item_mapping_enum.SELLING_PRICE.value),
+                            "total_price": raw_item.get(item_mapping_enum.TOTAL_PRICE.value),
+                            "subtotal": raw_item.get(item_mapping_enum.TOTAL_PRICE.value),
+                            "discount_amount_per_unit": raw_item.get(item_mapping_enum.DISCOUNT_AMOUNT_PER_UNIT.value),
+                            "product_description": raw_item.get(item_mapping_enum.PRODUCT_DESCRIPTION.value)
                         })
         else:
             customer_name = cleaned_payload.get("customer_name")

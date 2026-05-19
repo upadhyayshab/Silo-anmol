@@ -145,6 +145,22 @@ class LSQItems(str, Enum):
     PRODUCT_DESCRIPTION      = "mx_CustomObject_81"
 
 
+class LSQItems3(str, Enum):
+    DISCOUNT_AMOUNT_PER_UNIT = "mx_CustomObject_12"
+    PRODUCT_NAME             = "mx_CustomObject_2"
+    CATEGORY                 = "mx_CustomObject_3"
+    BRAND_NAME               = "mx_CustomObject_4"
+    SKU_CODE                 = "mx_CustomObject_5"
+    UNIT_TYPE                = "mx_CustomObject_6"
+    SIZE                     = "mx_CustomObject_7"
+    MRP                      = "mx_CustomObject_8"
+    SELLING_PRICE            = "mx_CustomObject_9"
+    QUANTITY                 = "mx_CustomObject_10"
+    TOTAL_PRICE              = "mx_CustomObject_11"
+    PRODUCT_ID               = "mx_CustomObject_1"
+    PRODUCT_DESCRIPTION      = "mx_CustomObject_81"
+
+
 class LSQUTMField(str, Enum):
     UTM_ID       = "mx_CustomObject_1"
     UTM_TERM     = "mx_CustomObject_2"
