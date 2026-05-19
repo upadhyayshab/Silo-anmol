@@ -65,7 +65,7 @@ class CRMService:
                     fields.append({"SchemaName": schema_str, "Value": value_str})
         return fields
 
-    def _build_item_fields(self, payload_dict: dict, item_schemas: tuple) -> list[dict]:
+    def _build_item_fields(self, payload_dict: dict, item_schemas: tuple, item_mapping: dict) -> list[dict]:
         """Serialize order items as nested LSQ custom objects (max 3 items)."""
         items_val = self._get_nested_value(payload_dict, "items")
         if not isinstance(items_val, list) or not items_val:
@@ -77,18 +77,34 @@ class CRMService:
             product_info = raw_item.get("product") or {}
             if hasattr(product_info, "__dict__"):
                 product_info = product_info.__dict__
+            mrp_val = product_info.get("cost_price")
+            if mrp_val is None or mrp_val == "":
+                mrp_val = raw_item.get("cost_price")
+
+            selling_price_val = raw_item.get("unit_price")
+            if selling_price_val is None or selling_price_val == "":
+                selling_price_val = raw_item.get("cost_price")
+
+            discount_val = raw_item.get("product_manual_discount")
+            if discount_val is None or discount_val == "":
+                discount_val = raw_item.get("discount_amount")
+
+            total_price_val = raw_item.get("subtotal")
+            if total_price_val is None or total_price_val == "":
+                total_price_val = raw_item.get("total_price")
+
             enriched_item = {
                 "product_name":  product_info.get("lsq_display_name") or product_info.get("product_name"),
                 "product_title": product_info.get("lsq_display_name") or product_info.get("product_name"),
                 "quantity":      raw_item.get("quantity"),
                 "size":          None,
                 "unit_type":     product_info.get("unit_of_measure"),
-                "mrp":           product_info.get("cost_price") or raw_item.get("cost_price"),
-                "selling_price": raw_item.get("unit_price") or raw_item.get("cost_price"),
-                "discount":      raw_item.get("product_manual_discount") or raw_item.get("discount_amount"),
-                "total_price":   raw_item.get("subtotal") or raw_item.get("total_price"),
+                "mrp":           mrp_val,
+                "selling_price": selling_price_val,
+                "discount":      discount_val if discount_val is not None else 0.0,
+                "total_price":   total_price_val,
             }
-            inner_fields = self._build_custom_object_array(enriched_item, LSQ_ITEMS_FIELD_MAPPING)
+            inner_fields = self._build_custom_object_array(enriched_item, item_mapping)
             if inner_fields:
                 schema_str = item_schemas[idx].value if hasattr(item_schemas[idx], "value") else str(item_schemas[idx])
                 fields.append({"SchemaName": schema_str, "Value": "", "Fields": inner_fields})
@@ -104,7 +120,7 @@ class CRMService:
         fields = self._map_fields(data, config.mapping, activity_type)
 
         if config.item_schemas:
-            fields.extend(self._build_item_fields(data, config.item_schemas))
+            fields.extend(self._build_item_fields(data, config.item_schemas, config.item_mapping))
 
         status_raw = data.get(config.status_key, "Unknown Status")
         status_str = status_raw.value if hasattr(status_raw, "value") else str(status_raw)

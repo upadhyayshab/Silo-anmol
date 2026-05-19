@@ -7,6 +7,7 @@ from utils.crm_constants import (
     LSQCreateOrder,
     LSQItems,
     LSQUTMField,
+    LSQProductField,
 )
 
 
@@ -17,6 +18,7 @@ class ActivityConfig:
     status_key: str
     # item_schemas: non-empty only for activity types that serialize order items
     item_schemas: tuple = field(default_factory=tuple)
+    item_mapping: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +126,20 @@ LSQ_ITEMS_FIELD_MAPPING: dict = {
     "product_description":      LSQItems.PRODUCT_DESCRIPTION,
 }
 
+# Maps readable field names -> LSQ custom object schema names for product items in ORDER_STATUS (code 203).
+# Specifically aligns with the LSQ product UI where mx_CustomObject_8 is DISCOUNT and mx_CustomObject_6 is MRP.
+LSQ_PRODUCT_FIELD_MAPPING: dict = {
+    "product_name":             LSQProductField.PRODUCT_NAME,
+    "product_title":            LSQProductField.PRODUCT_TITLE,
+    "quantity":                 LSQProductField.QUANTITY,
+    "size":                     LSQProductField.SIZE,
+    "unit_type":                LSQProductField.UNIT_TYPE,
+    "mrp":                      LSQProductField.MRP,
+    "selling_price":            LSQProductField.SELLING_PRICE,
+    "discount":                 LSQProductField.DISCOUNT,
+    "total_price":              LSQProductField.TOTAL_PRICE,
+}
+
 LSQ_UTM_FIELD_MAPPING: dict = {
     "utm_id":       LSQUTMField.UTM_ID,
     "utm_term":     LSQUTMField.UTM_TERM,
@@ -156,6 +172,7 @@ ACTIVITY_REGISTRY: dict[ActivityType, ActivityConfig] = {
             LSQOrderStatusActivityField.PRODUCT_2,
             LSQOrderStatusActivityField.PRODUCT_3,
         ),
+        item_mapping=LSQ_PRODUCT_FIELD_MAPPING,
     ),
     ActivityType.PAYMENT_STATUS: ActivityConfig(
         code=205,
@@ -171,5 +188,6 @@ ACTIVITY_REGISTRY: dict[ActivityType, ActivityConfig] = {
             LSQCreateOrder.ITEM_2,
             LSQCreateOrder.ITEM_3,
         ),
+        item_mapping=LSQ_ITEMS_FIELD_MAPPING,
     ),
 }
