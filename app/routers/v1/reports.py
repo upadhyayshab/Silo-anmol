@@ -106,7 +106,7 @@ async def get_outlet_orders(
             filters=filters,
             limit=limit,
             offset=offset,
-            joins=[CustomerOrderSchema.telecaller]
+            joins=[CustomerOrderSchema.telecaller, (CustomerOrderSchema.items, OrderItemSchema.product)]
         )
         
         # Process orders and apply date filtering
@@ -150,6 +150,18 @@ async def get_outlet_orders(
             commission_summary["total_commission"] += order_commission
             commission_summary["by_status"][order.order_status.value] += order_commission
             
+            # Build items list
+            order_items = []
+            for item in (order.items or []):
+                product = getattr(item, 'product', None)
+                order_items.append({
+                    "product_id": item.product_id,
+                    "product_name": product.product_name if product else item.product_id,
+                    "quantity": item.quantity,
+                    "unit_price": float(item.unit_price),
+                    "total_price": float(item.total_price) if getattr(item, 'total_price', None) is not None else float(item.quantity * item.unit_price),
+                })
+
             # Build order data
             order_data = {
                 "order_id": order.uid,
@@ -168,6 +180,9 @@ async def get_outlet_orders(
                 "is_telecaller_order": order.is_telecaller_order,
                 "creater_name": order.creater_name,
                 "telecaller_id": order.telecaller_id if order.telecaller_id else "",
+                "telecaller_phone": order.telecaller.phone if order.telecaller and order.telecaller.phone else "",
+                "telecaller_role": creator_role_value if creator_role_value else "",
+                "items": order_items,
                 "total_commission": order_commission  # NEW: Commission data per order
             }
             
