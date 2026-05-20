@@ -1088,6 +1088,8 @@ async def get_daily_order_summary(
     from_date: date,
     to_date: date,
     outlet_id: Optional[str] = None,
+    main_filter: Optional[str] = None,
+    sub_filter: Optional[str] = None,
     current_user_id: str = Depends(require_roles(
         UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
     ))
@@ -1099,10 +1101,64 @@ async def get_daily_order_summary(
     ),
     order_stats AS (
         SELECT co.uid, co.order_date, co.actual_delivery_date, co.updated_at, co.order_status,
-               co.gross_amount - co.discount_applied AS net_amount, ot.total_qty
+               co.gross_amount - co.discount_applied AS net_amount, ot.total_qty,
+               -- Step 1: Assign the Main Filter Category
+               CASE 
+                   WHEN co.uid LIKE 'order_%' THEN 'D2C'
+                   WHEN (co.uid LIKE 'customer_orders_%' OR co.uid LIKE 'customer_user_%') AND u.role = 'OUTLET_MANAGER' THEN 'Organic'
+                   ELSE 'Lead Gen'
+               END AS main_filter,
+
+               -- Step 2: Assign the Sub-Filter Category
+               CASE 
+                   -- D2C Sub-Filter Logic (Checking JSON sources for meta, google, or direct)
+                   WHEN co.uid LIKE 'order_%' THEN 
+                       CASE 
+                           -- Meta matching: check utm_source
+                           WHEN LOWER(lsq.utm_param->'utm_source_1'->>'utm_source') LIKE '%meta%' 
+                             OR LOWER(lsq.utm_param->'utm_source_2'->>'utm_source') LIKE '%meta%' THEN 'meta'
+                           
+                           -- Google matching: check utm_source
+                           WHEN LOWER(lsq.utm_param->'utm_source_1'->>'utm_source') LIKE '%google%' 
+                             OR LOWER(lsq.utm_param->'utm_source_2'->>'utm_source') LIKE '%google%' THEN 'google'
+                           
+                           -- Direct matching: check utm_source, or fallback to direct if null/empty
+                           WHEN LOWER(lsq.utm_param->'utm_source_1'->>'utm_source') LIKE '%direct%' 
+                             OR LOWER(lsq.utm_param->'utm_source_2'->>'utm_source') LIKE '%direct%'
+                             OR lsq.utm_param IS NULL 
+                             OR lsq.utm_param::text = '{}' THEN 'direct'    
+                           ELSE 'other_d2c'
+                       END
+                   
+                   -- Organic Sub-Filter Logic
+                   WHEN (co.uid LIKE 'customer_orders_%' OR co.uid LIKE 'customer_user_%') AND u.role = 'OUTLET_MANAGER' THEN 'Outlet Manager'
+                   
+                   -- Lead Gen Sub-Filter Logic
+                   ELSE 
+                       CASE 
+                           WHEN LOWER(lsq.lead_source) = 'organic search' THEN 'Organic Search'
+                           WHEN LOWER(lsq.lead_source) = 'referral sites' THEN 'Referral Sites'
+                           WHEN LOWER(lsq.lead_source) = 'direct traffic' THEN 'Direct Traffic'
+                           WHEN LOWER(lsq.lead_source) = 'social media' THEN 'Social Media'
+                           WHEN LOWER(lsq.lead_source) = 'inbound email' THEN 'Inbound Email'
+                           WHEN LOWER(lsq.lead_source) = 'inbound phone call' THEN 'Inbound Phone call'
+                           WHEN LOWER(lsq.lead_source) = 'outbound phone call' THEN 'Outbound Phone call'
+                           WHEN LOWER(lsq.lead_source) = 'pay per click ads' THEN 'Pay per Click Ads'
+                           WHEN LOWER(lsq.lead_source) = 'fb lead ads' THEN 'FB Lead Ads'
+                           WHEN LOWER(lsq.lead_source) = 'web visit/login' THEN 'web visit/Login'
+                           WHEN LOWER(lsq.lead_source) = 'whatsapp inbound' THEN 'WhatsApp Inbound'
+                           WHEN LOWER(lsq.lead_source) = 'app sign up' THEN 'App sign up'
+                           WHEN LOWER(lsq.lead_source) = 'gau swasth subscriber' THEN 'Gau swasth Subscriber'
+                           WHEN LOWER(lsq.lead_source) = 'add to cart' THEN 'add to cart'
+                           WHEN LOWER(lsq.lead_source) = 'browsed 3 pages' THEN 'browsed 3 pages'
+                           ELSE COALESCE(lsq.lead_source, 'Unclassified / Others')
+                       END
+               END AS sub_filter
         FROM customer_orders co
         LEFT JOIN (SELECT order_id, SUM(quantity) AS total_qty FROM order_items GROUP BY order_id) ot
             ON co.uid = ot.order_id
+        LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
+        LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
     ),
     placed AS (
@@ -1115,6 +1171,8 @@ async def get_daily_order_summary(
                COALESCE(SUM(total_qty) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_quantity
         FROM order_stats
         WHERE (order_date AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+          AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
+          AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
         GROUP BY 1
     ),
     delivered AS (
@@ -1125,6 +1183,8 @@ async def get_daily_order_summary(
         FROM order_stats
         WHERE order_status = 'DELIVERED'
           AND (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+          AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
+          AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
         GROUP BY 1
     ),
     cancelled AS (
@@ -1135,6 +1195,8 @@ async def get_daily_order_summary(
         FROM order_stats
         WHERE order_status = 'CANCELLED'
           AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+          AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
+          AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
         GROUP BY 1
     )
     SELECT dates.d AS date,
@@ -1156,6 +1218,85 @@ async def get_daily_order_summary(
     LEFT JOIN cancelled c_stats ON dates.d = c_stats.d
     ORDER BY date ASC;
     """)
+    CLASSIFICATION_QUERY = text("""
+    WITH classified_orders AS (
+        SELECT 
+            co.uid AS order_id,
+            (co.order_date AT TIME ZONE 'Asia/Kolkata')::date AS order_date,
+            co.gross_amount - co.discount_applied AS net_amount,
+            
+            -- Step 1: Assign the Main Filter Category
+            CASE 
+                WHEN co.uid LIKE 'order_%' THEN 'D2C'
+                WHEN (co.uid LIKE 'customer_orders_%' OR co.uid LIKE 'customer_user_%') AND u.role = 'OUTLET_MANAGER' THEN 'Organic'
+                ELSE 'Lead Gen'
+            END AS main_filter,
+
+            -- Step 2: Assign the Sub-Filter Category
+            CASE 
+                -- D2C Sub-Filter Logic (Checking JSON sources for meta, google, or direct)
+                WHEN co.uid LIKE 'order_%' THEN 
+                    CASE 
+                        -- Meta matching: check utm_source
+                        WHEN LOWER(lsq.utm_param->'utm_source_1'->>'utm_source') LIKE '%meta%' 
+                          OR LOWER(lsq.utm_param->'utm_source_2'->>'utm_source') LIKE '%meta%' THEN 'meta'
+                        
+                        -- Google matching: check utm_source
+                        WHEN LOWER(lsq.utm_param->'utm_source_1'->>'utm_source') LIKE '%google%' 
+                          OR LOWER(lsq.utm_param->'utm_source_2'->>'utm_source') LIKE '%google%' THEN 'google'
+                        
+                        -- Direct matching: check utm_source, or fallback to direct if null/empty
+                        WHEN LOWER(lsq.utm_param->'utm_source_1'->>'utm_source') LIKE '%direct%' 
+                          OR LOWER(lsq.utm_param->'utm_source_2'->>'utm_source') LIKE '%direct%'
+                          OR lsq.utm_param IS NULL 
+                          OR lsq.utm_param::text = '{}' THEN 'direct'    
+                        ELSE 'other_d2c'
+                    END
+                
+                -- Organic Sub-Filter Logic
+                WHEN (co.uid LIKE 'customer_orders_%' OR co.uid LIKE 'customer_user_%') AND u.role = 'OUTLET_MANAGER' THEN 'Outlet Manager'
+                
+                -- Lead Gen Sub-Filter Logic
+                ELSE 
+                    CASE 
+                        WHEN LOWER(lsq.lead_source) = 'organic search' THEN 'Organic Search'
+                        WHEN LOWER(lsq.lead_source) = 'referral sites' THEN 'Referral Sites'
+                        WHEN LOWER(lsq.lead_source) = 'direct traffic' THEN 'Direct Traffic'
+                        WHEN LOWER(lsq.lead_source) = 'social media' THEN 'Social Media'
+                        WHEN LOWER(lsq.lead_source) = 'inbound email' THEN 'Inbound Email'
+                        WHEN LOWER(lsq.lead_source) = 'inbound phone call' THEN 'Inbound Phone call'
+                        WHEN LOWER(lsq.lead_source) = 'outbound phone call' THEN 'Outbound Phone call'
+                        WHEN LOWER(lsq.lead_source) = 'pay per click ads' THEN 'Pay per Click Ads'
+                        WHEN LOWER(lsq.lead_source) = 'fb lead ads' THEN 'FB Lead Ads'
+                        WHEN LOWER(lsq.lead_source) = 'web visit/login' THEN 'web visit/Login'
+                        WHEN LOWER(lsq.lead_source) = 'whatsapp inbound' THEN 'WhatsApp Inbound'
+                        WHEN LOWER(lsq.lead_source) = 'app sign up' THEN 'App sign up'
+                        WHEN LOWER(lsq.lead_source) = 'gau swasth subscriber' THEN 'Gau swasth Subscriber'
+                        WHEN LOWER(lsq.lead_source) = 'add to cart' THEN 'add to cart'
+                        WHEN LOWER(lsq.lead_source) = 'browsed 3 pages' THEN 'browsed 3 pages'
+                        ELSE COALESCE(lsq.lead_source, 'Unclassified / Others')
+                    END
+            END AS sub_filter
+
+        FROM customer_orders co
+        LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
+        LEFT JOIN users u ON co.telecaller_id = u.uid
+        WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
+    )
+    SELECT 
+        order_date AS date,
+        main_filter,
+        sub_filter,
+        COUNT(order_id) AS total_orders,
+        COALESCE(SUM(net_amount), 0) AS total_revenue
+    FROM classified_orders
+    WHERE order_date BETWEEN :start_date AND :end_date
+      AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
+      AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
+    GROUP BY order_date, main_filter, sub_filter
+    ORDER BY order_date, main_filter, sub_filter;
+    """)
+
     try:
         # Role-based outlet filtering
         current_user = await user_manager.fetch(current_user_id)
@@ -1166,9 +1307,39 @@ async def get_daily_order_summary(
         async with engine.connect() as conn:
             result = await conn.execute(
                 DAILY_REV_QUERY,
-                {"start_date": from_date, "end_date": to_date, "outlet_id": target_outlet_id}
+                {
+                    "start_date": from_date,
+                    "end_date": to_date,
+                    "outlet_id": target_outlet_id,
+                    "main_filter": main_filter,
+                    "sub_filter": sub_filter
+                }
             )
             rows = result.all()
+
+            class_result = await conn.execute(
+                CLASSIFICATION_QUERY,
+                {
+                    "start_date": from_date,
+                    "end_date": to_date,
+                    "outlet_id": target_outlet_id,
+                    "main_filter": main_filter,
+                    "sub_filter": sub_filter
+                }
+            )
+            class_rows = class_result.all()
+
+        classifications_by_date = {}
+        for class_row in class_rows:
+            d_str = str(class_row.date)
+            if d_str not in classifications_by_date:
+                classifications_by_date[d_str] = []
+            classifications_by_date[d_str].append({
+                "main_filter": class_row.main_filter,
+                "sub_filter": class_row.sub_filter,
+                "orders": int(class_row.total_orders),
+                "revenue": float(class_row.total_revenue)
+            })
 
         summary = [
             {
@@ -1193,6 +1364,7 @@ async def get_daily_order_summary(
                     "revenue": float(row.pending_revenue),
                     "quantity": int(row.pending_quantity),
                 },
+                "classifications": classifications_by_date.get(str(row.date), []),
             }
             for row in rows
         ]
@@ -1201,7 +1373,9 @@ async def get_daily_order_summary(
             "filters_applied": {
                 "from_date": from_date,
                 "to_date": to_date,
-                "outlet_id": target_outlet_id
+                "outlet_id": target_outlet_id,
+                "main_filter": main_filter,
+                "sub_filter": sub_filter
             }
         }
     except Exception as e:
