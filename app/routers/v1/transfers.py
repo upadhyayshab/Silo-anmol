@@ -715,18 +715,25 @@ async def update_transfer_status(
         if payload.status == TransferStatus.APPROVED:
             updates["approved_by"] = current_user_id
         
+        elif payload.status == TransferStatus.IN_TRANSIT:
+            # Deduct stock from source when moving to IN_TRANSIT
+            await deduct_stock_from_source(transfer_id)
+        
         elif payload.status == TransferStatus.DELIVERED:
             from datetime import datetime
             updates["delivered_date"] = datetime.utcnow()
-            # Complete the stock transfer
-            await complete_stock_transfer(transfer_id)
+            # Complete the stock transfer by adding stock to destination
+            await add_stock_to_destination(transfer_id)
         
         elif payload.status == TransferStatus.CANCELLED:
-            if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
+            if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Only authorized roles can cancel transfers"
                 )
+            # Revert stock deduction if transfer is cancelled after being in transit
+            if transfer.status == TransferStatus.IN_TRANSIT:
+                await revert_stock_to_source(transfer_id)
         
         await transfer_manager.update(transfer_id, updates)
         
@@ -1059,43 +1066,67 @@ def is_valid_transfer_status_transition(current_status: TransferStatus, new_stat
     return new_status in valid_transitions.get(current_status, [])
 
 
-async def complete_stock_transfer(transfer_id: str):
-    """Complete stock transfer by moving inventory between locations (direct quantity update)"""
+async def deduct_stock_from_source(transfer_id: str):
+    """Deduct stock from source location when the status is changed to IN_TRANSIT"""
+    transfer = await transfer_manager.fetch(transfer_id)
+    transfer_items = await transfer_item_manager.fetch_all(
+        filters={"transfer_id": transfer_id}
+    )
+    
+    source_outlet_id = transfer.from_outlet_id
+    if not source_outlet_id:
+        source_outlet_id = await get_default_warehouse_id(engine)
+
+    source_is_factory = False
+    if source_outlet_id:
+        try:
+            src = await outlet_manager.fetch(source_outlet_id)
+            source_is_factory = src.outlet_type == OutletType.FACTORY
+        except Exception:
+            pass
+
+    if not source_is_factory:
+        inventory_items_to_update = []
+        for item in transfer_items.items:
+            source_inventory = await inventory_manager.fetch_all(
+                filters={"product_id": item.product_id, "outlet_id": source_outlet_id}
+            )
+            
+            if not source_inventory.items:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"No stock records found at source location for product ID {item.product_id}."
+                )
+            
+            source_item = source_inventory.items[0]
+            if source_item.quantity < item.quantity_requested:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient stock at source for product {item.product_id}. Available: {source_item.quantity}, Requested: {item.quantity_requested}"
+                )
+            
+            inventory_items_to_update.append((source_item, item.quantity_requested))
+
+        # Perform updates
+        for source_item, qty in inventory_items_to_update:
+            await inventory_manager.update(
+                source_item.uid,
+                {
+                    "quantity": source_item.quantity - qty,
+                    "last_updated": datetime.utcnow()
+                }
+            )
+
+
+async def add_stock_to_destination(transfer_id: str):
+    """Add stock to destination location when the status is changed to DELIVERED"""
     transfer = await transfer_manager.fetch(transfer_id)
     transfer_items = await transfer_item_manager.fetch_all(
         filters={"transfer_id": transfer_id}
     )
     
     for item in transfer_items.items:
-        # 1. Reduce stock at source location (normalized)
-        source_outlet_id = transfer.from_outlet_id
-        if not source_outlet_id:
-            source_outlet_id = await get_default_warehouse_id(engine)
-
-        source_is_factory = False
-        if source_outlet_id:
-            try:
-                src = await outlet_manager.fetch(source_outlet_id)
-                source_is_factory = src.outlet_type == OutletType.FACTORY
-            except Exception:
-                pass
-
-        if not source_is_factory:
-            source_inventory = await inventory_manager.fetch_all(
-                filters={"product_id": item.product_id, "outlet_id": source_outlet_id}
-            )
-            
-            if source_inventory.items:
-                source_item = source_inventory.items[0]
-                await inventory_manager.update(
-                    source_item.uid,
-                    {
-                        "quantity": max(0, source_item.quantity - item.quantity_requested),
-                        "last_updated": datetime.utcnow()
-                    }
-                )
-
-        # 2. Add stock at destination location
+        # Add stock at destination location
         dest_inventory = await inventory_manager.fetch_all(
             filters={"product_id": item.product_id, "outlet_id": transfer.to_outlet_id}
         )
@@ -1122,6 +1153,49 @@ async def complete_stock_transfer(transfer_id: str):
             item.uid,
             {"quantity_delivered": item.quantity_requested}
         )
+
+
+async def revert_stock_to_source(transfer_id: str):
+    """Revert stock deduction if a transfer is cancelled after being in transit"""
+    transfer = await transfer_manager.fetch(transfer_id)
+    transfer_items = await transfer_item_manager.fetch_all(
+        filters={"transfer_id": transfer_id}
+    )
+    
+    source_outlet_id = transfer.from_outlet_id
+    if not source_outlet_id:
+        source_outlet_id = await get_default_warehouse_id(engine)
+
+    source_is_factory = False
+    if source_outlet_id:
+        try:
+            src = await outlet_manager.fetch(source_outlet_id)
+            source_is_factory = src.outlet_type == OutletType.FACTORY
+        except Exception:
+            pass
+
+    if not source_is_factory:
+        for item in transfer_items.items:
+            source_inventory = await inventory_manager.fetch_all(
+                filters={"product_id": item.product_id, "outlet_id": source_outlet_id}
+            )
+            
+            if source_inventory.items:
+                source_item = source_inventory.items[0]
+                await inventory_manager.update(
+                    source_item.uid,
+                    {
+                        "quantity": source_item.quantity + item.quantity_requested,
+                        "last_updated": datetime.utcnow()
+                    }
+                )
+            else:
+                await inventory_manager.create(InventorySchema(
+                    product_id=item.product_id,
+                    outlet_id=source_outlet_id,
+                    quantity=item.quantity_requested,
+                    last_updated=datetime.utcnow()
+                ))
 
 
 async def reserve_transfer_stock(transfer_id: str):
