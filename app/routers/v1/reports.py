@@ -1083,24 +1083,133 @@ async def get_delivery_overview(
             detail=f"Failed to fetch delivery overview: {str(e)}"
         )
 
-@router.get("/daily-order-summary")
-async def get_daily_order_summary(
+async def fetch_logistics_order_summary(
+    conn,
     from_date: date,
     to_date: date,
-    outlet_id: Optional[str] = None,
-    main_filter: Optional[str] = None,
-    sub_filter: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
-):
-    """ Get daily order summary including volume, revenue, and quantity by status. """
+    target_outlet_id: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Fetch logistics daily order summary where Placed/Pending is based on created_at,
+    Delivered/Cancelled is based on updated_at."""
     DAILY_REV_QUERY = text("""
     WITH dates AS (
         SELECT generate_series(CAST(:start_date AS DATE), CAST(:end_date AS DATE), '1 day'::interval)::date AS d
     ),
     order_stats AS (
-        SELECT co.uid, co.order_date, co.actual_delivery_date, co.updated_at, co.order_status,
+        SELECT co.uid, co.created_at, co.updated_at, co.order_status,
+               co.gross_amount - co.discount_applied AS net_amount, ot.total_qty
+        FROM customer_orders co
+        LEFT JOIN (SELECT order_id, SUM(quantity) AS total_qty FROM order_items GROUP BY order_id) ot
+            ON co.uid = ot.order_id
+        WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
+    ),
+    placed AS (
+        SELECT DATE(created_at AT TIME ZONE 'Asia/Kolkata') AS d,
+               COUNT(uid) AS total_placed_orders,
+               COALESCE(SUM(net_amount), 0) AS total_placed_revenue,
+               COALESCE(SUM(total_qty), 0) AS total_placed_quantity,
+               COUNT(uid) FILTER (WHERE order_status = 'PENDING') AS pending_orders,
+               COALESCE(SUM(net_amount) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_revenue,
+               COALESCE(SUM(total_qty) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_quantity
+        FROM order_stats
+        WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        GROUP BY 1
+    ),
+    delivered AS (
+        SELECT DATE(updated_at AT TIME ZONE 'Asia/Kolkata') AS d,
+               COUNT(uid) AS delivered_orders,
+               COALESCE(SUM(net_amount), 0) AS delivered_revenue,
+               COALESCE(SUM(total_qty), 0) AS delivered_quantity
+        FROM order_stats
+        WHERE order_status = 'DELIVERED'
+          AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        GROUP BY 1
+    ),
+    cancelled AS (
+        SELECT DATE(updated_at AT TIME ZONE 'Asia/Kolkata') AS d,
+               COUNT(uid) AS cancelled_orders,
+               COALESCE(SUM(net_amount), 0) AS cancelled_revenue,
+               COALESCE(SUM(total_qty), 0) AS cancelled_quantity
+        FROM order_stats
+        WHERE order_status = 'CANCELLED'
+          AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        GROUP BY 1
+    )
+    SELECT dates.d AS date,
+           COALESCE(p.total_placed_orders, 0) AS total_placed_orders,
+           COALESCE(p.total_placed_revenue, 0) AS total_placed_revenue,
+           COALESCE(p.total_placed_quantity, 0) AS total_placed_quantity,
+           COALESCE(d_stats.delivered_orders, 0) AS delivered_orders,
+           COALESCE(d_stats.delivered_revenue, 0) AS delivered_revenue,
+           COALESCE(d_stats.delivered_quantity, 0) AS delivered_quantity,
+           COALESCE(c_stats.cancelled_orders, 0) AS cancelled_orders,
+           COALESCE(c_stats.cancelled_revenue, 0) AS cancelled_revenue,
+           COALESCE(c_stats.cancelled_quantity, 0) AS cancelled_quantity,
+           COALESCE(p.pending_orders, 0) AS pending_orders,
+           COALESCE(p.pending_revenue, 0) AS pending_revenue,
+           COALESCE(p.pending_quantity, 0) AS pending_quantity
+    FROM dates
+    LEFT JOIN placed p ON dates.d = p.d
+    LEFT JOIN delivered d_stats ON dates.d = d_stats.d
+    LEFT JOIN cancelled c_stats ON dates.d = c_stats.d
+    ORDER BY date ASC;
+    """)
+
+    result = await conn.execute(
+        DAILY_REV_QUERY,
+        {
+            "start_date": from_date,
+            "end_date": to_date,
+            "outlet_id": target_outlet_id
+        }
+    )
+    rows = result.all()
+
+    summary = [
+        {
+            "date": str(row.date),
+            "total_placed": {
+                "orders": int(row.total_placed_orders),
+                "revenue": float(row.total_placed_revenue),
+                "quantity": int(row.total_placed_quantity),
+            },
+            "delivered": {
+                "orders": int(row.delivered_orders),
+                "revenue": float(row.delivered_revenue),
+                "quantity": int(row.delivered_quantity),
+            },
+            "cancelled": {
+                "orders": int(row.cancelled_orders),
+                "revenue": float(row.cancelled_revenue),
+                "quantity": int(row.cancelled_quantity),
+            },
+            "pending": {
+                "orders": int(row.pending_orders),
+                "revenue": float(row.pending_revenue),
+                "quantity": int(row.pending_quantity),
+            },
+            "classifications": [],
+        }
+        for row in rows
+    ]
+    return summary
+
+async def fetch_marketing_order_summary(
+    conn,
+    from_date: date,
+    to_date: date,
+    target_outlet_id: Optional[str],
+    main_filter: Optional[str],
+    sub_filter: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Fetch marketing daily order summary where Placed/Pending/Delivered/Cancelled
+    are all cohort-grouped by created_at. Includes classifications."""
+    MARKETING_REV_QUERY = text("""
+    WITH dates AS (
+        SELECT generate_series(CAST(:start_date AS DATE), CAST(:end_date AS DATE), '1 day'::interval)::date AS d
+    ),
+    order_stats AS (
+        SELECT co.uid, co.created_at, co.order_status,
                co.gross_amount - co.discount_applied AS net_amount, ot.total_qty,
                -- Step 1: Assign the Main Filter Category
                CASE 
@@ -1161,68 +1270,52 @@ async def get_daily_order_summary(
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
     ),
-    placed AS (
-        SELECT DATE(order_date AT TIME ZONE 'Asia/Kolkata') AS d,
+    cohort_stats AS (
+        SELECT DATE(created_at AT TIME ZONE 'Asia/Kolkata') AS d,
                COUNT(uid) AS total_placed_orders,
                COALESCE(SUM(net_amount), 0) AS total_placed_revenue,
                COALESCE(SUM(total_qty), 0) AS total_placed_quantity,
+               
+               COUNT(uid) FILTER (WHERE order_status = 'DELIVERED') AS delivered_orders,
+               COALESCE(SUM(net_amount) FILTER (WHERE order_status = 'DELIVERED'), 0) AS delivered_revenue,
+               COALESCE(SUM(total_qty) FILTER (WHERE order_status = 'DELIVERED'), 0) AS delivered_quantity,
+               
+               COUNT(uid) FILTER (WHERE order_status = 'CANCELLED') AS cancelled_orders,
+               COALESCE(SUM(net_amount) FILTER (WHERE order_status = 'CANCELLED'), 0) AS cancelled_revenue,
+               COALESCE(SUM(total_qty) FILTER (WHERE order_status = 'CANCELLED'), 0) AS cancelled_quantity,
+               
                COUNT(uid) FILTER (WHERE order_status = 'PENDING') AS pending_orders,
                COALESCE(SUM(net_amount) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_revenue,
                COALESCE(SUM(total_qty) FILTER (WHERE order_status = 'PENDING'), 0) AS pending_quantity
         FROM order_stats
-        WHERE (order_date AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
-          AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
-          AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
-        GROUP BY 1
-    ),
-    delivered AS (
-        SELECT DATE(actual_delivery_date AT TIME ZONE 'Asia/Kolkata') AS d,
-               COUNT(uid) AS delivered_orders,
-               COALESCE(SUM(net_amount), 0) AS delivered_revenue,
-               COALESCE(SUM(total_qty), 0) AS delivered_quantity
-        FROM order_stats
-        WHERE order_status = 'DELIVERED'
-          AND (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
-          AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
-          AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
-        GROUP BY 1
-    ),
-    cancelled AS (
-        SELECT DATE(updated_at AT TIME ZONE 'Asia/Kolkata') AS d,
-               COUNT(uid) AS cancelled_orders,
-               COALESCE(SUM(net_amount), 0) AS cancelled_revenue,
-               COALESCE(SUM(total_qty), 0) AS cancelled_quantity
-        FROM order_stats
-        WHERE order_status = 'CANCELLED'
-          AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+        WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
           AND (CAST(:main_filter AS VARCHAR) IS NULL OR main_filter = CAST(:main_filter AS VARCHAR))
           AND (CAST(:sub_filter AS VARCHAR) IS NULL OR sub_filter = CAST(:sub_filter AS VARCHAR))
         GROUP BY 1
     )
     SELECT dates.d AS date,
-           COALESCE(p.total_placed_orders, 0) AS total_placed_orders,
-           COALESCE(p.total_placed_revenue, 0) AS total_placed_revenue,
-           COALESCE(p.total_placed_quantity, 0) AS total_placed_quantity,
-           COALESCE(d_stats.delivered_orders, 0) AS delivered_orders,
-           COALESCE(d_stats.delivered_revenue, 0) AS delivered_revenue,
-           COALESCE(d_stats.delivered_quantity, 0) AS delivered_quantity,
-           COALESCE(c_stats.cancelled_orders, 0) AS cancelled_orders,
-           COALESCE(c_stats.cancelled_revenue, 0) AS cancelled_revenue,
-           COALESCE(c_stats.cancelled_quantity, 0) AS cancelled_quantity,
-           COALESCE(p.pending_orders, 0) AS pending_orders,
-           COALESCE(p.pending_revenue, 0) AS pending_revenue,
-           COALESCE(p.pending_quantity, 0) AS pending_quantity
+           COALESCE(cs.total_placed_orders, 0) AS total_placed_orders,
+           COALESCE(cs.total_placed_revenue, 0) AS total_placed_revenue,
+           COALESCE(cs.total_placed_quantity, 0) AS total_placed_quantity,
+           COALESCE(cs.delivered_orders, 0) AS delivered_orders,
+           COALESCE(cs.delivered_revenue, 0) AS delivered_revenue,
+           COALESCE(cs.delivered_quantity, 0) AS delivered_quantity,
+           COALESCE(cs.cancelled_orders, 0) AS cancelled_orders,
+           COALESCE(cs.cancelled_revenue, 0) AS cancelled_revenue,
+           COALESCE(cs.cancelled_quantity, 0) AS cancelled_quantity,
+           COALESCE(cs.pending_orders, 0) AS pending_orders,
+           COALESCE(cs.pending_revenue, 0) AS pending_revenue,
+           COALESCE(cs.pending_quantity, 0) AS pending_quantity
     FROM dates
-    LEFT JOIN placed p ON dates.d = p.d
-    LEFT JOIN delivered d_stats ON dates.d = d_stats.d
-    LEFT JOIN cancelled c_stats ON dates.d = c_stats.d
+    LEFT JOIN cohort_stats cs ON dates.d = cs.d
     ORDER BY date ASC;
     """)
+
     CLASSIFICATION_QUERY = text("""
     WITH classified_orders AS (
         SELECT 
             co.uid AS order_id,
-            (co.order_date AT TIME ZONE 'Asia/Kolkata')::date AS order_date,
+            (co.created_at AT TIME ZONE 'Asia/Kolkata')::date AS order_date,
             co.gross_amount - co.discount_applied AS net_amount,
             
             -- Step 1: Assign the Main Filter Category
@@ -1297,6 +1390,84 @@ async def get_daily_order_summary(
     ORDER BY order_date, main_filter, sub_filter;
     """)
 
+    result = await conn.execute(
+        MARKETING_REV_QUERY,
+        {
+            "start_date": from_date,
+            "end_date": to_date,
+            "outlet_id": target_outlet_id,
+            "main_filter": main_filter,
+            "sub_filter": sub_filter
+        }
+    )
+    rows = result.all()
+
+    class_result = await conn.execute(
+        CLASSIFICATION_QUERY,
+        {
+            "start_date": from_date,
+            "end_date": to_date,
+            "outlet_id": target_outlet_id,
+            "main_filter": main_filter,
+            "sub_filter": sub_filter
+        }
+    )
+    class_rows = class_result.all()
+
+    classifications_by_date = {}
+    for class_row in class_rows:
+        d_str = str(class_row.date)
+        if d_str not in classifications_by_date:
+            classifications_by_date[d_str] = []
+        classifications_by_date[d_str].append({
+            "main_filter": class_row.main_filter,
+            "sub_filter": class_row.sub_filter,
+            "orders": int(class_row.total_orders),
+            "revenue": float(class_row.total_revenue)
+        })
+
+    summary = [
+        {
+            "date": str(row.date),
+            "total_placed": {
+                "orders": int(row.total_placed_orders),
+                "revenue": float(row.total_placed_revenue),
+                "quantity": int(row.total_placed_quantity),
+            },
+            "delivered": {
+                "orders": int(row.delivered_orders),
+                "revenue": float(row.delivered_revenue),
+                "quantity": int(row.delivered_quantity),
+            },
+            "cancelled": {
+                "orders": int(row.cancelled_orders),
+                "revenue": float(row.cancelled_revenue),
+                "quantity": int(row.cancelled_quantity),
+            },
+            "pending": {
+                "orders": int(row.pending_orders),
+                "revenue": float(row.pending_revenue),
+                "quantity": int(row.pending_quantity),
+            },
+            "classifications": classifications_by_date.get(str(row.date), []),
+        }
+        for row in rows
+    ]
+    return summary
+
+@router.get("/daily-order-summary")
+async def get_daily_order_summary(
+    from_date: date,
+    to_date: date,
+    outlet_id: Optional[str] = None,
+    main_filter: Optional[str] = None,
+    sub_filter: Optional[str] = None,
+    view_type: str = "logistics",
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
+    ))
+):
+    """ Get daily order summary including volume, revenue, and quantity by status. """
     try:
         # Role-based outlet filtering
         current_user = await user_manager.fetch(current_user_id)
@@ -1305,77 +1476,24 @@ async def get_daily_order_summary(
             target_outlet_id = current_user.outlet_id
 
         async with engine.connect() as conn:
-            result = await conn.execute(
-                DAILY_REV_QUERY,
-                {
-                    "start_date": from_date,
-                    "end_date": to_date,
-                    "outlet_id": target_outlet_id,
-                    "main_filter": main_filter,
-                    "sub_filter": sub_filter
-                }
-            )
-            rows = result.all()
+            if view_type == "marketing":
+                summary = await fetch_marketing_order_summary(
+                    conn, from_date, to_date, target_outlet_id, main_filter, sub_filter
+                )
+            else:
+                summary = await fetch_logistics_order_summary(
+                    conn, from_date, to_date, target_outlet_id
+                )
 
-            class_result = await conn.execute(
-                CLASSIFICATION_QUERY,
-                {
-                    "start_date": from_date,
-                    "end_date": to_date,
-                    "outlet_id": target_outlet_id,
-                    "main_filter": main_filter,
-                    "sub_filter": sub_filter
-                }
-            )
-            class_rows = class_result.all()
-
-        classifications_by_date = {}
-        for class_row in class_rows:
-            d_str = str(class_row.date)
-            if d_str not in classifications_by_date:
-                classifications_by_date[d_str] = []
-            classifications_by_date[d_str].append({
-                "main_filter": class_row.main_filter,
-                "sub_filter": class_row.sub_filter,
-                "orders": int(class_row.total_orders),
-                "revenue": float(class_row.total_revenue)
-            })
-
-        summary = [
-            {
-                "date": str(row.date),
-                "total_placed": {
-                    "orders": int(row.total_placed_orders),
-                    "revenue": float(row.total_placed_revenue),
-                    "quantity": int(row.total_placed_quantity),
-                },
-                "delivered": {
-                    "orders": int(row.delivered_orders),
-                    "revenue": float(row.delivered_revenue),
-                    "quantity": int(row.delivered_quantity),
-                },
-                "cancelled": {
-                    "orders": int(row.cancelled_orders),
-                    "revenue": float(row.cancelled_revenue),
-                    "quantity": int(row.cancelled_quantity),
-                },
-                "pending": {
-                    "orders": int(row.pending_orders),
-                    "revenue": float(row.pending_revenue),
-                    "quantity": int(row.pending_quantity),
-                },
-                "classifications": classifications_by_date.get(str(row.date), []),
-            }
-            for row in rows
-        ]
         return {
             "summary": summary,
             "filters_applied": {
                 "from_date": from_date,
                 "to_date": to_date,
                 "outlet_id": target_outlet_id,
-                "main_filter": main_filter,
-                "sub_filter": sub_filter
+                "main_filter": main_filter if view_type == "marketing" else None,
+                "sub_filter": sub_filter if view_type == "marketing" else None,
+                "view_type": view_type
             }
         }
     except Exception as e:
@@ -1518,6 +1636,136 @@ async def get_outlet_financial_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch outlet financial summary: {str(e)}"
+        )
+
+
+@router.get("/daily-collection-tracker")
+async def get_daily_collection_tracker(
+    from_date: date,
+    to_date: date,
+    current_user_id: str = Depends(require_roles(
+        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
+    ))
+):
+    """
+    Date-wise delivery-vs-collection breakdown per outlet.
+
+    For each outlet×date combination that has either a delivered order or a
+    confirmed collection within the requested window, returns:
+      - to_collect  : sum of total_amount from DELIVERED orders (actual_delivery_date)
+      - paid        : sum of amount from CONFIRMED outlet collections (collection date)
+      - remaining   : to_collect − paid
+      - order_count : number of delivered orders on that date
+    """
+    QUERY = text("""
+    WITH delivery_data AS (
+        SELECT
+            co.assigned_outlet_id,
+            (co.actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date AS activity_date,
+            SUM(co.total_amount) AS to_collect,
+            COUNT(co.uid)        AS order_count
+        FROM customer_orders co
+        WHERE co.order_status = 'DELIVERED'
+          AND co.assigned_outlet_id IS NOT NULL
+          AND co.actual_delivery_date IS NOT NULL
+          AND (co.actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date
+                  BETWEEN :from_date AND :to_date
+        GROUP BY co.assigned_outlet_id, 2
+    ),
+    collection_data AS (
+        SELECT
+            odc.outlet_id,
+            odc.date AS activity_date,
+            SUM(odc.amount) AS paid
+        FROM outlet_daily_collections odc
+        WHERE odc.confirmation_status = 'CONFIRMED'
+          AND odc.date BETWEEN :from_date AND :to_date
+        GROUP BY odc.outlet_id, odc.date
+    ),
+    combined AS (
+        SELECT
+            COALESCE(d.assigned_outlet_id, c.outlet_id) AS outlet_id,
+            COALESCE(d.activity_date, c.activity_date)  AS activity_date,
+            COALESCE(d.to_collect, 0)  AS to_collect,
+            COALESCE(d.order_count, 0) AS order_count,
+            COALESCE(c.paid, 0)        AS paid
+        FROM delivery_data d
+        FULL OUTER JOIN collection_data c
+            ON d.assigned_outlet_id = c.outlet_id
+           AND d.activity_date = c.activity_date
+    )
+    SELECT
+        cmb.outlet_id,
+        o.outlet_name,
+        o.outlet_code,
+        cmb.activity_date AS date,
+        cmb.to_collect,
+        cmb.paid,
+        cmb.to_collect - cmb.paid AS remaining,
+        cmb.order_count
+    FROM combined cmb
+    JOIN outlets o ON o.uid = cmb.outlet_id
+    ORDER BY cmb.activity_date, o.outlet_name
+    """)
+
+    try:
+        async with engine.connect() as conn:
+            result = await conn.execute(QUERY, {"from_date": from_date, "to_date": to_date})
+            rows = result.all()
+
+        daily_data = []
+        outlet_map = {}   # outlet_id → running aggregate
+        grand = {"to_collect": 0.0, "paid": 0.0, "remaining": 0.0}
+
+        for row in rows:
+            tc  = float(row.to_collect)
+            pd_ = float(row.paid)
+            rm  = float(row.remaining)
+
+            daily_data.append({
+                "outlet_id":   row.outlet_id,
+                "outlet_name": row.outlet_name,
+                "outlet_code": row.outlet_code,
+                "date":        row.date.isoformat(),
+                "to_collect":  tc,
+                "paid":        pd_,
+                "remaining":   rm,
+                "order_count": int(row.order_count),
+            })
+
+            if row.outlet_id not in outlet_map:
+                outlet_map[row.outlet_id] = {
+                    "outlet_id":        row.outlet_id,
+                    "outlet_name":      row.outlet_name,
+                    "outlet_code":      row.outlet_code,
+                    "total_to_collect": 0.0,
+                    "total_paid":       0.0,
+                    "total_remaining":  0.0,
+                }
+            outlet_map[row.outlet_id]["total_to_collect"] += tc
+            outlet_map[row.outlet_id]["total_paid"]       += pd_
+            outlet_map[row.outlet_id]["total_remaining"]  += rm
+
+            grand["to_collect"] += tc
+            grand["paid"]       += pd_
+            grand["remaining"]  += rm
+
+        return {
+            "daily_data":       daily_data,
+            "outlet_summaries": list(outlet_map.values()),
+            "grand_total":      grand,
+            "filters": {
+                "from_date": from_date.isoformat(),
+                "to_date":   to_date.isoformat(),
+            },
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch daily collection tracker: {str(e)}"
         )
 
 

@@ -213,6 +213,19 @@ async def auto_assign_outlet(
     outlet_mapping_manager = OutletMappingManager(engine)
 
     try:
+        # Check direct database pincode mapping override first
+        if pincode:
+            pin_str = str(pincode).strip()
+            db_mapping = await outlet_mapping_manager.fetch_all(
+                filters={"pincode": pin_str, "is_active": True}
+            )
+            if db_mapping and db_mapping.items:
+                outlet = await outlet_manager.fetch(db_mapping.items[0].outlet_id)
+                if outlet and outlet.is_active:
+                    print(f"MATCH: Assigned outlet from database pincode mapping override: {outlet.outlet_name} for pincode {pincode}")
+                    outlet.is_fallback = False
+                    return outlet
+
         # Resolve district/taluk/state from pincode if provided
         # Pincode is considered the strongest indicator of the physical location
         if pincode:

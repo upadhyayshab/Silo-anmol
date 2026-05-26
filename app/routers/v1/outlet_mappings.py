@@ -110,6 +110,7 @@ class OutletMappingCreate(BaseModel):
     state: str = Field(..., description="State name (e.g., 'Karnataka')")
     district: str = Field(..., description="District name")
     taluk: Optional[str] = Field(None, description="Taluk name (optional)")
+    pincode: Optional[str] = Field(None, description="Pincode mapping (optional)")
     outlet_id: str = Field(..., description="UUID of the outlet to assign")
     is_active: bool = Field(default=True, description="Whether this mapping is active")
 
@@ -118,6 +119,7 @@ class OutletMappingUpdate(BaseModel):
     state: Optional[str] = Field(None, description="State name")
     district: Optional[str] = Field(None, description="District name")
     taluk: Optional[str] = Field(None, description="Taluk name")
+    pincode: Optional[str] = Field(None, description="Pincode mapping")
     outlet_id: Optional[str] = Field(None, description="UUID of the outlet")
     is_active: Optional[bool] = Field(None, description="Whether this mapping is active")
 
@@ -127,6 +129,7 @@ class OutletMappingResponse(BaseModel):
     state: str
     district: str
     taluk: Optional[str]
+    pincode: Optional[str]
     outlet_id: str
     outlet_name: Optional[str]
     is_active: bool
@@ -151,6 +154,7 @@ def map_to_response(mapping, outlet_name=None):
         state=mapping.state,
         district=mapping.district,
         taluk=mapping.taluk,
+        pincode=mapping.pincode,
         outlet_id=mapping.outlet_id,
         outlet_name=outlet_name,
         is_active=mapping.is_active,
@@ -164,7 +168,29 @@ async def lookup_pincode(pincode: str = Query(..., description="Pincode to looku
     """
     Resolve a pincode to a location and find the assigned outlet.
     Returns the resolved location (state, district, taluk) and the mapped outlet.
+    Checks the database outlet_mappings table first before falling back to pypinindia.
     """
+    pin_str = str(pincode).strip()
+    
+    # 1. Check direct pincode mapping in DB first
+    db_mapping = await outlet_mapping_manager.fetch_one(
+        filters={"pincode": pin_str, "is_active": True}
+    )
+    if db_mapping:
+        outlet = await outlet_manager.fetch(db_mapping.outlet_id)
+        if outlet and outlet.is_active:
+            # Capitalize geographical details for output styling
+            return {
+                "resolved_location": {
+                    "state": db_mapping.state.title(),
+                    "district": db_mapping.district.title(),
+                    "taluk": db_mapping.taluk.title() if db_mapping.taluk else "",
+                    "pincode": pin_str
+                },
+                "outlet": outlet.model_dump()
+            }
+
+    # 2. Fallback to pypinindia lookup
     from pypinindia import get_pincode_info
     try:
         # Use get_pincode_info which is already imported in some contexts or available in pypinindia
@@ -266,6 +292,7 @@ async def list_mappings(
     state: Optional[str] = Query(None, description="Filter by state"),
     district: Optional[str] = Query(None, description="Filter by district"),
     taluk: Optional[str] = Query(None, description="Filter by taluk"),
+    pincode: Optional[str] = Query(None, description="Filter by pincode"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     limit: int = Query(100, ge=0, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Pagination offset")
@@ -278,6 +305,8 @@ async def list_mappings(
         filters["district"] = district.lower()
     if taluk is not None:
         filters["taluk"] = taluk.lower()
+    if pincode:
+        filters["pincode"] = pincode.strip()
     if is_active is not None:
         filters["is_active"] = is_active
 
@@ -311,13 +340,13 @@ async def create_mapping(
     Create a new outlet mapping.
 
     State, district, and taluk are validated against the pypinindia dataset.
-    If any value is invalid the response will be HTTP 422 and include
-    valid values / suggestions so the client can correct the input.
+    If a pincode is provided, geographic validation is bypassed.
     """
     # --- geographic validation ---
-    location_error = _validate_location(payload.state, payload.district, payload.taluk)
-    if location_error:
-        raise HTTPException(status_code=422, detail=location_error)
+    if not payload.pincode:
+        location_error = _validate_location(payload.state, payload.district, payload.taluk)
+        if location_error:
+            raise HTTPException(status_code=422, detail=location_error)
 
     # --- outlet exists ---
     outlet = await outlet_manager.fetch(payload.outlet_id)
@@ -328,6 +357,7 @@ async def create_mapping(
         state = payload.state.lower(),
         district = payload.district.lower(),
         taluk = payload.taluk.lower() if payload.taluk else None,
+        pincode = payload.pincode.strip() if payload.pincode else None,
         outlet_id = payload.outlet_id,
         is_active = payload.is_active
     )
@@ -353,7 +383,9 @@ async def update_mapping(
     if payload.district is not None:
         update_data["district"] = payload.district.lower()
     if payload.taluk is not None:
-        update_data["taluk"] = payload.taluk.lower()
+        update_data["taluk"] = payload.taluk.lower() if payload.taluk else None
+    if payload.pincode is not None:
+        update_data["pincode"] = payload.pincode.strip() if payload.pincode else None
     if payload.outlet_id is not None:
         # Verify outlet exists
         outlet = await outlet_manager.fetch(payload.outlet_id)

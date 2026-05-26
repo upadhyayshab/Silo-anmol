@@ -1254,6 +1254,7 @@ class OutletMappingSchema(BaseSchema):
     state = db.Column(db.String(100), nullable=False, index=True)
     district = db.Column(db.String(100), nullable=False, index=True)
     taluk = db.Column(db.String(100), nullable=True, index=True)
+    pincode = db.Column(db.String(10), nullable=True, index=True)
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
 

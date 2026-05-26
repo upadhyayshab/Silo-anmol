@@ -242,14 +242,25 @@ async def process_crm_orders(payload: dict):
         
         try:
             if pincode:
-                # Use pincode as the primary source of truth for location
-                res_district = get_district(pincode)
-                if res_district:
-                    district = res_district[0] if isinstance(res_district, list) and res_district else res_district
-                
-                res_state = get_state(pincode)
-                if res_state:
-                    state = res_state
+                pin_str = str(pincode).strip()
+                from managers import OutletMappingManager
+                mapping_mgr = OutletMappingManager(engine)
+                db_mapping = await mapping_mgr.fetch_one(
+                    filters={"pincode": pin_str, "is_active": True}
+                )
+                if db_mapping:
+                    state = db_mapping.state
+                    district = db_mapping.district
+                    taluk = db_mapping.taluk
+                else:
+                    # Use pincode as the primary source of truth for location
+                    res_district = get_district(pincode)
+                    if res_district:
+                        district = res_district[0] if isinstance(res_district, list) and res_district else res_district
+                    
+                    res_state = get_state(pincode)
+                    if res_state:
+                        state = res_state
         except Exception as e:
             logging.error(f"Error looking up pincode {pincode}: {e}")
             
