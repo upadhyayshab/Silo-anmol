@@ -123,7 +123,6 @@ LSQ_ITEMS_FIELD_MAPPING: dict = {
     "selling_price":            LSQItems.SELLING_PRICE,
     "quantity":                 LSQItems.QUANTITY,
     "total_price":              LSQItems.TOTAL_PRICE,
-    "product_id":               LSQItems.PRODUCT_ID,
     "product_description":      LSQItems.PRODUCT_DESCRIPTION,
 }
 
@@ -140,7 +139,6 @@ LSQ_ITEMS3_FIELD_MAPPING: dict = {
     "selling_price":            LSQItems3.SELLING_PRICE,
     "quantity":                 LSQItems3.QUANTITY,
     "total_price":              LSQItems3.TOTAL_PRICE,
-    "product_id":               LSQItems3.PRODUCT_ID,
     "product_description":      LSQItems3.PRODUCT_DESCRIPTION,
 }
 
