@@ -141,7 +141,6 @@ class LSQItems(str, Enum):
     SELLING_PRICE            = "mx_CustomObject_9"
     QUANTITY                 = "mx_CustomObject_10"
     TOTAL_PRICE              = "mx_CustomObject_11"
-    PRODUCT_ID               = "mx_CustomObject_12"
     PRODUCT_DESCRIPTION      = "mx_CustomObject_81"
 
 
@@ -157,7 +156,6 @@ class LSQItems3(str, Enum):
     SELLING_PRICE            = "mx_CustomObject_9"
     QUANTITY                 = "mx_CustomObject_10"
     TOTAL_PRICE              = "mx_CustomObject_11"
-    PRODUCT_ID               = "mx_CustomObject_1"
     PRODUCT_DESCRIPTION      = "mx_CustomObject_81"
 
 

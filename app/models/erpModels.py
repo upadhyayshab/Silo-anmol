@@ -326,6 +326,15 @@ class OrderRevokeRequest(BaseModel):
     reason: str = Field(..., min_length=10, description="Reason for revoking the order (minimum 10 characters)")
 
 
+class ProductBrief(BaseModel):
+    uid: str
+    product_name: str
+    sku: str
+
+    class Config:
+        from_attributes = True
+
+
 class OrderItemResponse(BaseModel):
     uid: str
     product_id: str
@@ -333,6 +342,8 @@ class OrderItemResponse(BaseModel):
     unit_price: Decimal
     subtotal: Decimal
     product_manual_discount: Decimal
+    product: Optional[ProductBrief] = None
+    inventory_quantity: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -559,13 +570,7 @@ class StockTransferApproveQuantitiesRequest(BaseModel):
     notes: Optional[str] = None
 
 
-class ProductBrief(BaseModel):
-    uid: str
-    product_name: str
-    sku: str
-
-    class Config:
-        from_attributes = True
+# ProductBrief moved above OrderItemResponse
 
 
 class OutletBrief(BaseModel):

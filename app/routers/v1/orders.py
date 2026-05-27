@@ -967,11 +967,44 @@ openapi_examples={
     try:
         order = await order_manager.fetch(order_id)
         
-        if order.order_status in [OrderStatus.DELIVERED, OrderStatus.CANCELLED]:
+        if order.order_status == OrderStatus.CANCELLED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Cannot edit order with status {order.order_status}"
             )
+
+        # Capture old values for activity log
+        old_items_records = await order_item_manager.fetch_all(filters={"order_id": order_id})
+        old_values = {
+            "customer_name": order.customer_name,
+            "customer_phone": order.customer_phone,
+            "house_no": order.house_no,
+            "street": order.street,
+            "address_line": order.address_line,
+            "village": order.village,
+            "post": order.post,
+            "hobli": order.hobli,
+            "taluk": order.taluk,
+            "district": order.district,
+            "state": order.state,
+            "pincode": order.pincode,
+            "collection_type": order.collection_type.value if hasattr(order.collection_type, "value") else order.collection_type,
+            "payment_method": order.payment_method.value if hasattr(order.payment_method, "value") else order.payment_method,
+            "expected_delivery_date": order.expected_delivery_date.isoformat() if order.expected_delivery_date else None,
+            "manual_discount": float(order.manual_discount),
+            "prepaid_amount": float(order.prepaid_amount),
+            "total_amount": float(order.total_amount),
+            "priority_level": order.priority_level,
+            "items": [
+                {
+                    "product_id": item.product_id,
+                    "quantity": item.quantity,
+                    "unit_price": float(item.unit_price),
+                    "product_manual_discount": float(item.product_manual_discount)
+                }
+                for item in old_items_records.items
+            ]
+        }
 
         # 1. Validate products and calculate pricing
         gross_amount = Decimal('0.00')  # Total at MRP
@@ -1063,7 +1096,16 @@ openapi_examples={
             "status_remarks": order.status_remarks  # Carry over in case we need to update it below
         }
     
-        # Stock reservation/release removed
+        # Revert old stock if the order status is DELIVERED
+        is_delivered = order.order_status == OrderStatus.DELIVERED
+        if is_delivered and order.assigned_outlet_id:
+            for item in old_items_records.items:
+                inv = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
+                if inv:
+                    await inventory_manager.update(inv.uid, {
+                        "quantity": inv.quantity + item.quantity,
+                        "last_updated": datetime.utcnow()
+                    })
 
         # 6. Replace items (delete old, create new)
         async with order_manager.session_factory() as session:
@@ -1083,12 +1125,51 @@ openapi_examples={
                 product_manual_discount=item_data["product_manual_discount"]
             ))
 
-        # Stock reservation removed
+        # Deduct new stock if the order status is DELIVERED
+        if is_delivered and order.assigned_outlet_id:
+            for item_data in validated_items:
+                inv = await _find_inventory_for_product(item_data["product"].uid, order.assigned_outlet_id)
+                if inv:
+                    await inventory_manager.update(inv.uid, {
+                        "quantity": max(0, inv.quantity - item_data["quantity"]),
+                        "last_updated": datetime.utcnow()
+                    })
                 
         # Commit order level updates to database
         updated_order = await order_manager.update(order_id, update_data)
             
         # 8. Log activity
+        new_values = {
+            "customer_name": payload.customer_name,
+            "customer_phone": payload.customer_phone,
+            "house_no": payload.house_no,
+            "street": payload.street,
+            "address_line": payload.address_line,
+            "village": payload.village,
+            "post": payload.post,
+            "hobli": payload.hobli,
+            "taluk": payload.taluk,
+            "district": payload.district,
+            "state": payload.state,
+            "pincode": payload.pincode,
+            "collection_type": payload.collection_type.value if hasattr(payload.collection_type, "value") else payload.collection_type,
+            "payment_method": payload.payment_method.value if hasattr(payload.payment_method, "value") else payload.payment_method,
+            "expected_delivery_date": payload.expected_delivery_date.isoformat() if payload.expected_delivery_date else None,
+            "manual_discount": float(payload.manual_discount),
+            "prepaid_amount": float(payload.prepaid_amount),
+            "total_amount": float(final_total_amount),
+            "priority_level": payload.priority_level,
+            "items": [
+                {
+                    "product_id": item_data["product"].uid,
+                    "quantity": item_data["quantity"],
+                    "unit_price": float(item_data["unit_price"]),
+                    "product_manual_discount": float(item_data["product_manual_discount"])
+                }
+                for item_data in validated_items
+            ]
+        }
+
         try:
             from managers import ActivityLogManager, ActivityLogSchema
             activity_manager = ActivityLogManager(engine)
@@ -1097,7 +1178,12 @@ openapi_examples={
                 action="UPDATE_ORDER_FULL",
                 entity_type="customer_order",
                 entity_id=order_id,
-                details={"updated_fields": list(update_data.keys()), "amount": float(final_total_amount)}
+                details={
+                    "old_values": old_values,
+                    "new_values": new_values,
+                    "updated_fields": list(update_data.keys()),
+                    "amount": float(final_total_amount)
+                }
             ))
         except Exception as log_error:
             print(f"Warning: Failed to log activity for order update {order_id}: {log_error}")
@@ -1294,17 +1380,20 @@ async def get_order_response(order_id: str) -> OrderResponse:
     )
     
     from models import OrderItemResponse
-    items = [
-        OrderItemResponse(
-            uid=item.uid,
-            product_id=item.product_id,
-            quantity=item.quantity,
-            unit_price=item.unit_price,
-            subtotal=item.subtotal,
-            product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00'))  # New field with backward compatibility
+    items = []
+    for item in order_items.items:
+        inv = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
+        items.append(
+            OrderItemResponse(
+                uid=item.uid,
+                product_id=item.product_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                subtotal=item.subtotal,
+                product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00')),
+                inventory_quantity=inv.quantity if inv else 0
+            )
         )
-        for item in order_items.items
-    ]
     
     # Handle backward compatibility for orders created before new pricing fields
     gross_amount = getattr(order, 'gross_amount', order.total_amount)
@@ -1391,6 +1480,7 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
     for item in order_items.items:
         # Check for joined product data within the item safely without lazy loading
         product_data = item.__dict__.get('product')
+        inv = await _find_inventory_for_product(item.product_id, order.assigned_outlet_id)
         
         items.append(
             OrderItemResponse(
@@ -1401,7 +1491,8 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
                 subtotal=item.subtotal,
                 product_manual_discount=getattr(item, 'product_manual_discount', Decimal('0.00')),
                 # Append product if it was joined
-                product=product_data if product_data else None
+                product=product_data if product_data else None,
+                inventory_quantity=inv.quantity if inv else 0
             )
         )
     
@@ -1421,6 +1512,12 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
     total_commission = getattr(order, 'total_commission', Decimal('0.00'))
     priority_level = getattr(order, 'priority_level', 10)
     
+    delivery_person_obj = order.__dict__.get('delivery_person')
+    delivery_person_dict = {
+        "full_name": delivery_person_obj.full_name,
+        "phone": delivery_person_obj.phone
+    } if delivery_person_obj else None
+
     return OrderResponse(
         uid=order.uid,
         order_number=order.order_number,
@@ -1454,7 +1551,7 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
         priority_level=priority_level,
         lat_lon=getattr(order, 'lat_lon', None),
         delivery_person_id=getattr(order, 'delivery_person_id', None),
-        delivery_person=order.__dict__.get('delivery_person'),
+        delivery_person=delivery_person_dict,
         items=items,
         created_at=order.created_at,
         
