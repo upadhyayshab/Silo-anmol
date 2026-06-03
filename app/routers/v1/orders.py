@@ -1709,6 +1709,24 @@ async def update_order_status(
 
             # push activity to crm           
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
+
+        elif payload.order_status in [
+            OrderStatus.ATTEMPTED,
+            OrderStatus.CUSTOMER_NOT_AVAILABLE,
+            OrderStatus.UNABLE_TO_CONTACT,
+            OrderStatus.UNABLE_TO_LOCATE,
+            OrderStatus.PAYMENT_NOT_READY
+        ]:
+            if not payload.status_remarks:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Status remarks required for {payload.order_status.value}"
+                )
+            
+            update_order(order, update_data)
+            
+            # push activity to crm           
+            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
         
         await order_manager.update(order_id, update_data)
         
@@ -1728,13 +1746,30 @@ async def update_order_status(
 
 def is_valid_status_transition(current_status: OrderStatus, new_status: OrderStatus) -> bool:
     """Validate order status transitions"""
+    
+    logistics_statuses = [
+        OrderStatus.ATTEMPTED,
+        OrderStatus.CUSTOMER_NOT_AVAILABLE,
+        OrderStatus.UNABLE_TO_CONTACT,
+        OrderStatus.UNABLE_TO_LOCATE,
+        OrderStatus.PAYMENT_NOT_READY
+    ]
+    
     valid_transitions = {
         OrderStatus.PENDING: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED, OrderStatus.POSTPONED],
-        OrderStatus.DELIVERY_ALLOTTED: [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.POSTPONED],
+        OrderStatus.DELIVERY_ALLOTTED: [OrderStatus.PENDING, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.POSTPONED] + logistics_statuses,
         OrderStatus.POSTPONED: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED],
         OrderStatus.DELIVERED: [],  # Final state
         OrderStatus.CANCELLED: []   # Final state
     }
+    
+    for status in logistics_statuses:
+        valid_transitions[status] = [
+            OrderStatus.DELIVERY_ALLOTTED,
+            OrderStatus.DELIVERED,
+            OrderStatus.CANCELLED,
+            OrderStatus.POSTPONED
+        ]
     
     return new_status in valid_transitions.get(current_status, [])
 
