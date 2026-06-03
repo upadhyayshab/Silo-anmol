@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query, BackgroundTasks
 from typing import List, Optional, Any, Dict
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 from decimal import Decimal
 from utils import dependencies as D
 from config import get_settings, get_engine
@@ -1711,6 +1711,7 @@ async def update_order_status(
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
 
         elif payload.order_status in [
+            OrderStatus.POSTPONED,
             OrderStatus.ATTEMPTED,
             OrderStatus.CUSTOMER_NOT_AVAILABLE,
             OrderStatus.UNABLE_TO_CONTACT,
@@ -1722,6 +1723,13 @@ async def update_order_status(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Status remarks required for {payload.order_status.value}"
                 )
+            
+            update_data["priority_level"] = (order.priority_level or 0) + 10
+            
+            if payload.order_status in [OrderStatus.POSTPONED, OrderStatus.PAYMENT_NOT_READY] and payload.postpone_date:
+                update_data["expected_delivery_date"] = payload.postpone_date
+            else:
+                update_data["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)
             
             update_order(order, update_data)
             

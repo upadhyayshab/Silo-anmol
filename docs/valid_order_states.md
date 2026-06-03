@@ -47,9 +47,12 @@ stateDiagram-v2
 | **`PENDING`** | `DELIVERY_ALLOTTED`, `CANCELLED`, `POSTPONED` | Initial state when an order is created. |
 | **`DELIVERY_ALLOTTED`** | `PENDING`, `DELIVERED`, `CANCELLED`, `POSTPONED`, `ATTEMPTED`, `CUSTOMER_NOT_AVAILABLE`, `UNABLE_TO_CONTACT`, `UNABLE_TO_LOCATE`, `PAYMENT_NOT_READY` | Order is assigned to an outlet/delivery person. |
 | **`POSTPONED`** | `DELIVERY_ALLOTTED`, `CANCELLED` | Delivery is delayed. |
-| **Logistics Statuses*** | `DELIVERY_ALLOTTED`, `DELIVERED`, `CANCELLED`, `POSTPONED` | Represents various delivery attempt outcomes. |
+| **Logistics Statuses*** | `DELIVERY_ALLOTTED`, `DELIVERED`, `CANCELLED`, `POSTPONED` | Represents various delivery attempt outcomes. Order `priority_level` increases by 10. |
 | **`DELIVERED`** | *None (Final State)* | Order successfully fulfilled. |
 | **`CANCELLED`** | *None (Final State)* | Order cancelled. Requires remarks. |
 
 > [!NOTE]
-> *Logistics Statuses include: `ATTEMPTED`, `CUSTOMER_NOT_AVAILABLE`, `UNABLE_TO_CONTACT`, `UNABLE_TO_LOCATE`, and `PAYMENT_NOT_READY`. Transitioning to any of these statuses requires providing `status_remarks`.
+> *Logistics Statuses include: `ATTEMPTED`, `CUSTOMER_NOT_AVAILABLE`, `UNABLE_TO_CONTACT`, `UNABLE_TO_LOCATE`, and `PAYMENT_NOT_READY`. Transitioning to any of these statuses requires providing `status_remarks`. 
+
+> [!TIP]
+> **Priority and Scheduling Updates**: When an order transitions to `POSTPONED` or any of the Logistics Statuses, its `priority_level` is automatically increased by `10`. Furthermore, its `expected_delivery_date` is shifted by +1 day. For `POSTPONED` and `PAYMENT_NOT_READY`, an optional `postpone_date` can be provided in the payload to explicitly set the new delivery date instead.

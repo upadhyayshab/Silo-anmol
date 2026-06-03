@@ -316,6 +316,7 @@ class OrderFullUpdateRequest(BaseModel):
 class OrderStatusUpdateRequest(BaseModel):
     order_status: OrderStatus
     status_remarks: Optional[str] = None  # Mandatory for cancelled
+    postpone_date: Optional[date] = None
 
 
 class OrderAssignRequest(BaseModel):
