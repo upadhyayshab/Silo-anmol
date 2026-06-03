@@ -692,8 +692,8 @@ async def update_transfer_status(
         
         # Role-based status update validation
         if current_user.role == UserRole.WAREHOUSE_MANAGER:
-            # Warehouse managers can only handle transfers from warehouse
-            if transfer.from_outlet_id is not None:
+            # Warehouse managers can only handle transfers from their assigned warehouse
+            if transfer.from_outlet_id is not None and transfer.from_outlet_id != current_user.outlet_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You can only manage transfers from warehouse"
@@ -917,7 +917,7 @@ async def approve_transfer_with_quantities(
                 detail=f"Only PENDING transfers can be approved. Current status: {transfer.status}"
             )
             
-        if current_user.role == UserRole.WAREHOUSE_MANAGER and transfer.from_outlet_id is not None:
+        if current_user.role == UserRole.WAREHOUSE_MANAGER and transfer.from_outlet_id is not None and transfer.from_outlet_id != current_user.outlet_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Warehouse managers can only approve transfers from warehouse"
