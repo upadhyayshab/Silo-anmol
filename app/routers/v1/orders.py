@@ -776,7 +776,7 @@ async def bulk_assign_delivery_guy_to_orders(
         results = []
         successful_count = 0
         failed_count = 0
-        scheduled_orders = []
+        crm_sync_orders = []
         
         for order_id in payload.order_ids:
             try:
@@ -791,17 +791,6 @@ async def bulk_assign_delivery_guy_to_orders(
                     ))
                      failed_count += 1
                      continue
-                
-                # Collect for External Delivery Service call - run even if already assigned in ERP
-                # to ensure external service is in sync
-                scheduled_orders.append(ScheduledOrder(
-                    order_id=order.uid,
-                    address=f"{order.house_no or ''} {order.street or ''} {order.address_line}".strip(),
-                    pincode=order.pincode,
-                    latitude=str(order.lat_lon[0]) if order.lat_lon and len(order.lat_lon) > 0 else "0",
-                    longitude=str(order.lat_lon[1]) if order.lat_lon and len(order.lat_lon) > 1 else "0",
-                    priority=order.priority_level or 10
-                ))
 
                 # Skip ERP update if already assigned to this person and already in DELIVERY_ALLOTTED status
                 if order.delivery_person_id == user.uid and order.order_status == OrderStatus.DELIVERY_ALLOTTED:
@@ -818,8 +807,8 @@ async def bulk_assign_delivery_guy_to_orders(
                 results.append(BulkAssignmentResult(order_id=order_id, status="success"))
                 successful_count += 1
                 
-                # Push delivery assignment activity to CRM
-                background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
+                # Defer CRM sync
+                crm_sync_orders.append(order_id)
                 
                 # 4. Log the status change in tracking table
                 existing_tracking = await tracking_manager.fetch_all(
@@ -846,7 +835,24 @@ async def bulk_assign_delivery_guy_to_orders(
                     message=str(e)
                 ))
                 failed_count += 1
-        # Trigger scheduling if there are successful assignments
+
+        # Fetch all assigned orders for the delivery guy
+        all_assigned_orders = await order_manager.fetch_all(
+            filters={"delivery_person_id": user.uid}
+        )
+        
+        scheduled_orders = []
+        for order in all_assigned_orders.items:
+            scheduled_orders.append(ScheduledOrder(
+                order_id=order.uid,
+                address=f"{order.house_no or ''} {order.street or ''} {order.address_line}".strip(),
+                pincode=order.pincode,
+                latitude=str(order.lat_lon[0]) if order.lat_lon and len(order.lat_lon) > 0 else "0",
+                longitude=str(order.lat_lon[1]) if order.lat_lon and len(order.lat_lon) > 1 else "0",
+                priority=order.priority_level or 10
+            ))
+
+        # Trigger scheduling if there are successful assignments or already assigned orders
         if scheduled_orders:
             print(f"DEBUG: Adding background task for {len(scheduled_orders)} orders to delivery_service")
             scheduling_payload = ScheduledDeliveryRequest(
@@ -860,6 +866,10 @@ async def bulk_assign_delivery_guy_to_orders(
                 ]
             )
             background_tasks.add_task(delivery_service.create_scheduled_delivery, scheduling_payload)
+
+        # Process CRM syncs after scheduling task to avoid blocking it
+        for sync_order_id in crm_sync_orders:
+            background_tasks.add_task(sync_order_to_crm, engine, sync_order_id, ActivityType.DELIVERY_STATUS)
 
         return BulkAssignmentResponse(
             successful_count=successful_count,

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings, get_engine
 from managers import (
     DeliveryGuyHandoverManager, DeliveryGuyHandoverSchema,
-    OrderTransactionManager, DeliveryGuyManager, UserManager, UserSchema, OutletManager, OutletSchema
+    OrderTransactionManager, DeliveryGuyManager, UserManager, UserSchema, OutletManager, OutletSchema, CustomerOrderManager
 )
 from models import (
     DeliveryHandoverCreateRequest, DeliveryHandoverStatusUpdateRequest,
@@ -16,13 +16,14 @@ from models import (
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
 from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OutletCollectionStatus, PaymentStatus, PaymentMethod
+from utils.constants import UserRole, OutletCollectionStatus, PaymentStatus, PaymentMethod, OrderStatus
 
 settings = get_settings()
 engine = get_engine(settings.name)
 
 handover_manager = DeliveryGuyHandoverManager(engine)
 transaction_manager = OrderTransactionManager(engine)
+order_manager = CustomerOrderManager(engine)
 delivery_guy_profile_manager = DeliveryGuyManager(engine)
 user_manager = UserManager(engine)
 outlet_manager = OutletManager(engine)
@@ -40,15 +41,14 @@ async def get_cash_balance(
     Balance = (Total Collected from CASH orders) - (Total CONFIRMED handovers)
     """
     try:
-        # 1. Get all transactions received by this delivery guy in CASH
-        transactions = await transaction_manager.fetch_all(
+        # 1. Get all DELIVERED orders by this delivery guy in CASH
+        orders = await order_manager.fetch_all(
             filters={
-                "received_by": delivery_guy_id,
-                "payment_method": PaymentMethod.CASH,
-                "payment_status": PaymentStatus.PAID
+                "delivery_person_id": delivery_guy_id,
+                "order_status": OrderStatus.DELIVERED
             }
         )
-        total_collected = sum((t.amount_paid for t in transactions.items), Decimal("0.00"))
+        total_collected = sum((o.total_amount for o in orders.items), Decimal("0.00"))
 
         # 2. Get all CONFIRMED handovers by this delivery guy
         handovers = await handover_manager.fetch_all(

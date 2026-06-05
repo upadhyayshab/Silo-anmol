@@ -693,7 +693,7 @@ async def update_transfer_status(
         # Role-based status update validation
         if current_user.role == UserRole.WAREHOUSE_MANAGER:
             # Warehouse managers can only handle transfers from their assigned warehouse
-            if transfer.from_outlet_id is not None and transfer.from_outlet_id != current_user.outlet_id:
+            if transfer.from_outlet_id is not None and current_user.outlet_id is not None and transfer.from_outlet_id != current_user.outlet_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You can only manage transfers from warehouse"

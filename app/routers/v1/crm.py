@@ -273,7 +273,7 @@ async def process_crm_orders(payload: dict):
         # Calculate expected delivery date (7 business days)
         days_added = 0
         expected_delivery_date = datetime.utcnow()
-        while days_added < 7:
+        while days_added < 3:
             expected_delivery_date += timedelta(days=1)
             if expected_delivery_date.weekday() < 5:  # 0-4 are Monday to Friday
                 days_added += 1
