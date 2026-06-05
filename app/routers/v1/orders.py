@@ -836,34 +836,44 @@ async def bulk_assign_delivery_guy_to_orders(
                 ))
                 failed_count += 1
 
-        # Fetch all assigned orders for the delivery guy
-        all_assigned_orders = await order_manager.fetch_all(
-            filters={"delivery_person_id": user.uid}
+        # Fetch all active delivery guys for this outlet
+        all_dg_response = await delivery_guy_manager.fetch_all(
+            filters={"outlet_id": dg_profile.outlet_id}, limit=100
         )
         
-        scheduled_orders = []
-        for order in all_assigned_orders.items:
-            scheduled_orders.append(ScheduledOrder(
-                order_id=order.uid,
-                address=f"{order.house_no or ''} {order.street or ''} {order.address_line}".strip(),
-                pincode=order.pincode,
-                latitude=str(order.lat_lon[0]) if order.lat_lon and len(order.lat_lon) > 0 else "0",
-                longitude=str(order.lat_lon[1]) if order.lat_lon and len(order.lat_lon) > 1 else "0",
-                priority=order.priority_level or 10
-            ))
+        assignments = []
+        for dg in all_dg_response.items:
+            if not dg.is_active_for_delivery:
+                continue
+                
+            driver_orders = await order_manager.fetch_all(
+                filters={"delivery_person_id": dg.user_id}, limit=1000
+            )
+            
+            s_orders = []
+            for order in driver_orders.items:
+                s_orders.append(ScheduledOrder(
+                    order_id=order.uid,
+                    address=f"{order.house_no or ''} {order.street or ''} {order.address_line}".strip(),
+                    pincode=order.pincode,
+                    latitude=str(order.lat_lon[0]) if order.lat_lon and len(order.lat_lon) > 0 else "0",
+                    longitude=str(order.lat_lon[1]) if order.lat_lon and len(order.lat_lon) > 1 else "0",
+                    priority=order.priority_level or 10
+                ))
+                
+            if s_orders:
+                assignments.append(ScheduledAssignment(
+                    driver_uid=dg.user_id,
+                    orders=s_orders,
+                    total_distance=0.0
+                ))
 
-        # Trigger scheduling if there are successful assignments or already assigned orders
-        if scheduled_orders:
-            print(f"DEBUG: Adding background task for {len(scheduled_orders)} orders to delivery_service")
+        # Trigger scheduling if there are any assignments
+        if assignments:
+            print(f"DEBUG: Adding background task for {len(assignments)} drivers to delivery_service")
             scheduling_payload = ScheduledDeliveryRequest(
                 outlet_id=dg_profile.outlet_id,
-                assignments=[
-                    ScheduledAssignment(
-                        driver_uid=user.uid,
-                        orders=scheduled_orders,
-                        total_distance=0.0
-                    )
-                ]
+                assignments=assignments
             )
             background_tasks.add_task(delivery_service.create_scheduled_delivery, scheduling_payload)
 
