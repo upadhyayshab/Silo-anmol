@@ -246,6 +246,8 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
     Webhook endpoint to receive delivery status updates for multiple orders.
     """
     results = []
+    crm_tasks_to_schedule = []
+    
     for item in payload:
         try:
             # Find the order
@@ -275,13 +277,14 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
             new_attempt_number = current_attempt
 
             new_status = order.order_status
+            item_crm_tasks = []
             
             if item.status == "delivered":
                 new_status = OrderStatus.DELIVERED
                 updates["actual_delivery_date"] = datetime.utcnow()
                 new_attempt_number = current_attempt + 1
                 
-                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
+                item_crm_tasks.append((order_uid, ActivityType.DELIVERY_STATUS))
                 # Process reconciliation and inventory only if order status is changing to delivered
                 if order.order_status != OrderStatus.DELIVERED:
                     # Auto-reconcile remaining balance (total_amount is the balance to be collected)
@@ -327,7 +330,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 new_status = OrderStatus(item.status)
                 new_attempt_number = current_attempt + 1
                 if item.status in ["postponed" , "attempted"]:
-                    background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.DELIVERY_STATUS)
+                    item_crm_tasks.append((order_uid, ActivityType.DELIVERY_STATUS))
                 if item.status in ["postponed", "payment_not_ready"] and item.postpone_date:
                     updates["expected_delivery_date"] = item.postpone_date
                 else:
@@ -338,7 +341,7 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 new_status = OrderStatus.CANCELLED
                 updates["status_remarks"] = item.remarks
                 items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
-                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.ORDER_STATUS)
+                item_crm_tasks.append((order_uid, ActivityType.ORDER_STATUS))
                 for order_item in items.items:
                     inv_records = await inventory_manager.fetch_all(
                         filters={"product_id": order_item.product_id, "outlet_id": order.assigned_outlet_id}
@@ -372,11 +375,18 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
             await tracking_manager.create(tracking_record)
             
             if updates.pop("has_auto_reconciled", False):
-                background_tasks.add_task(sync_order_to_crm, engine, order_uid, ActivityType.PAYMENT_STATUS)
+                item_crm_tasks.append((order_uid, ActivityType.PAYMENT_STATUS))
+                
+            # Add item_crm_tasks to the main list only if everything above succeeded
+            crm_tasks_to_schedule.extend(item_crm_tasks)
 
             results.append({"order_id": item.order_id, "status": "success", "new_status": new_status})
 
         except Exception as e:
             results.append({"order_id": item.order_id, "status": "failed", "message": str(e)})
+
+    # Schedule all CRM sync tasks after the whole loop has processed DB updates
+    for order_uid, activity_type in crm_tasks_to_schedule:
+        background_tasks.add_task(sync_order_to_crm, engine, order_uid, activity_type)
 
     return {"status": "completed", "results": results}
