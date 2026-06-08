@@ -184,7 +184,6 @@ class CRMService:
         ]
 
         field_mapping = {
-            "customer_email": "EmailAddress",
             "Source":         "Source",
             "LastName":       "LastName",
             "Created_On":     "CreatedOn",
@@ -201,9 +200,9 @@ class CRMService:
 
         response = await self._client.request(
             "POST",
-            "LeadManagement.svc/Lead.Capture",
+            "LeadManagement.svc/Lead.CreateOrUpdate",
             json=create_data,
-            params={"LeadUpdateBehavior": "DoNotUpdate"},
+            params={"LeadUpdateBehavior": "UpdateOnlyEmptyFields"},
         )
 
         if isinstance(response, dict) and response.get("Status") == "Success":

@@ -128,6 +128,14 @@ class OutletType(str, Enum):
     OUTLET    = "outlet"
 
 
+class SmartpingJobStatus(str, Enum):
+    PENDING = "PENDING"
+    LOCKED = "LOCKED"
+    SENT = "SENT"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
 __all__ = [
     "UserRole",
     "OrderStatus",
@@ -143,4 +151,5 @@ __all__ = [
     "PayoutStatus",
     "PayoutFrequency",
     "OutletType",
+    "SmartpingJobStatus",
 ]

@@ -968,6 +968,114 @@ class RiderPayoutSummaryItem(BaseModel):
     last_payout_date: Optional[date] = None
     last_payout_amount: Optional[Decimal] = None
 
+
+# ============================================================================
+# SMARTPING DRIP MODELS
+# ============================================================================
+
+class SmartpingCampaignRegistryBaseRequest(BaseModel):
+    event_key: str
+    business_event_key: str
+    campaign_name: str
+    provider: str = "smartping"
+    is_active: bool = True
+    version: int = 1
+    trigger_delay_value: int = 0
+    trigger_delay_unit: str = "minutes"
+    template_param_keys: List[str] = Field(default_factory=list)
+    media: Optional[Dict[str, Any]] = None
+    buttons: Optional[List[Dict[str, Any]]] = None
+    attributes: Optional[Dict[str, str]] = None
+    tags: Optional[List[str]] = None
+    params_fallback_value: Optional[Dict[str, str]] = None
+    source: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SmartpingCampaignRegistryCreateRequest(SmartpingCampaignRegistryBaseRequest):
+    pass
+
+
+class SmartpingCampaignRegistryUpdateRequest(BaseModel):
+    business_event_key: Optional[str] = None
+    campaign_name: Optional[str] = None
+    provider: Optional[str] = None
+    is_active: Optional[bool] = None
+    version: Optional[int] = None
+    trigger_delay_value: Optional[int] = None
+    trigger_delay_unit: Optional[str] = None
+    template_param_keys: Optional[List[str]] = None
+    media: Optional[Dict[str, Any]] = None
+    buttons: Optional[List[Dict[str, Any]]] = None
+    attributes: Optional[Dict[str, str]] = None
+    tags: Optional[List[str]] = None
+    params_fallback_value: Optional[Dict[str, str]] = None
+    source: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SmartpingCampaignRegistryResponse(SmartpingCampaignRegistryBaseRequest):
+    uid: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SmartpingEventEnqueueRequest(BaseModel):
+    business_event_ref: str = Field(..., description="Stable reference for the business event, e.g. cart/order id")
+    destination: str
+    user_name: str
+    context: Dict[str, Any] = Field(default_factory=dict)
+    max_retries: int = 3
+    send_at: Optional[datetime] = Field(
+        default=None,
+        description="Optional override for the first dispatch time. If omitted, registry delay is used.",
+    )
+
+
+class SmartpingJobResponse(BaseModel):
+    uid: str
+    event_key: str
+    business_event_key: str
+    business_event_ref: str
+    registry_uid: str
+    destination: str
+    user_name: str
+    send_at: datetime
+    status: str
+    retry_count: int
+    max_retries: int
+    idempotency_key: str
+    context_payload: Optional[Dict[str, Any]] = None
+    request_payload: Optional[Dict[str, Any]] = None
+    response_payload: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    locked_at: Optional[datetime] = None
+    sent_at: Optional[datetime] = None
+    failed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SmartpingDispatchResponse(BaseModel):
+    claimed: int
+    sent: int
+    failed: int
+    retried: int
+    skipped: int = 0
+    details: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class SmartpingEnqueueResponse(BaseModel):
+    created: int
+    skipped: int = 0
+    jobs: List[SmartpingJobResponse] = Field(default_factory=list)
+
 # ============================================================================
 # EXPORTS
 # ============================================================================
@@ -1025,5 +1133,13 @@ __all__ = [
 
     # Rider Payouts & Rate Cards
     "RateCardCreateRequest", "RateCardUpdateRequest", "RateCardResponse",
-    "RiderPayoutCreateRequest", "RiderPayoutUpdateRequest", "RiderPayoutStatusUpdateRequest", "RiderPayoutResponse", "RiderPayoutSummaryItem"
+    "RiderPayoutCreateRequest", "RiderPayoutUpdateRequest", "RiderPayoutStatusUpdateRequest", "RiderPayoutResponse", "RiderPayoutSummaryItem",
+
+    # SmartPing Drip
+    "SmartpingCampaignRegistryBaseRequest", "SmartpingCampaignRegistryCreateRequest", "SmartpingCampaignRegistryUpdateRequest",
+    "SmartpingCampaignRegistryResponse",
+    "SmartpingEventEnqueueRequest",
+    "SmartpingJobResponse",
+    "SmartpingDispatchResponse",
+    "SmartpingEnqueueResponse"
 ]

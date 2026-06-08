@@ -24,6 +24,7 @@ from .outlet_mappings import router as outlet_mappings_router
 from .delivery_handovers import router as delivery_handovers_router
 from .rate_cards import router as rate_cards_router
 from .rider_payouts import router as rider_payouts_router
+from .smartping import router as smartping_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -52,6 +53,7 @@ router.include_router(outlet_mappings_router)
 router.include_router(delivery_handovers_router)
 router.include_router(rate_cards_router)
 router.include_router(rider_payouts_router)
+router.include_router(smartping_router)
 
 
 

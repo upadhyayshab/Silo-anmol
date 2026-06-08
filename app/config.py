@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     driver_url: str = os.getenv("DRIVER_URL", "")
     driver_api_key: str = os.getenv("DRIVER_API_KEY", "Delivery-secret-key")
 
+    # Smartping Configuration (from environment)
+    smartping_api_key: str = os.getenv("SMARTPING_API_KEY", "")
+
     # =============================================================================
     # COMPUTED PROPERTIES
     # =============================================================================

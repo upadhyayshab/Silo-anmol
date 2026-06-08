@@ -5,8 +5,10 @@ from sqlalchemy.orm.attributes import QueryableAttribute
 from sqlalchemy import and_, or_, not_, case, func
 from sqlalchemy.sql import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
+from enum import Enum
 from typing import Optional, List, Dict, Any, Union
+# ============================================================================
 
 
 from SharedBackend.managers import BaseSchema, GenericManager, BasePassSchema, BasePassManager
@@ -15,7 +17,7 @@ from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus, PayoutFrequency, OutletType
+    PayoutStatus, PayoutFrequency, OutletType, SmartpingJobStatus
 )
 
 
@@ -1390,6 +1392,142 @@ class LSQOrderAdSchema(BaseSchema):
 
 class LSQOrderAdManager(ERPGenericManager[LSQOrderAdSchema]):
     pass
+
+# ============================================================================
+# SMARTPING DRIP CAMPAIGNS
+# ============================================================================
+
+
+class SmartpingCampaignRegistrySchema(BaseSchema):
+    __tablename__ = "smartping_campaign_registry"
+
+    event_key = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    business_event_key = db.Column(db.String(255), nullable=False, index=True)
+    campaign_name = db.Column(db.String(255), nullable=False)
+    provider = db.Column(db.String(64), nullable=False, default="smartping", index=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    version = db.Column(db.Integer, default=1, nullable=False)
+    trigger_delay_value = db.Column(db.Integer, default=0, nullable=False)
+    trigger_delay_unit = db.Column(db.String(16), default="minutes", nullable=False)
+    template_param_keys = db.Column(db.JSON, nullable=False, default=list)
+    media = db.Column(db.JSON, nullable=True)
+    buttons = db.Column(db.JSON, nullable=True)
+    attributes = db.Column(db.JSON, nullable=True)
+    tags = db.Column(db.JSON, nullable=True)
+    params_fallback_value = db.Column(db.JSON, nullable=True)
+    source = db.Column(db.String(255), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+
+class SmartpingCampaignRegistryManager(ERPGenericManager[SmartpingCampaignRegistrySchema]):
+    async def fetch_active_by_event_key(
+        self,
+        event_key: str,
+        *,
+        session: AsyncSession = None,
+    ) -> SmartpingCampaignRegistrySchema:
+        return await self.fetch_one(
+            filters={"event_key": event_key, "is_active": True},
+            sorts=["-version"],
+            session=session,
+        )
+
+    async def fetch_active_by_business_event_key(
+        self,
+        business_event_key: str,
+        *,
+        session: AsyncSession = None,
+    ) -> List[SmartpingCampaignRegistrySchema]:
+        records = await self.fetch_all(
+            filters={"business_event_key": business_event_key, "is_active": True},
+            sorts=["trigger_delay_value", "event_key"],
+            session=session,
+        )
+        return records.items
+
+
+class SmartpingMessageJobSchema(BaseSchema):
+    __tablename__ = "smartping_message_jobs"
+
+    event_key = db.Column(db.String(255), nullable=False, index=True)
+    business_event_key = db.Column(db.String(255), nullable=False, index=True)
+    business_event_ref = db.Column(db.String(255), nullable=False, index=True)
+    registry_uid = db.Column(db.String, db.ForeignKey("smartping_campaign_registry.uid"), nullable=False, index=True)
+    destination = db.Column(db.String(32), nullable=False, index=True)
+    user_name = db.Column(db.String(255), nullable=False)
+    send_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+    status = db.Column(db.Enum(SmartpingJobStatus, name="smartping_job_status"), default=SmartpingJobStatus.PENDING, nullable=False, index=True)
+    retry_count = db.Column(db.Integer, default=0, nullable=False)
+    max_retries = db.Column(db.Integer, default=3, nullable=False)
+    idempotency_key = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    context_payload = db.Column(db.JSON, nullable=True)
+    request_payload = db.Column(db.JSON, nullable=True)
+    response_payload = db.Column(db.JSON, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    locked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    sent_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    failed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+
+class SmartpingMessageJobManager(ERPGenericManager[SmartpingMessageJobSchema]):
+    async def claim_due_jobs(
+        self,
+        limit: int = 100,
+        *,
+        session: AsyncSession = None,
+    ) -> List[SmartpingMessageJobSchema]:
+        now = datetime.now(timezone.utc)
+        if session is None:
+            async with self.session_factory() as session:
+                jobs = await self.claim_due_jobs(limit=limit, session=session)
+                await session.commit()
+                return jobs
+
+        query = (
+            db.select(self.Schema)
+            .where(
+                self.Schema.status == SmartpingJobStatus.PENDING,
+                self.Schema.send_at <= now,
+            )
+            .order_by(self.Schema.send_at.asc(), self.Schema.uid.asc())
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        records = await session.execute(query)
+        jobs = list(records.unique().scalars())
+        for job in jobs:
+            job.status = SmartpingJobStatus.LOCKED
+            job.locked_at = now
+        if jobs:
+            await session.flush()
+        return jobs
+
+    async def get_by_idempotency_key(
+        self,
+        idempotency_key: str,
+        *,
+        session: AsyncSession = None,
+    ) -> Optional[SmartpingMessageJobSchema]:
+        try:
+            return await self.fetch_one(
+                filters={"idempotency_key": idempotency_key},
+                session=session,
+            )
+        except Exception:
+            return None
+
+
+def smartping_delay_to_timedelta(value: int, unit: str):
+    unit = (unit or "minutes").lower()
+    if unit == "seconds":
+        return timedelta(seconds=value)
+    if unit == "minutes":
+        return timedelta(minutes=value)
+    if unit == "hours":
+        return timedelta(hours=value)
+    if unit == "days":
+        return timedelta(days=value)
+    return timedelta(minutes=value)
 # ============================================================================
 # EXPORTS
 # ============================================================================
@@ -1449,6 +1587,11 @@ __all__ = [
 
     # LSQ Order Ad
     "LSQOrderAdSchema", "LSQOrderAdManager",
+
+    # SmartPing Drip Campaigns
+    "SmartpingCampaignRegistrySchema", "SmartpingCampaignRegistryManager",
+    "SmartpingMessageJobSchema", "SmartpingMessageJobManager",
+    "smartping_delay_to_timedelta",
     
     # Delivery Guy Handovers
     "DeliveryGuyHandoverSchema", "DeliveryGuyHandoverManager",
