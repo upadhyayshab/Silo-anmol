@@ -90,6 +90,10 @@
                 {
                     "name": "DRIVER_URL",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DRIVER_URL"
+                },
+                {
+                    "name": "SMARTPING_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/SMARTPING_API_KEY"
                 }
             ],
             "logConfiguration": {
