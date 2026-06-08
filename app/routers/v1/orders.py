@@ -1730,6 +1730,40 @@ async def update_order_status(
             # push activity to crm           
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
 
+        elif payload.order_status == OrderStatus.PENDING:
+            if not payload.status_remarks:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Status remarks required when reverting to pending"
+                )
+            
+            update_data["delivery_person_id"] = None
+            update_data["actual_delivery_date"] = None
+            
+            update_order(order, update_data)
+            
+            # Create a tracking record for the unassignment
+            existing_tracking = await tracking_manager.fetch_all(
+                filters={"order_id": order_id}, sorts=["created_at"]
+            )
+            unassign_remark = f"Order unassigned. Reason: {payload.status_remarks}"
+            tracking_record = DeliveryTrackingSchema(
+                order_id=order_id,
+                outlet_id=order.assigned_outlet_id,
+                telecaller_id=order.telecaller_id,
+                delivery_person_id=None,
+                status_changed_to=OrderStatus.PENDING,
+                remarks=build_cumulative_remarks(
+                    existing_tracking.items, OrderStatus.PENDING, unassign_remark
+                ),
+                changed_by=current_user_id
+            )
+            await tracking_manager.create(tracking_record)
+
+            # Notify CRM that status is back to Pending
+            # background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.ORDER_STATUS)
+
+
         elif payload.order_status in [
             OrderStatus.POSTPONED,
             OrderStatus.ATTEMPTED,
@@ -1784,7 +1818,7 @@ def is_valid_status_transition(current_status: OrderStatus, new_status: OrderSta
     ]
     
     valid_transitions = {
-        OrderStatus.PENDING: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED, OrderStatus.POSTPONED],
+        OrderStatus.PENDING: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED, OrderStatus.POSTPONED] + logistics_statuses,
         OrderStatus.DELIVERY_ALLOTTED: [OrderStatus.PENDING, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.POSTPONED] + logistics_statuses,
         OrderStatus.POSTPONED: [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.CANCELLED],
         OrderStatus.DELIVERED: [],  # Final state
