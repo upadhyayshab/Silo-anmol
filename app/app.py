@@ -42,6 +42,8 @@ except Exception as e:
 # Import local modules
 from config import get_settings, get_engine
 from routers import v1_router, auth_router, admin_router
+import asyncio
+from jobs.scheduler import scheduler_app
 
 # Get settings
 settings = get_settings()
@@ -55,10 +57,15 @@ async def lifespan(app: FastAPI):
     print(f"📊 Database: {settings.engine_str}")
     print(f"🔧 Environment: {settings.env}")
     
+    # Start the async scheduler
+    scheduler_app.start()
+    print(f"🚀 Scheduler Started with {len(scheduler_app.get_jobs())} jobs loaded.")
+    
     yield
     
     # Shutdown
     print(f"🛑 Shutting down {settings.name} API Server")
+    scheduler_app.shutdown()
 
 # Create FastAPI app
 app = FastAPI(

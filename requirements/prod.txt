@@ -33,6 +33,7 @@ httpx==0.25.2
 
 # FastAPI Extensions
 fastapi-decorators==1.0.6
+apscheduler==3.10.4
 
 # Optional Production Enhancements
 # redis==5.0.1  # For caching
