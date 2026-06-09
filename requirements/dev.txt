@@ -19,3 +19,6 @@ httpx~=0.25.2
 
 # pincode data
 pypinindia~=0.1.15
+
+# Scheduler
+apscheduler~=3.10.4
