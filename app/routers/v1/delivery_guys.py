@@ -21,6 +21,7 @@ from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod
 from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
 from utils.delivery_utils import build_cumulative_remarks
+from utils.smartping_utils import trigger_smartping_event_bg
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -379,6 +380,9 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 
             # Add item_crm_tasks to the main list only if everything above succeeded
             crm_tasks_to_schedule.extend(item_crm_tasks)
+            
+            if new_status == OrderStatus.DELIVERED:
+                background_tasks.add_task(trigger_smartping_event_bg, order_uid, "order_delivered")
 
             results.append({"order_id": item.order_id, "status": "success", "new_status": new_status})
 

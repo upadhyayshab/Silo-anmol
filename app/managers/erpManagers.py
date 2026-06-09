@@ -17,7 +17,8 @@ from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus, PayoutFrequency, OutletType, SmartpingJobStatus
+    PayoutStatus, PayoutFrequency, OutletType, SmartpingJobStatus,
+    AuditStatus
 )
 
 
@@ -400,6 +401,7 @@ class OutletSchema(BaseSchema):
     transfer_from = relationship("StockTransferOrderSchema", back_populates="from_outlet", foreign_keys="StockTransferOrderSchema.from_outlet_id")
     transfer_to = relationship("StockTransferOrderSchema", back_populates="to_outlet", foreign_keys="StockTransferOrderSchema.to_outlet_id")
     delivery_tracking = relationship("DeliveryTrackingSchema", back_populates="outlet")
+    inventory_audits = relationship("InventoryAuditSchema", back_populates="outlet")
 
 
 class OutletManager(ERPGenericManager[OutletSchema]):
@@ -453,6 +455,7 @@ class ProductSchema(BaseSchema):
     # Relationships
     category = relationship("ProductCategorySchema", back_populates="products")
     inventory = relationship("InventorySchema", back_populates="product")
+    inventory_audit_items = relationship("InventoryAuditItemSchema", back_populates="product")
     order_items = relationship("OrderItemSchema", back_populates="product")
     invoice_items = relationship("SalesInvoiceItemSchema", back_populates="product")
     sales = relationship("SalesTransactionSchema", back_populates="product")
@@ -487,6 +490,50 @@ class InventorySchema(BaseSchema):
 
 class InventoryManager(ERPGenericManager[InventorySchema]):
     pass
+
+
+# ============================================================================
+# INVENTORY AUDIT MANAGEMENT
+# ============================================================================
+
+class InventoryAuditSchema(BaseSchema):
+    """Weekly inventory audits submitted by outlets"""
+    __tablename__ = "inventory_audits"
+
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
+    audit_date = db.Column(db.Date, nullable=False, default=datetime.utcnow)
+    status = db.Column(db.Enum(AuditStatus), default=AuditStatus.PENDING, nullable=False, index=True)
+    submitted_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    submitted_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    match_percentage = db.Column(db.Numeric(5, 2), nullable=True)
+
+    # Relationships
+    outlet = relationship("OutletSchema", back_populates="inventory_audits")
+    submitter = relationship("UserSchema", foreign_keys=[submitted_by])
+    items = relationship("InventoryAuditItemSchema", back_populates="audit", cascade="all, delete-orphan")
+
+
+class InventoryAuditManager(ERPGenericManager[InventoryAuditSchema]):
+    pass
+
+
+class InventoryAuditItemSchema(BaseSchema):
+    """Line items for inventory audits"""
+    __tablename__ = "inventory_audit_items"
+
+    audit_id = db.Column(db.String, db.ForeignKey("inventory_audits.uid"), nullable=False, index=True)
+    product_id = db.Column(db.String, db.ForeignKey("products.uid"), nullable=False, index=True)
+    system_quantity = db.Column(db.Integer, default=0, nullable=True)
+    physical_quantity = db.Column(db.Integer, nullable=True)
+
+    # Relationships
+    audit = relationship("InventoryAuditSchema", back_populates="items")
+    product = relationship("ProductSchema", back_populates="inventory_audit_items")
+
+
+class InventoryAuditItemManager(ERPGenericManager[InventoryAuditItemSchema]):
+    pass
+
 
 
 # ============================================================================

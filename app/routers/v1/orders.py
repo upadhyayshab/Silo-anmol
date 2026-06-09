@@ -26,6 +26,7 @@ from services.deliveryService import ScheduledDeliveryRequest, ScheduledAssignme
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
 from utils.delivery_utils import build_cumulative_remarks
+from utils.smartping_utils import trigger_smartping_event_bg
 import uuid
 
 settings = get_settings()
@@ -300,6 +301,7 @@ async def create_order(
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.CREATE_ORDER)
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.ORDER_STATUS)
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.DELIVERY_STATUS)
+        background_tasks.add_task(trigger_smartping_event_bg, created_order.uid, "order_confirmation_generic")
 
         # Build response directly to avoid potential SQLAlchemy session issues
         order_items_response = []
@@ -809,6 +811,7 @@ async def bulk_assign_delivery_guy_to_orders(
                 
                 # Defer CRM sync
                 crm_sync_orders.append(order_id)
+                background_tasks.add_task(trigger_smartping_event_bg, order_id, "order_dispatched")
                 
                 # 4. Log the status change in tracking table
                 existing_tracking = await tracking_manager.fetch_all(
@@ -1698,6 +1701,7 @@ async def update_order_status(
 
             # push activity to crm           
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
+            background_tasks.add_task(trigger_smartping_event_bg, order_id, "order_delivered")
             
             # Consume stock from inventory
             await consume_order_stock(order_id)
@@ -1729,6 +1733,7 @@ async def update_order_status(
 
             # push activity to crm           
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
+            background_tasks.add_task(trigger_smartping_event_bg, order_id, "order_dispatched")
 
         elif payload.order_status == OrderStatus.PENDING:
             if not payload.status_remarks:

@@ -7,6 +7,7 @@ from .users import router as users_router
 from .outlets import router as outlets_router
 from .products import router as products_router
 from .inventory import router as inventory_router
+from .inventory_audits import router as inventory_audits_router
 from .orders import router as orders_router
 from .invoices import router as invoices_router
 from .transfers import router as transfers_router
@@ -36,6 +37,7 @@ router.include_router(users_router)
 router.include_router(outlets_router)
 router.include_router(products_router)
 router.include_router(inventory_router)
+router.include_router(inventory_audits_router)
 router.include_router(orders_router)
 router.include_router(invoices_router)
 router.include_router(transfers_router)

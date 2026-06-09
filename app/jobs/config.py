@@ -2,6 +2,7 @@ import os
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from services.smartping_job_service import smartping_job_service
+from services.inventory_audit_service import inventory_audit_service
 
 # Define your interval or cron schedules here.
 
@@ -10,6 +11,11 @@ JOBS_CONFIG = [
         "name": "dispatch_smartping_jobs",
         "func": smartping_job_service.dispatch_due_jobs,
         "trigger": IntervalTrigger(minutes=1)
+    },
+    {
+        "name": "generate_weekly_inventory_audits",
+        "func": inventory_audit_service.generate_weekly_audits,
+        "trigger": CronTrigger(day_of_week='wed', hour=0, minute=20)
     },
     # Examples of other schedules you can easily add:
     # {

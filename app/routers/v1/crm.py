@@ -21,6 +21,7 @@ from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType
 from utils.crm_constants import ActivityType, LSQCreateOrder, LSQItems, LSQItems3
 from utils.warehouse_utils import get_default_warehouse_id
 from models import CrmPayload, OrderCreateRequest
+from utils.smartping_utils import trigger_smartping_event_bg
 
 
 settings = get_settings()
@@ -495,6 +496,7 @@ async def process_crm_orders(payload: dict):
         # 10. Push order-confirmed (ORDER_STATUS) activity to CRM
         await push_outlet_assigned(engine, created_order.uid, district, pincode)
         await order_creation_success_activity(created_order.uid)
+        await trigger_smartping_event_bg(created_order.uid, "order_confirmation_generic")
             
         # 11. Log Activity
         try:

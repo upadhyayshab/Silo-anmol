@@ -8,7 +8,7 @@ from utils.constants import (
     UserRole, OrderStatus, CollectionType, PaymentMethod,
     PaymentStatus, InvoiceType, TransferStatus, UnitOfMeasure,
     OutletPaymentMode, OutletPaymentSubMode, OutletCollectionStatus,
-    PayoutStatus, PayoutFrequency, OutletType
+    PayoutStatus, PayoutFrequency, OutletType, AuditStatus
 )
 
 
@@ -234,6 +234,43 @@ class StockAdjustmentRequest(BaseModel):
     outlet_id: Optional[str] = None  # NULL for warehouse
     quantity_change: int  # Positive for addition, negative for reduction
     reason: str
+
+
+class WeeklyInventoryAuditItemResponse(BaseModel):
+    uid: str
+    product_id: str
+    product_name: Optional[str] = None
+    system_quantity: Optional[int] = 0
+    physical_quantity: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+class WeeklyInventoryAuditResponse(BaseModel):
+    uid: str
+    outlet_id: str
+    outlet_name: Optional[str] = None
+    audit_date: date
+    status: AuditStatus
+    match_percentage: Optional[Decimal] = None
+    submitted_at: Optional[datetime] = None
+    submitted_by: Optional[str] = None
+    items: List[WeeklyInventoryAuditItemResponse] = []
+
+    class Config:
+        from_attributes = True
+
+class WeeklyInventoryAuditSubmitItem(BaseModel):
+    product_id: str
+    physical_quantity: int
+
+class WeeklyInventoryAuditSubmitRequest(BaseModel):
+    items: List[WeeklyInventoryAuditSubmitItem]
+
+class WeeklyInventoryAuditSummaryResponse(BaseModel):
+    total_active_outlets: int
+    completed_audits: int
+    average_match_percentage: Optional[Decimal] = None
 
 
 # ============================================================================

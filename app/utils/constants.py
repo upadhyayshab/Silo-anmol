@@ -136,6 +136,11 @@ class SmartpingJobStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
+class AuditStatus(str, Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+
+
 __all__ = [
     "UserRole",
     "OrderStatus",
@@ -152,4 +157,5 @@ __all__ = [
     "PayoutFrequency",
     "OutletType",
     "SmartpingJobStatus",
+    "AuditStatus",
 ]
