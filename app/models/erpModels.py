@@ -272,6 +272,20 @@ class WeeklyInventoryAuditSummaryResponse(BaseModel):
     completed_audits: int
     average_match_percentage: Optional[Decimal] = None
 
+class WeeklyInventoryAuditItemReportResponse(BaseModel):
+    uid: str
+    audit_date: date
+    outlet_name: Optional[str] = None
+    status: AuditStatus
+    match_percentage: Optional[Decimal] = None
+    product_name: Optional[str] = None
+    system_quantity: Optional[int] = 0
+    physical_quantity: Optional[int] = None
+    unit_price: Optional[Decimal] = None
+
+    class Config:
+        from_attributes = True
+
 
 # ============================================================================
 # ORDER MODELS

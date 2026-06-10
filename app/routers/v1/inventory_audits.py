@@ -10,12 +10,13 @@ from config import get_engine, get_settings
 from managers import UserManager
 from managers.erpManagers import (
     InventoryAuditSchema, InventoryAuditItemSchema, OutletSchema, ProductSchema,
-    InventoryAuditManager
+    InventoryAuditManager, InventoryAuditItemManager
 )
 from models import ListResponse, StatusResponse
 from models.erpModels import (
     WeeklyInventoryAuditResponse, WeeklyInventoryAuditItemResponse,
     WeeklyInventoryAuditSubmitRequest, WeeklyInventoryAuditSummaryResponse,
+    WeeklyInventoryAuditItemReportResponse,
     AuditStatus
 )
 from utils.auth import require_roles, get_current_user_id
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/inventory-audits", tags=["Inventory Audits"])
 engine = get_engine(get_settings().name)
 user_manager = UserManager(engine)
 audit_manager = InventoryAuditManager(engine)
+audit_item_manager = InventoryAuditItemManager(engine)
 
 @router.post("/admin/generate", response_model=StatusResponse)
 async def generate_weekly_audits(
@@ -252,5 +254,72 @@ async def submit_audit(
             
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/admin/report", response_model=ListResponse[WeeklyInventoryAuditItemReportResponse])
+async def get_audit_report(
+    outlet_id: Optional[str] = None,
+    product_id: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+):
+    """Get a detailed flat report of audit items (Excel-like view)."""
+    try:
+        filters = {}
+        if outlet_id:
+            filters["audit.outlet_id"] = outlet_id
+        if product_id:
+            filters["product_id"] = product_id
+        if start_date or end_date:
+            date_filter = {}
+            if start_date:
+                date_filter["$gte"] = start_date
+            if end_date:
+                date_filter["$lte"] = end_date
+            if date_filter:
+                filters["audit.audit_date"] = date_filter
+
+        actual_limit = limit if limit > 0 else 0
+
+        # fetch_all from InventoryAuditItemManager using joins
+        result = await audit_item_manager.fetch_all(
+            limit=actual_limit,
+            offset=offset,
+            filters=filters,
+            joins=[
+                InventoryAuditItemSchema.product,
+                [InventoryAuditItemSchema.audit, InventoryAuditSchema.outlet]
+            ]
+        )
+
+        responses = []
+        for item in result.items:
+            # We must gracefully handle missing relations if any
+            audit = item.audit
+            outlet = audit.outlet if audit else None
+            product = item.product
+
+            responses.append(
+                WeeklyInventoryAuditItemReportResponse(
+                    uid=item.uid,
+                    audit_date=audit.audit_date if audit else None,
+                    outlet_name=outlet.outlet_name if outlet else None,
+                    status=audit.status if audit else None,
+                    match_percentage=audit.match_percentage if audit else None,
+                    product_name=product.product_name if product else None,
+                    system_quantity=item.system_quantity,
+                    physical_quantity=item.physical_quantity,
+                    unit_price=product.unit_price if product else None
+                )
+            )
+
+        # Basic sorting in python to emulate order_by since base manager fetch_all doesn't support nested sorts
+        responses.sort(key=lambda x: (x.audit_date or date.min, x.outlet_name or ""), reverse=True)
+
+        return ListResponse(items=responses, count=result.count)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
