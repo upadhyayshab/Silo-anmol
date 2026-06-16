@@ -220,7 +220,7 @@ async def list_collections(
     date_from: Optional[date] = Query(None, description="Filter from date"),
     date_to: Optional[date] = Query(None, description="Filter to date"),
     confirmation_status: Optional[OutletCollectionStatus] = Query(None, description="Filter by status"),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=0, le=500),
     offset: int = Query(0, ge=0),
     current_user_id: str = Depends(require_roles(
         UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT , UserRole.OUTLET_MANAGER
