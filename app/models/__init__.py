@@ -6,6 +6,7 @@ from .healthCheckModels import *
 from .erpModels import *
 from .authModels import *
 from .crmModels import *
+from .leadModels import *
 
 
 class ListResponse[ModelType: BaseModel](BaseModel):

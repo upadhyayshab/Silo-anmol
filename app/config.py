@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     # Smartping Configuration (from environment)
     smartping_api_key: str = os.getenv("SMARTPING_API_KEY", "")
 
+    # Facebook Lead Ads Configuration (from environment)
+    fb_app_secret: str = os.getenv("FB_APP_SECRET", "")            # app secret -> webhook HMAC
+    fb_verify_token: str = os.getenv("FB_VERIFY_TOKEN", "")        # our chosen subscription token
+    fb_page_access_token: str = os.getenv("FB_PAGE_ACCESS_TOKEN", "")  # long-lived/system-user token
+    fb_graph_version: str = os.getenv("FB_GRAPH_VERSION", "v21.0")
+
     # =============================================================================
     # COMPUTED PROPERTIES
     # =============================================================================

@@ -6,6 +6,9 @@ from .deliveryService import deliveryService
 from .smartping_service import SmartpingService
 from .smartping_campaigns import SmartpingCampaignConfigService, smartping_campaigns
 from .smartping_job_service import SmartpingJobService, smartping_job_service
+from . import assignmentService  # noqa: F401  (imported before leadService — leadService depends on it)
+from . import leadService  # noqa: F401
+from . import facebook_leads  # noqa: F401  (imported after leadService — depends on it)
 
 __all__ = [
     "InvoiceService",
@@ -18,4 +21,7 @@ __all__ = [
     "smartping_campaigns",
     "SmartpingJobService",
     "smartping_job_service",
+    "assignmentService",
+    "leadService",
+    "facebook_leads",
 ]
