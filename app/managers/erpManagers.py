@@ -209,7 +209,11 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
                         is_date_list = isinstance(value, list) and len(value) > 0 and all(isinstance(v, date) and not isinstance(v, datetime) for v in value)
                         
                         if isinstance(col_attr.type, (db.DateTime, db.DATETIME)) and (is_date or is_date_list):
-                            if op in ['==', '$eq', '!=', '$neq', 'between', '$between', 'in', '$in', '$nin']:
+                            # Compare on the date part so a date-only value matches
+                            # the whole day — including for range operators, so a
+                            # gte/lte interval is inclusive of its end day.
+                            if op in ['==', '$eq', '!=', '$neq', 'between', '$between', 'in', '$in', '$nin',
+                                      '>', '$gt', '>=', '$gte', '<', '$lt', '<=', '$lte']:
                                 target_col = func.date(col_attr)
                         
                         query = query.filter(operator_mapping[op](target_col, value))

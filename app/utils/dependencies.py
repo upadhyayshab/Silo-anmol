@@ -1,7 +1,7 @@
 from fastapi import Request, HTTPException
-from typing import Any  
+from typing import Any
 from config import get_settings
-from datetime import datetime
+from datetime import datetime, date
 
 settings = get_settings()
 
@@ -36,10 +36,30 @@ def _coerce_scalar(value: str):
     ]
     for fmt in datetime_formats:
         try:
-            return datetime.strptime(v, fmt)
+            parsed = datetime.strptime(v, fmt)
+            # A date-only value (no time component) is returned as a `date` so the
+            # managers match it against the whole day (via func.date) rather than an
+            # exact-midnight timestamp. This makes range filters inclusive of the
+            # end day instead of silently excluding it.
+            return parsed.date() if fmt == "%Y-%m-%d" else parsed
         except (ValueError, TypeError):
             continue
     return value
+
+def _set_range(filters: dict[str, Any], field: str, op: str, value: Any) -> None:
+    """Merge a range operator into a field's condition.
+
+    Without this, a request carrying both ``field:gte`` and ``field:lte`` would
+    have the second bound overwrite the first (both target ``filters[field]``),
+    silently dropping one side of the range. Merging keeps both bounds so the
+    filter behaves as a closed interval.
+    """
+    existing = filters.get(field)
+    if isinstance(existing, dict):
+        existing[op] = value
+    else:
+        filters[field] = {op: value}
+
 
 def sorting_dependency(request: "Request"):
     sorts = []
@@ -78,17 +98,13 @@ def filtering_dependency(request: Request):
         elif key.endswith(":neq"):
             filters[key.removesuffix(":neq")] = {"$neq": _coerce_scalar(value)}
         elif key.endswith(":lt"):
-            field = key.removesuffix(":lt")
-            filters[field] = {"$lt": _coerce_scalar(value)}
+            _set_range(filters, key.removesuffix(":lt"), "$lt", _coerce_scalar(value))
         elif key.endswith(":lte"):
-            field = key.removesuffix(":lte")
-            filters[field] = {"$lte": _coerce_scalar(value)}
+            _set_range(filters, key.removesuffix(":lte"), "$lte", _coerce_scalar(value))
         elif key.endswith(":gt"):
-            field = key.removesuffix(":gt")
-            filters[field] = {"$gt": _coerce_scalar(value)}
+            _set_range(filters, key.removesuffix(":gt"), "$gt", _coerce_scalar(value))
         elif key.endswith(":gte"):
-            field = key.removesuffix(":gte")
-            filters[field] = {"$gte": _coerce_scalar(value)}
+            _set_range(filters, key.removesuffix(":gte"), "$gte", _coerce_scalar(value))
         elif key.endswith(":in"):
             field = key.removesuffix(":in")
             values = [v.strip() for v in value.split(",") if v.strip()]
