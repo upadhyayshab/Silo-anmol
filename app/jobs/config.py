@@ -13,9 +13,17 @@ JOBS_CONFIG = [
         "trigger": IntervalTrigger(minutes=1)
     },
     {
+        # Audit cycle opens Saturday; outlets fill through the following Wednesday.
         "name": "generate_weekly_inventory_audits",
         "func": inventory_audit_service.generate_weekly_audits,
-        "trigger": CronTrigger(day_of_week='wed', hour=0, minute=20)
+        "trigger": CronTrigger(day_of_week='sat', hour=0, minute=20)
+    },
+    {
+        # Close the cycle late on its Wednesday deadline — any still-PENDING audit
+        # becomes CLOSED (missed) and can no longer be submitted.
+        "name": "close_overdue_inventory_audits",
+        "func": inventory_audit_service.close_overdue_audits,
+        "trigger": CronTrigger(day_of_week='wed', hour=23, minute=30)
     },
     # Examples of other schedules you can easily add:
     # {

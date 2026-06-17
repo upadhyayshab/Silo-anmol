@@ -391,11 +391,15 @@ class OutletSchema(BaseSchema):
     pan = db.Column(db.String(10), nullable=False)
     lat_lon = db.Column(db.JSON, nullable=True) # [lat, lon]
     manager_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
+    # Home cluster (geographic hierarchy). Nullable; backfilled from the outlet's
+    # served districts and editable via the cluster admin. See managers/geoManagers.py.
+    cluster_id = db.Column(db.String, db.ForeignKey("clusters.uid"), nullable=True, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     outlet_type = db.Column(db.Enum(OutletType, values_callable=lambda x: [e.value for e in x]), default=OutletType.OUTLET, nullable=False)
 
     # Relationships
     manager = relationship("UserSchema", foreign_keys=[manager_id])
+    cluster = relationship("ClusterSchema", back_populates="outlets", foreign_keys=[cluster_id])
     users = relationship("UserSchema", back_populates="outlet", foreign_keys="UserSchema.outlet_id")
     inventory = relationship("InventorySchema", back_populates="outlet")
     invoices = relationship("SalesInvoiceSchema", back_populates="outlet")
@@ -502,9 +506,20 @@ class InventoryManager(ERPGenericManager[InventorySchema]):
 class InventoryAuditSchema(BaseSchema):
     """Weekly inventory audits submitted by outlets"""
     __tablename__ = "inventory_audits"
+    __table_args__ = (
+        # One audit per outlet per cycle. Partial index so soft-deleted rows
+        # don't block re-generation. week_start is the Saturday that opens the cycle.
+        db.Index(
+            'uq_audit_outlet_week',
+            'outlet_id', 'week_start',
+            unique=True,
+            postgresql_where=db.text('deleted_at IS NULL'),
+        ),
+    )
 
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
     audit_date = db.Column(db.Date, nullable=False, default=datetime.utcnow)
+    week_start = db.Column(db.Date, nullable=False, index=True)  # Saturday opening the cycle
     status = db.Column(db.Enum(AuditStatus), default=AuditStatus.PENDING, nullable=False, index=True)
     submitted_at = db.Column(db.DateTime(timezone=True), nullable=True)
     submitted_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)

@@ -1,6 +1,6 @@
 import logging
-from datetime import date
-from sqlalchemy import select, and_
+from datetime import date, timedelta
+from sqlalchemy import select, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_engine, get_settings
@@ -12,6 +12,16 @@ from models.erpModels import AuditStatus
 
 logger = logging.getLogger(__name__)
 
+# An audit cycle runs Saturday (generated) -> the following Wednesday (closed).
+CYCLE_GEN_WEEKDAY = 5      # Mon=0 .. Sat=5
+CYCLE_LENGTH_DAYS = 4      # Saturday + 4 = the closing Wednesday
+
+
+def cycle_start(d: date) -> date:
+    """The Saturday on/before `d` — the start of its audit cycle."""
+    return d - timedelta(days=(d.weekday() - CYCLE_GEN_WEEKDAY) % 7)
+
+
 class InventoryAuditService:
     def __init__(self):
         self.engine = get_engine(get_settings().name)
@@ -19,11 +29,13 @@ class InventoryAuditService:
     async def generate_weekly_audits(self):
         """
         Generate weekly inventory audit tasks for all active outlets.
-        This runs every Sunday at 2 AM.
+        Runs every Saturday; the cycle's fill window closes the following Wednesday.
         """
         today = date.today()
-        logger.info(f"Starting weekly inventory audit generation for {today}")
-        
+        # The Saturday that opens this cycle — the canonical key for "this week's" audit.
+        week_start = cycle_start(today)
+        logger.info(f"Starting weekly inventory audit generation for cycle starting {week_start}")
+
         async with AsyncSession(self.engine) as session:
             try:
                 # 1. Get all active outlets
@@ -40,20 +52,23 @@ class InventoryAuditService:
                 
                 audits_created = 0
                 for outlet in active_outlets:
-                    # Check if an audit already exists for this date
+                    # Check if an audit already exists for this outlet THIS WEEK.
+                    # Keyed on week_start (not audit_date) so a manual "Generate Now"
+                    # on any weekday cannot create a duplicate weekly audit.
                     existing_audit_result = await session.execute(
                         select(InventoryAuditSchema)
                         .where(InventoryAuditSchema.outlet_id == outlet.uid)
-                        .where(InventoryAuditSchema.audit_date == today)
+                        .where(InventoryAuditSchema.week_start == week_start)
                     )
                     if existing_audit_result.scalars().first():
-                        logger.info(f"Audit already exists for outlet {outlet.uid} on {today}")
+                        logger.info(f"Audit already exists for outlet {outlet.uid} for week {week_start}")
                         continue
-                        
+
                     # Create Audit Schema
                     audit = InventoryAuditSchema(
                         outlet_id=outlet.uid,
                         audit_date=today,
+                        week_start=week_start,
                         status=AuditStatus.PENDING
                     )
                     session.add(audit)
@@ -89,6 +104,36 @@ class InventoryAuditService:
             except Exception as e:
                 await session.rollback()
                 logger.error(f"Error generating weekly audits: {e}")
+                raise e
+
+    async def close_overdue_audits(self):
+        """
+        Close audits whose Wednesday deadline has passed without submission.
+        Runs after the close day; any still-PENDING audit for a cycle that has
+        already closed is moved to CLOSED (a "missed" record) so it stops being
+        fillable and no longer lingers next to the new cycle's audit.
+        """
+        today = date.today()
+        # A cycle that opened on `week_start` closes on week_start + CYCLE_LENGTH_DAYS
+        # (the Wednesday). It is overdue once today is past that date.
+        cutoff = today - timedelta(days=CYCLE_LENGTH_DAYS)
+        logger.info(f"Closing PENDING audits with cycle start on/before {cutoff}")
+
+        async with AsyncSession(self.engine) as session:
+            try:
+                result = await session.execute(
+                    update(InventoryAuditSchema)
+                    .where(InventoryAuditSchema.status == AuditStatus.PENDING)
+                    .where(InventoryAuditSchema.week_start <= cutoff)
+                    .values(status=AuditStatus.CLOSED)
+                )
+                await session.commit()
+                closed = result.rowcount or 0
+                logger.info(f"Closed {closed} overdue audits")
+                return {"status": "success", "audits_closed": closed}
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Error closing overdue audits: {e}")
                 raise e
 
 inventory_audit_service = InventoryAuditService()

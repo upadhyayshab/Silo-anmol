@@ -28,6 +28,7 @@ from .rider_payouts import router as rider_payouts_router
 from .smartping import router as smartping_router
 from .leads import router as leads_router
 from .facebook import router as facebook_router
+from .clusters import router as clusters_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -60,6 +61,7 @@ router.include_router(rider_payouts_router)
 router.include_router(smartping_router)
 router.include_router(leads_router)
 router.include_router(facebook_router)
+router.include_router(clusters_router)
 
 
 

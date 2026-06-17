@@ -139,6 +139,7 @@ class SmartpingJobStatus(str, Enum):
 class AuditStatus(str, Enum):
     PENDING = "PENDING"
     COMPLETED = "COMPLETED"
+    CLOSED = "CLOSED"  # Auto-set on the cycle's Wednesday deadline if never submitted
 
 
 __all__ = [

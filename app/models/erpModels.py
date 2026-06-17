@@ -251,6 +251,10 @@ class WeeklyInventoryAuditResponse(BaseModel):
     outlet_id: str
     outlet_name: Optional[str] = None
     audit_date: date
+    week_start: Optional[date] = None
+    iso_week: Optional[int] = None
+    iso_year: Optional[int] = None
+    week_label: Optional[str] = None
     status: AuditStatus
     match_percentage: Optional[Decimal] = None
     submitted_at: Optional[datetime] = None
@@ -267,17 +271,36 @@ class WeeklyInventoryAuditSubmitItem(BaseModel):
 class WeeklyInventoryAuditSubmitRequest(BaseModel):
     items: List[WeeklyInventoryAuditSubmitItem]
 
+class AuditOutletRef(BaseModel):
+    outlet_id: str
+    outlet_name: Optional[str] = None
+
+class AuditCycleRef(BaseModel):
+    week_start: date
+    week_label: Optional[str] = None
+    audit_count: int = 0
+
 class WeeklyInventoryAuditSummaryResponse(BaseModel):
     total_active_outlets: int
     completed_audits: int
     average_match_percentage: Optional[Decimal] = None
+    week_start: Optional[date] = None
+    week_label: Optional[str] = None
+    completed_outlets: List[AuditOutletRef] = []
+    pending_outlets: List[AuditOutletRef] = []
 
 class WeeklyInventoryAuditItemReportResponse(BaseModel):
     uid: str
     audit_date: date
+    week_start: Optional[date] = None
+    iso_week: Optional[int] = None
+    iso_year: Optional[int] = None
+    week_label: Optional[str] = None
     outlet_name: Optional[str] = None
     status: AuditStatus
     match_percentage: Optional[Decimal] = None
+    submitted_at: Optional[datetime] = None
+    submitted_by_name: Optional[str] = None
     product_name: Optional[str] = None
     system_quantity: Optional[int] = 0
     physical_quantity: Optional[int] = None
