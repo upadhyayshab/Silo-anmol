@@ -5,7 +5,8 @@ try:
     from sqlalchemy.exc import DetachedInstanceError
 except ImportError:
     from sqlalchemy.orm.exc import DetachedInstanceError
-from utils.crm_constants import ActivityType, LSQUTMField
+from utils.constants import UserRole
+from utils.crm_constants import ActivityType, LSQUTMField, LeadSource
 from services import CRMService
 from managers import (
     CustomerOrderManager, CustomerOrderSchema,
@@ -149,7 +150,14 @@ def build_crm_payload(order: CustomerOrderSchema) -> dict:
     )
 
     if telecaller:
-        payload["source"] = telecaller.role.value if hasattr(telecaller.role, "value") else str(telecaller.role)
+        role_val = telecaller.role.value if hasattr(telecaller.role, "value") else str(telecaller.role)
+        payload["source"] = role_val
+        # An order created by an outlet manager is captured at an outlet, so both
+        # LSQ sources are tagged "Outlet": the prospect's lead source ("Source")
+        # and the order activity's source (lowercase "source").
+        if role_val == UserRole.OUTLET_MANAGER.value:
+            payload["source"] = LeadSource.OUTLET.value
+            payload["Source"] = LeadSource.OUTLET.value
 
     payload["delivery_remarks"] = delivery_status_str
 

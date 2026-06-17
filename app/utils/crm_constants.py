@@ -25,6 +25,8 @@ class LeadSource(str, Enum):
     GAU_SWASTH_SUBSCRIBER = "Gau swasth Subscriber"
     ADD_TO_CART         = "add to cart"
     BROWSED_3_PAGES     = "browsed 3 pages"
+    # Leads/orders first captured at an outlet (sent to LeadSquared via order sync).
+    OUTLET              = "Outlet"
 
 
 class LSQPaymentStatusActivityField(str, Enum):

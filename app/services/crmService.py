@@ -196,6 +196,7 @@ class CRMService:
         for key, attr in field_mapping.items():
             value = valid_payload.get(key)
             if value:
+                value = value.value if hasattr(value, "value") else value
                 create_data.append({"Attribute": attr, "Value": value})
 
         response = await self._client.request(
