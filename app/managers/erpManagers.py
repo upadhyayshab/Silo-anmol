@@ -327,9 +327,9 @@ class UserSchema(BasePassSchema):
     role = db.Column(db.Enum(UserRole), nullable=False, index=True)
     phone = db.Column(db.String(20))
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)
-    # # Region for CRM lead routing — telecallers are matched to leads in the same state.
-    # # Backfilled from the user's outlet state; can be overridden explicitly.
-    # state = db.Column(db.String(100), nullable=True, index=True)
+    # Region for CRM lead routing — telecallers are matched to leads in the same state.
+    # Backfilled from the user's outlet state; can be overridden explicitly.
+    state = db.Column(db.String(100), nullable=True, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     last_login = db.Column(db.DateTime(timezone=True), nullable=True)
     
