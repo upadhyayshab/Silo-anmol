@@ -42,6 +42,15 @@ def _gen_lead_number() -> str:
     return f"LEAD-{uuid.uuid4().hex[:10].upper()}"
 
 
+# Pseudo-actors that are not rows in `users` (must not be written to FK columns).
+_NON_USER_ACTORS = {"system", "microservice", None, ""}
+
+
+def _real_user(actor: Optional[str]) -> Optional[str]:
+    """Return a real users.uid, or None for system/webhook/microservice actors."""
+    return actor if actor not in _NON_USER_ACTORS else None
+
+
 # --------------------------------------------------------------------------
 # Role scoping (checkpoint 1.4)
 # --------------------------------------------------------------------------
@@ -72,7 +81,7 @@ async def record_activity(engine, lead_id: str, activity_type: LeadActivityType,
     activity_manager = LeadActivityManager(engine)
     activity = await activity_manager.create(LeadActivitySchema(
         lead_id=lead_id,
-        user_id=user_id,
+        user_id=_real_user(user_id),  # never write "system"/"microservice" to the users FK
         activity_type=activity_type,
         body=body,
         outcome=outcome,
@@ -93,8 +102,18 @@ async def record_activity(engine, lead_id: str, activity_type: LeadActivityType,
 # --------------------------------------------------------------------------
 
 async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
-    """Create a lead: resolve outlet, round-robin assign, log CREATED + ASSIGNMENT."""
+    """Create a lead and assign an owner.
+
+    Ownership rules:
+      1. explicit ``payload.owner_id``  -> assigned to that telecaller (manual)
+      2. created by a real user (telecaller/admin via API) -> attributed to the creator
+      3. system / webhook (no human creator) -> round-robin within the lead's region
+
+    Admins redistribute later via ``distribute_leads`` / the assign endpoint.
+    """
     lead_manager = LeadManager(engine)
+
+    creator = _real_user(by_user_id)  # None for system/webhook/microservice
 
     outlet = await assignmentService.resolve_outlet(
         engine, district=payload.district, pincode=payload.pincode, state=payload.state
@@ -103,12 +122,17 @@ async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
     # Authoritative region: the resolved outlet's state, else the lead's own state.
     region_state = (getattr(outlet, "state", None) if outlet else None) or payload.state
 
-    # Owner: explicit (admin override) -> manual; otherwise round-robin within region.
-    owner_id = payload.owner_id
-    reason = AssignmentReason.MANUAL.value if owner_id else AssignmentReason.ROUND_ROBIN.value
-    if not owner_id:
+    if payload.owner_id:
+        owner_id = payload.owner_id
+        reason = AssignmentReason.MANUAL.value
+    elif creator:
+        # Attribute the lead to whoever created it.
+        owner_id = creator
+        reason = AssignmentReason.SELF_CREATED.value
+    else:
         picked = await assignmentService.pick_telecaller(engine, outlet_id, region_state)
         owner_id = picked.uid if picked else None
+        reason = AssignmentReason.ROUND_ROBIN.value
 
     lead = LeadSchema(
         first_name=payload.first_name,
@@ -136,17 +160,15 @@ async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
     )
     lead = await lead_manager.create(lead)
 
-    await record_activity(engine, lead.uid, LeadActivityType.CREATED, user_id=by_user_id,
+    await record_activity(engine, lead.uid, LeadActivityType.CREATED, user_id=creator,
                           body=f"Lead {lead.lead_number} created")
 
     if owner_id:
         await assignmentService.record_assignment(
-            engine, lead.uid, owner_id, reason=reason,
-            assigned_by=(by_user_id if reason == AssignmentReason.MANUAL.value else "system"),
+            engine, lead.uid, owner_id, reason=reason, assigned_by=(creator or "system"),
         )
         await record_activity(engine, lead.uid, LeadActivityType.ASSIGNMENT,
-                              user_id=by_user_id, to_stage=None,
-                              body=f"Assigned to telecaller ({reason})",
+                              user_id=creator, body=f"Assigned to telecaller ({reason})",
                               details={"telecaller_id": owner_id, "reason": reason})
 
     return await lead_manager.fetch(lead.uid)
@@ -208,17 +230,68 @@ async def log_call(engine, lead: LeadSchema, outcome: str, note: Optional[str],
                                  user_id=by_user_id, outcome=outcome, body=note)
 
 
-async def reassign(engine, lead: LeadSchema, telecaller_id: str, by_user_id: str) -> LeadSchema:
+async def reassign(engine, lead: LeadSchema, telecaller_id: str, by_user_id: str,
+                   reason: str = AssignmentReason.MANUAL.value) -> LeadSchema:
+    """Change a lead's owner. Used by the assign endpoint (manual) and distribute (round_robin)."""
     lead_manager = LeadManager(engine)
     await assignmentService.record_assignment(
         engine, lead.uid, telecaller_id,
-        reason=AssignmentReason.MANUAL.value, assigned_by=by_user_id,
+        reason=reason, assigned_by=(_real_user(by_user_id) or "system"),
     )
     updated = await lead_manager.update(lead.uid, {"owner_id": telecaller_id})
     await record_activity(engine, lead.uid, LeadActivityType.ASSIGNMENT, user_id=by_user_id,
-                          body="Reassigned (manual)",
-                          details={"telecaller_id": telecaller_id, "reason": "manual"})
+                          body=f"Reassigned ({reason})",
+                          details={"telecaller_id": telecaller_id, "reason": reason})
     return updated
+
+
+async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional[List[str]],
+                           by_user_id: str) -> Dict[str, Any]:
+    """Bulk round-robin distribution of leads across telecallers (admin action).
+
+    `telecaller_ids` selects the target pool; if omitted, all active telecallers are used.
+    Returns a summary: how many were assigned/skipped and the per-telecaller counts.
+    """
+    user_manager = UserManager(engine)
+    lead_manager = LeadManager(engine)
+
+    # Build the validated target pool (active telecallers only).
+    if telecaller_ids:
+        pool: List[str] = []
+        for tid in telecaller_ids:
+            try:
+                u = await user_manager.fetch(tid)
+            except Exception:
+                continue
+            if u.role == UserRole.TELECALLER and u.is_active:
+                pool.append(u.uid)
+    else:
+        active = await user_manager.fetch_all(
+            filters={"role": UserRole.TELECALLER, "is_active": True}
+        )
+        pool = [u.uid for u in active.items]
+
+    if not pool:
+        return {"assigned": 0, "skipped": len(lead_ids or []), "by_telecaller": {},
+                "detail": "no active telecallers in the target pool"}
+
+    assigned, skipped, by_tc, i = 0, 0, {}, 0
+    for lid in lead_ids or []:
+        try:
+            lead = await lead_manager.fetch(lid)
+        except Exception:
+            skipped += 1
+            continue
+        if lead.deleted_at is not None:
+            skipped += 1
+            continue
+        tid = pool[i % len(pool)]   # even round-robin across the batch
+        i += 1
+        await reassign(engine, lead, tid, by_user_id, reason=AssignmentReason.ROUND_ROBIN.value)
+        assigned += 1
+        by_tc[tid] = by_tc.get(tid, 0) + 1
+
+    return {"assigned": assigned, "skipped": skipped, "by_telecaller": by_tc}
 
 
 # --------------------------------------------------------------------------

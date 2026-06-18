@@ -42,5 +42,6 @@ class CallOutcome(str, Enum):
 
 class AssignmentReason(str, Enum):
     """Why a lead was assigned to a telecaller."""
-    ROUND_ROBIN = "round_robin"
-    MANUAL = "manual"
+    ROUND_ROBIN = "round_robin"   # auto-distributed (system/webhook leads, or admin bulk distribute)
+    MANUAL = "manual"             # explicitly (re)assigned to a chosen telecaller
+    SELF_CREATED = "self_created" # attributed to the user who created the lead

@@ -82,6 +82,20 @@ class AssignRequest(BaseModel):
     telecaller_id: str
 
 
+class DistributeRequest(BaseModel):
+    """Admin bulk round-robin distribution of leads across telecallers."""
+    lead_ids: List[str]
+    # Target pool; if omitted, all active telecallers are used.
+    telecaller_ids: Optional[List[str]] = None
+
+
+class DistributeResponse(BaseModel):
+    assigned: int
+    skipped: int
+    by_telecaller: Dict[str, int]
+    detail: Optional[str] = None
+
+
 # --------------------------------------------------------------------------
 # Responses
 # --------------------------------------------------------------------------
@@ -155,5 +169,6 @@ class LeadListResponse(BaseModel):
 __all__ = [
     "LeadCreateRequest", "LeadUpdateRequest", "StageChangeRequest",
     "NoteRequest", "CallLogRequest", "AssignRequest",
+    "DistributeRequest", "DistributeResponse",
     "LeadActivityResponse", "LeadResponse", "LeadDetailResponse", "LeadListResponse",
 ]

@@ -1,8 +1,13 @@
 """Native CRM — Lead endpoints (Stage 1: Data Foundation).
 
 Role model:
-  - SUPER_ADMIN / ADMIN : see and manage all leads; only they may reassign or delete.
-  - TELECALLER          : see and edit only leads they own (auto-scoped; other leads 404).
+  - SUPER_ADMIN / ADMIN : see and manage all leads; bulk-distribute and delete.
+  - TELECALLER          : see and edit only leads they own (auto-scoped; other leads 404);
+                          may hand off a lead they own to another telecaller.
+
+Ownership on create: a lead is attributed to whoever creates it (telecaller/admin).
+System/webhook leads (no human creator) are round-robin assigned. Admins redistribute
+in bulk via POST /leads/distribute; the owner is changed via POST /leads/{id}/assign.
 """
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -13,7 +18,8 @@ from config import get_settings, get_engine
 from managers import LeadManager, LeadActivityManager, UserManager
 from models import (
     LeadCreateRequest, LeadUpdateRequest, StageChangeRequest, NoteRequest,
-    CallLogRequest, AssignRequest, LeadResponse, LeadDetailResponse,
+    CallLogRequest, AssignRequest, DistributeRequest, DistributeResponse,
+    LeadResponse, LeadDetailResponse,
     LeadActivityResponse, LeadListResponse, StatusResponse,
 )
 from utils.auth import require_roles
@@ -113,7 +119,10 @@ async def list_lead_activities(
 
 @router.post("", response_model=LeadDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_lead(payload: LeadCreateRequest, current_user=Depends(get_current_crm_user)):
-    """Create a lead; resolves the serving outlet and round-robin assigns an owner."""
+    """Create a lead. Attributed to the creating user by default.
+
+    Pass `owner_id` to assign it directly to a specific telecaller instead.
+    """
     lead = await leadService.create_lead(engine, payload, by_user_id=current_user.uid)
     return await leadService.build_lead_response(engine, lead, include_activities=True)
 
@@ -165,23 +174,38 @@ async def log_lead_call(lead_id: str, payload: CallLogRequest, current_user=Depe
 
 
 # --------------------------------------------------------------------------
-# Admin: reassign & delete
+# Reassign / distribute / delete
 # --------------------------------------------------------------------------
 
+@router.post("/distribute", response_model=DistributeResponse)
+async def distribute_leads(payload: DistributeRequest, admin_id: str = Depends(require_roles(*ADMIN_ROLES))):
+    """Bulk round-robin distribution of leads across telecallers. Admin only.
+
+    Pass `lead_ids` to distribute; optionally restrict the target pool with
+    `telecaller_ids` (otherwise all active telecallers are used).
+    """
+    result = await leadService.distribute_leads(
+        engine, payload.lead_ids, payload.telecaller_ids, by_user_id=admin_id
+    )
+    return DistributeResponse(**result)
+
+
 @router.post("/{lead_id}/assign", response_model=LeadDetailResponse)
-async def assign_lead(lead_id: str, payload: AssignRequest, admin_id: str = Depends(require_roles(*ADMIN_ROLES))):
-    """Manually (re)assign a lead to a telecaller. Admin only."""
-    try:
-        lead = await lead_manager.fetch(lead_id)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Lead not found")
+async def assign_lead(lead_id: str, payload: AssignRequest, current_user=Depends(get_current_crm_user)):
+    """Change a lead's owner.
+
+    - Admin/Super Admin: reassign any lead to any telecaller.
+    - Telecaller: hand off a lead they own to another telecaller.
+    """
+    # Scope check: telecallers may only reassign leads they own (others -> 404).
+    lead = await _get_lead_or_404(lead_id, current_user)
     try:
         telecaller = await user_manager.fetch(payload.telecaller_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Telecaller not found")
-    if telecaller.role != UserRole.TELECALLER:
-        raise HTTPException(status_code=400, detail="Target user is not a telecaller")
-    await leadService.reassign(engine, lead, payload.telecaller_id, by_user_id=admin_id)
+    if telecaller.role != UserRole.TELECALLER or not telecaller.is_active:
+        raise HTTPException(status_code=400, detail="Target user is not an active telecaller")
+    await leadService.reassign(engine, lead, payload.telecaller_id, by_user_id=current_user.uid)
     fresh = await lead_manager.fetch(lead_id)
     return await leadService.build_lead_response(engine, fresh, include_activities=True)
 
