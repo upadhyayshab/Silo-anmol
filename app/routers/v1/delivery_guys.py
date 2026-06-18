@@ -225,14 +225,28 @@ async def update_delivery_guy(
             detail=f"Failed to update delivery guy: {str(e)}"
         )
 
-@router.delete("/{delivery_guy_id}", response_model=StatusResponse)
+@router.delete("/{user_id}", response_model=StatusResponse)
 async def delete_delivery_guy(
-    delivery_guy_id: str,
+    user_id: str,
     _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
 ):
     try:
-        await delivery_guy_manager.update(delivery_guy_id, {"is_deleted": True, "is_active_for_delivery": False})
+        delivery_guys = await delivery_guy_manager.fetch_all(filters={"user_id": user_id})
+        if not delivery_guys.items:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Delivery guy not found"
+            )
+        delivery_guy = delivery_guys.items[0]
+        # Soft-delete the delivery guy record (hides it from ERP delivery lists)
+        await delivery_guy_manager.update(delivery_guy.uid, {"is_deleted": True, "is_active_for_delivery": False})
+        # Also soft-delete the linked user account. The delivery microservice / mobile app
+        # authenticates against the users table, so deactivating the user is what actually
+        # revokes app access — required for the Apple App Store account-deletion flow.
+        await user_manager.update(user_id, {"is_active": False})
         return StatusResponse(status="ok", message="Delivery guy deleted successfully")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

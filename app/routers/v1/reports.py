@@ -1596,8 +1596,12 @@ async def get_daily_collection_tracker(
     confirmed collection within the requested window, returns:
       - to_collect  : sum of total_amount from DELIVERED orders (actual_delivery_date)
       - paid        : sum of amount from CONFIRMED outlet collections (collection date)
-      - remaining   : to_collect − paid
+      - remaining   : to_collect − paid (that date's net activity)
       - order_count : number of delivered orders on that date
+      - due_amount  : running outstanding balance as of that date — opening balance
+                      (delivered − confirmed-paid before from_date) plus the cumulative
+                      net for the window. This is independent of the chosen from_date,
+                      so the same date shows the same balance for any range.
     """
     QUERY = text("""
     WITH delivery_data AS (
@@ -1650,14 +1654,48 @@ async def get_daily_collection_tracker(
     ORDER BY cmb.activity_date, o.outlet_name
     """)
 
+    # Opening balance per outlet = all-time delivered − confirmed-paid STRICTLY BEFORE
+    # from_date. Carried into the running due-amount so the balance does not reset to
+    # zero at the window start (which made the due-amount change with the date range).
+    OPENING_QUERY = text("""
+    WITH pre_delivery AS (
+        SELECT co.assigned_outlet_id AS outlet_id,
+               SUM(co.total_amount)  AS amt
+        FROM customer_orders co
+        WHERE co.order_status = 'DELIVERED'
+          AND co.assigned_outlet_id IS NOT NULL
+          AND co.actual_delivery_date IS NOT NULL
+          AND (co.actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date < :from_date
+        GROUP BY co.assigned_outlet_id
+    ),
+    pre_paid AS (
+        SELECT odc.outlet_id,
+               SUM(odc.amount) AS amt
+        FROM outlet_daily_collections odc
+        WHERE odc.confirmation_status = 'CONFIRMED'
+          AND odc.date < :from_date
+        GROUP BY odc.outlet_id
+    )
+    SELECT
+        COALESCE(d.outlet_id, p.outlet_id)      AS outlet_id,
+        COALESCE(d.amt, 0) - COALESCE(p.amt, 0) AS opening_balance
+    FROM pre_delivery d
+    FULL OUTER JOIN pre_paid p ON d.outlet_id = p.outlet_id
+    """)
+
     try:
         async with engine.connect() as conn:
             result = await conn.execute(QUERY, {"from_date": from_date, "to_date": to_date})
             rows = result.all()
 
+            opening_result = await conn.execute(OPENING_QUERY, {"from_date": from_date})
+            opening_rows = opening_result.all()
+
+        opening_by_outlet = {r.outlet_id: float(r.opening_balance) for r in opening_rows}
+
         daily_data = []
         outlet_map = {}   # outlet_id → running aggregate
-        grand = {"to_collect": 0.0, "paid": 0.0, "remaining": 0.0}
+        grand = {"to_collect": 0.0, "paid": 0.0, "remaining": 0.0, "opening_balance": 0.0}
 
         for row in rows:
             tc  = float(row.to_collect)
@@ -1673,6 +1711,7 @@ async def get_daily_collection_tracker(
                 "paid":        pd_,
                 "remaining":   rm,
                 "order_count": int(row.order_count),
+                "due_amount":  0.0,   # cumulative balance as-of-date, filled in below
             })
 
             if row.outlet_id not in outlet_map:
@@ -1680,17 +1719,37 @@ async def get_daily_collection_tracker(
                     "outlet_id":        row.outlet_id,
                     "outlet_name":      row.outlet_name,
                     "outlet_code":      row.outlet_code,
+                    "opening_balance":  opening_by_outlet.get(row.outlet_id, 0.0),
                     "total_to_collect": 0.0,
                     "total_paid":       0.0,
                     "total_remaining":  0.0,
                 }
             outlet_map[row.outlet_id]["total_to_collect"] += tc
             outlet_map[row.outlet_id]["total_paid"]       += pd_
-            outlet_map[row.outlet_id]["total_remaining"]  += rm
 
             grand["to_collect"] += tc
             grand["paid"]       += pd_
-            grand["remaining"]  += rm
+
+        # Running due-amount per outlet = opening balance + cumulative (to_collect − paid)
+        # in date order → true outstanding balance as of each date. A given date therefore
+        # shows the same value regardless of the chosen from_date.
+        running = {}
+        for row in sorted(daily_data, key=lambda r: (r["outlet_id"], r["date"])):
+            oid = row["outlet_id"]
+            if oid not in running:
+                running[oid] = opening_by_outlet.get(oid, 0.0)
+            running[oid] += row["to_collect"] - row["paid"]
+            row["due_amount"] = running[oid]
+
+        # Closing balance per outlet = opening + window net (== final running due-amount).
+        for summary in outlet_map.values():
+            summary["total_remaining"] = (
+                summary["opening_balance"]
+                + summary["total_to_collect"]
+                - summary["total_paid"]
+            )
+            grand["remaining"]       += summary["total_remaining"]
+            grand["opening_balance"] += summary["opening_balance"]
 
         return {
             "daily_data":       daily_data,
