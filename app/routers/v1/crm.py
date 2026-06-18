@@ -171,6 +171,7 @@ async def process_crm_orders(payload: dict):
             crm_order_id = products_data.get("mx_Custom_8") # this will come form medusa 
             payment_method_raw = (products_data.get(LSQCreateOrder.PAYMENT_METHOD.value) or "").strip().lower()
             prepaid_amount_raw = products_data.get(LSQCreateOrder.PREPAID_AMOUNT.value)
+            transaction_reference_raw = products_data.get(LSQCreateOrder.TRANSACTION_REFERENCE.value)
             
             no_of_items = int(products_data.get(LSQCreateOrder.NO_OF_ITEMS.value, 0) or 0)
             order_total = products_data.get(LSQCreateOrder.GRAND_TOTAL.value, 0)
@@ -225,6 +226,7 @@ async def process_crm_orders(payload: dict):
             crm_order_id = cleaned_payload.get("mx_Custom_8")
             payment_method_raw = (cleaned_payload.get("payment_method") or "").strip().lower()
             prepaid_amount_raw = cleaned_payload.get("prepaid_amount")
+            transaction_reference_raw = cleaned_payload.get("transaction_reference")
             order_total = cleaned_payload.get("order_total") or cleaned_payload.get("grand_total")
             collection_type = cleaned_payload.get("collection_type")
             utm_first_touch = cleaned_payload.get("utm_first_touch")
@@ -429,12 +431,15 @@ async def process_crm_orders(payload: dict):
         # 7. Create Prepaid Transaction if Online
         if payment_method_raw == "online" and prepaid_amt_dec > 0:
             try:
+                # Capture the telecaller-entered reference when present; else fall back to a synthetic one
+                txn_ref = str(transaction_reference_raw).strip() if transaction_reference_raw is not None else ""
+                transaction_reference = txn_ref or f"CRM_PREPAID_{created_order.order_number}"
                 transaction = OrderTransactionSchema(
                     order_id=created_order.uid,
                     payment_status=PaymentStatus.PAID,
                     payment_method=PaymentMethod.ONLINE,
                     amount_paid=prepaid_amt_dec,
-                    transaction_reference=f"CRM_PREPAID_{created_order.order_number}",
+                    transaction_reference=transaction_reference,
                     payment_date=datetime.utcnow(),
                     received_by=telecaller_id,
                     notes="Prepaid amount recorded from CRM webhook"

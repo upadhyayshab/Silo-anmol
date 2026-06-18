@@ -127,6 +127,7 @@ class LSQCreateOrder(str, Enum):
     PAYMENT_METHOD  = "mx_Custom_10"
     LAT_LON         = "mx_Custom_11"
     SOURCE          = "mx_Custom_12"
+    TRANSACTION_REFERENCE = "mx_Custom_13"
     UTM_FIRST_TOUCH = "mx_Custom_14"
     UTM_LAST_TOUCH  = "mx_Custom_15"
 
