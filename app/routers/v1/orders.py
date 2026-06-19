@@ -1867,43 +1867,89 @@ async def consume_order_stock(order_id: str):
 async def assign_order_to_outlet(
     order_id: str,
     payload: OrderAssignRequest,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
 ):
-    """Manually assign order to outlet (Admin function)"""
+    """Manually assign or re-assign an order to an outlet (Admin function).
+
+    Works for any non-terminal order. Delivered and cancelled orders cannot be
+    re-assigned. If the order had already moved past PENDING (e.g. allotted to a
+    delivery person, postponed, or returned from logistics), it is reset to
+    PENDING and its delivery person is cleared — that rider belongs to the
+    previous outlet, so the new outlet must re-allot delivery.
+    """
+    # Orders in a terminal state can never be re-assigned.
+    NON_REASSIGNABLE = {OrderStatus.DELIVERED, OrderStatus.CANCELLED}
     try:
         order = await order_manager.fetch(order_id)
-        
-        if order.order_status != OrderStatus.PENDING:
+
+        if order.order_status in NON_REASSIGNABLE:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Can only assign pending orders"
+                detail=f"Cannot re-assign a {order.order_status.value} order"
             )
-        
+
+        # No-op guard: already at the requested outlet
+        if order.assigned_outlet_id == payload.assigned_outlet_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Order is already assigned to this outlet"
+            )
+
         # Verify outlet exists
         try:
             outlet = await outlet_manager.fetch(payload.assigned_outlet_id)
-            if not outlet.is_active:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot assign to inactive outlet"
-                )
-        except:
+        except Exception:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Outlet not found"
             )
-        
-        # Update assignment (no stock reservation/release)
-        await order_manager.update(
-            order_id,
-            {"assigned_outlet_id": payload.assigned_outlet_id}
-        )
-        
+        if not outlet.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot assign to inactive outlet"
+            )
+
+        # If the order was past PENDING, reset it: the assigned delivery person
+        # belongs to the old outlet and any logistics state no longer applies.
+        previous_status = order.order_status
+        was_in_flight = previous_status != OrderStatus.PENDING
+
+        update_data = {"assigned_outlet_id": payload.assigned_outlet_id}
+        if was_in_flight:
+            update_data["order_status"] = OrderStatus.PENDING
+            update_data["delivery_person_id"] = None
+            update_data["actual_delivery_date"] = None
+
+        # Update assignment (no stock reservation/release — reservation removed)
+        await order_manager.update(order_id, update_data)
+
+        # Record the re-assignment in delivery tracking so history is auditable.
+        if was_in_flight:
+            existing_tracking = await tracking_manager.fetch_all(
+                filters={"order_id": order_id}, sorts=["created_at"]
+            )
+            reassign_remark = (
+                f"Order re-assigned to outlet {outlet.outlet_name} "
+                f"(was {previous_status.value}); reset to pending."
+            )
+            tracking_record = DeliveryTrackingSchema(
+                order_id=order_id,
+                outlet_id=payload.assigned_outlet_id,
+                telecaller_id=order.telecaller_id,
+                delivery_person_id=None,
+                status_changed_to=OrderStatus.PENDING,
+                remarks=build_cumulative_remarks(
+                    existing_tracking.items, OrderStatus.PENDING, reassign_remark
+                ),
+                changed_by=current_user_id
+            )
+            await tracking_manager.create(tracking_record)
+
         return StatusResponse(
             status="ok",
             message=f"Order assigned to outlet {outlet.outlet_name}"
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
