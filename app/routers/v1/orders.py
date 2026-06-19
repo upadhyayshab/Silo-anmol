@@ -1924,26 +1924,36 @@ async def assign_order_to_outlet(
         await order_manager.update(order_id, update_data)
 
         # Record the re-assignment in delivery tracking so history is auditable.
-        if was_in_flight:
-            existing_tracking = await tracking_manager.fetch_all(
-                filters={"order_id": order_id}, sorts=["created_at"]
-            )
-            reassign_remark = (
-                f"Order re-assigned to outlet {outlet.outlet_name} "
-                f"(was {previous_status.value}); reset to pending."
-            )
-            tracking_record = DeliveryTrackingSchema(
-                order_id=order_id,
-                outlet_id=payload.assigned_outlet_id,
-                telecaller_id=order.telecaller_id,
-                delivery_person_id=None,
-                status_changed_to=OrderStatus.PENDING,
-                remarks=build_cumulative_remarks(
-                    existing_tracking.items, OrderStatus.PENDING, reassign_remark
-                ),
-                changed_by=current_user_id
-            )
-            await tracking_manager.create(tracking_record)
+        # Best-effort only: the order has already been re-assigned and committed
+        # above, so an audit-log write must never fail the operation. delivery
+        # tracking requires a non-null telecaller_id, so skip it for orders that
+        # lack one (e.g. legacy/imported records) rather than 500 the request.
+        if was_in_flight and order.telecaller_id:
+            try:
+                existing_tracking = await tracking_manager.fetch_all(
+                    filters={"order_id": order_id}, sorts=["created_at"]
+                )
+                reassign_remark = (
+                    f"Order re-assigned to outlet {outlet.outlet_name} "
+                    f"(was {previous_status.value}); reset to pending."
+                )
+                tracking_record = DeliveryTrackingSchema(
+                    order_id=order_id,
+                    outlet_id=payload.assigned_outlet_id,
+                    telecaller_id=order.telecaller_id,
+                    delivery_person_id=None,
+                    status_changed_to=OrderStatus.PENDING,
+                    remarks=build_cumulative_remarks(
+                        existing_tracking.items, OrderStatus.PENDING, reassign_remark
+                    ),
+                    changed_by=current_user_id
+                )
+                await tracking_manager.create(tracking_record)
+            except Exception as track_err:
+                print(
+                    f"WARNING: re-assignment tracking record not written for "
+                    f"{order_id}: {type(track_err).__name__}: {track_err}"
+                )
 
         return StatusResponse(
             status="ok",
