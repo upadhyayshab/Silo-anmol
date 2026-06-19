@@ -1912,6 +1912,7 @@ async def assign_order_to_outlet(
         # If the order was past PENDING, reset it: the assigned delivery person
         # belongs to the old outlet and any logistics state no longer applies.
         previous_status = order.order_status
+        previous_delivery_person_id = order.delivery_person_id
         was_in_flight = previous_status != OrderStatus.PENDING
 
         update_data = {"assigned_outlet_id": payload.assigned_outlet_id}
@@ -1925,10 +1926,12 @@ async def assign_order_to_outlet(
 
         # Record the re-assignment in delivery tracking so history is auditable.
         # Best-effort only: the order has already been re-assigned and committed
-        # above, so an audit-log write must never fail the operation. delivery
-        # tracking requires a non-null telecaller_id, so skip it for orders that
-        # lack one (e.g. legacy/imported records) rather than 500 the request.
-        if was_in_flight and order.telecaller_id:
+        # above, so an audit-log write must never fail the operation. The
+        # delivery_tracking table (in prod) requires non-null telecaller_id AND
+        # delivery_person_id, so the row records the rider the order was taken
+        # away from, and is skipped when either is missing (e.g. an order that
+        # was never allotted) rather than failing the request.
+        if was_in_flight and order.telecaller_id and previous_delivery_person_id:
             try:
                 existing_tracking = await tracking_manager.fetch_all(
                     filters={"order_id": order_id}, sorts=["created_at"]
@@ -1941,7 +1944,7 @@ async def assign_order_to_outlet(
                     order_id=order_id,
                     outlet_id=payload.assigned_outlet_id,
                     telecaller_id=order.telecaller_id,
-                    delivery_person_id=None,
+                    delivery_person_id=previous_delivery_person_id,
                     status_changed_to=OrderStatus.PENDING,
                     remarks=build_cumulative_remarks(
                         existing_tracking.items, OrderStatus.PENDING, reassign_remark
