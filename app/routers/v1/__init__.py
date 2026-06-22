@@ -27,7 +27,10 @@ from .rate_cards import router as rate_cards_router
 from .rider_payouts import router as rider_payouts_router
 from .smartping import router as smartping_router
 from .leads import router as leads_router
-from .facebook import router as facebook_router
+from .facebook import (
+    router as facebook_router, pages_router as facebook_pages_router,
+    mappings_router as facebook_mappings_router, forms_router as facebook_forms_router,
+)
 from .clusters import router as clusters_router
 
 settings = get_settings()
@@ -61,6 +64,9 @@ router.include_router(rider_payouts_router)
 router.include_router(smartping_router)
 router.include_router(leads_router)
 router.include_router(facebook_router)
+router.include_router(facebook_pages_router)
+router.include_router(facebook_mappings_router)
+router.include_router(facebook_forms_router)
 router.include_router(clusters_router)
 
 

@@ -3,6 +3,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from services.smartping_job_service import smartping_job_service
 from services.inventory_audit_service import inventory_audit_service
+from services import facebook_service
 
 # Define your interval or cron schedules here.
 
@@ -24,6 +25,12 @@ JOBS_CONFIG = [
         "name": "close_overdue_inventory_audits",
         "func": inventory_audit_service.close_overdue_audits,
         "trigger": CronTrigger(day_of_week='wed', hour=23, minute=30)
+    },
+    {
+        # Re-discover Facebook pages nightly and subscribe any new ones (+ backfill them).
+        "name": "facebook_sync_pages",
+        "func": facebook_service.nightly_sync,
+        "trigger": CronTrigger(hour=2, minute=0)
     },
     # Examples of other schedules you can easily add:
     # {

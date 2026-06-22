@@ -3,6 +3,7 @@
 Centralizes every lead mutation so that the activity timeline is written
 consistently from one place. Routers stay thin and just translate HTTP.
 """
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -58,6 +59,18 @@ _NON_USER_ACTORS = {"system", "microservice", None, ""}
 def _real_user(actor: Optional[str]) -> Optional[str]:
     """Return a real users.uid, or None for system/webhook/microservice actors."""
     return actor if actor not in _NON_USER_ACTORS else None
+
+
+def _fire_capi(lead, stage) -> None:
+    """Best-effort: report a lead stage event to Meta CAPI without blocking the caller."""
+    try:
+        from services import facebook_capi
+        asyncio.create_task(facebook_capi.send_stage_event(lead, stage))
+    except RuntimeError:
+        pass  # no running event loop (e.g. a sync script) — skip
+    except Exception as e:
+        logger.warning(f"[capi] could not enqueue stage event for "
+                       f"{getattr(lead, 'uid', None)}: {e}")
 
 
 # --------------------------------------------------------------------------
@@ -206,7 +219,9 @@ async def create_lead(engine, payload, by_user_id: str,
                               user_id=creator, body=f"Assigned to telecaller ({reason})",
                               details={"telecaller_id": owner_id, "reason": reason})
 
-    return await lead_manager.fetch(lead.uid), True
+    final = await lead_manager.fetch(lead.uid)
+    _fire_capi(final, LeadStage.NEW_LEAD)
+    return final, True
 
 
 async def update_lead(engine, lead: LeadSchema, changes: Dict[str, Any],
@@ -249,6 +264,7 @@ async def change_stage(engine, lead: LeadSchema, new_stage: LeadStage,
     await record_activity(engine, lead.uid, LeadActivityType.STAGE_CHANGE,
                           user_id=by_user_id, from_stage=from_stage, to_stage=to_stage,
                           body=note or f"Stage changed {from_stage} → {to_stage}")
+    _fire_capi(updated, new_stage)
     return updated
 
 

@@ -1597,6 +1597,28 @@ def smartping_delay_to_timedelta(value: int, unit: str):
     if unit == "days":
         return timedelta(days=value)
     return timedelta(minutes=value)
+
+
+# ============================================================================
+# FACEBOOK LEAD ADS — connected pages (metadata only; no tokens stored)
+# ============================================================================
+
+class FacebookPageSchema(BaseSchema):
+    __tablename__ = "facebook_pages"
+
+    page_id = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    page_name = db.Column(db.String(255), nullable=True)
+    is_subscribed = db.Column(db.Boolean, default=False, nullable=False)
+    routing_state = db.Column(db.String(128), nullable=True)   # leads from this page round-robin within this state
+    last_synced_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_backfill_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+
+class FacebookPageManager(ERPGenericManager[FacebookPageSchema]):
+    pass
+
+
 # ============================================================================
 # EXPORTS
 # ============================================================================
@@ -1668,5 +1690,8 @@ __all__ = [
     # Rider Payouts & Rate Cards
     "RateCardSchema", "RateCardManager",
     "RiderPayoutSchema", "RiderPayoutManager",
+
+    # Facebook Lead Ads — connected pages
+    "FacebookPageSchema", "FacebookPageManager",
 ]
 

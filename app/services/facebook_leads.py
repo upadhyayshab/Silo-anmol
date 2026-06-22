@@ -13,30 +13,12 @@ from typing import Optional, Dict, Any
 import httpx
 
 from config import get_settings
-from models import LeadCreateRequest
-from utils.crm_constants import LeadSource
-from utils.dedup_utils import normalize_mobile
 from services import leadService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 GRAPH = "https://graph.facebook.com"
-
-# FB form field name -> our LeadCreateRequest field. Anything not listed is still
-# preserved verbatim in custom_fields, so no answer is ever lost.
-_FIELD_ALIASES = {
-    "phone_number": "mobile",
-    "phone": "mobile",
-    "email": "email",
-    "city": "city",
-    "state": "state",
-    "province": "state",
-    "street_address": "address_line",
-    "post_code": "pincode",
-    "zip_code": "pincode",
-    "zip": "pincode",
-}
 
 
 # --------------------------------------------------------------------------
@@ -55,12 +37,13 @@ def verify_signature(app_secret: str, raw_body: bytes, header: Optional[str]) ->
 # Graph API
 # --------------------------------------------------------------------------
 
-async def fetch_lead(leadgen_id: str) -> Dict[str, Any]:
-    """Pull the full lead record for a leadgen_id."""
+async def fetch_lead(leadgen_id: str, token: Optional[str] = None) -> Dict[str, Any]:
+    """Pull the full lead record for a leadgen_id (uses the page token when given)."""
+    from services import facebook_mapping  # lazy: single source of Graph fields
     url = f"{GRAPH}/{settings.fb_graph_version}/{leadgen_id}"
     params = {
-        "access_token": settings.fb_page_access_token,
-        "fields": "id,created_time,form_id,ad_id,adset_id,campaign_id,platform,field_data",
+        "access_token": token or settings.fb_page_access_token,
+        "fields": facebook_mapping.GRAPH_LEAD_FIELDS,
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, params=params)
@@ -69,75 +52,66 @@ async def fetch_lead(leadgen_id: str) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Mapping
-# --------------------------------------------------------------------------
-
-def map_to_lead_request(lead_json: Dict[str, Any]) -> LeadCreateRequest:
-    fields: Dict[str, Any] = {}
-    for entry in lead_json.get("field_data", []):
-        name = entry.get("name")
-        values = entry.get("values") or []
-        if name:
-            fields[name] = values[0] if values else None
-
-    first_name = fields.get("first_name")
-    last_name = fields.get("last_name")
-    if not first_name and fields.get("full_name"):
-        parts = str(fields["full_name"]).strip().split(" ", 1)
-        first_name = parts[0]
-        last_name = parts[1] if len(parts) > 1 else None
-
-    mapped: Dict[str, Any] = {}
-    for fb_name, our_name in _FIELD_ALIASES.items():
-        if fields.get(fb_name) and our_name not in mapped:
-            mapped[our_name] = fields[fb_name]
-
-    return LeadCreateRequest(
-        first_name=first_name or "Facebook Lead",
-        last_name=last_name,
-        mobile=normalize_mobile(mapped.get("mobile")) or "",
-        email=mapped.get("email"),
-        city=mapped.get("city"),
-        state=mapped.get("state"),
-        address_line=mapped.get("address_line"),
-        pincode=mapped.get("pincode"),
-        source=LeadSource.FB_LEAD_ADS,
-        custom_fields=fields,
-        campaign_data={
-            "leadgen_id": lead_json.get("id"),
-            "form_id": lead_json.get("form_id"),
-            "ad_id": lead_json.get("ad_id"),
-            "adset_id": lead_json.get("adset_id"),
-            "campaign_id": lead_json.get("campaign_id"),
-            "platform": lead_json.get("platform"),
-            "created_time": lead_json.get("created_time"),
-        },
-    )
-
-
-# --------------------------------------------------------------------------
 # Ingestion (runs in a BackgroundTask so the webhook can 200 immediately)
+#
+# Field mapping is delegated to facebook_mapping (DB-configurable Default Mapping
+# + per-form overrides), replacing the old hardcoded _FIELD_ALIASES.
 # --------------------------------------------------------------------------
 
-async def ingest_leadgen(engine, leadgen_id: str) -> None:
+async def _page_routing_state(engine, page_id: Optional[str]) -> Optional[str]:
+    """The state a page's leads route to (page region always wins). None if unset."""
+    if not page_id:
+        return None
+    from managers import FacebookPageManager
+    rows = await FacebookPageManager(engine).fetch_all(filters={"page_id": page_id})
+    return rows.items[0].routing_state if rows.items else None
+
+
+async def create_from_lead_json(engine, page_id: Optional[str], lead_json: Dict[str, Any]):
+    """Map a Graph lead object -> CRM lead. Shared by live ingest and backfill.
+
+    Field mapping comes from facebook_mapping (default + per-form). A lead from a
+    deactivated form is skipped (returns (None, False)); an unknown/not-yet-synced
+    form still ingests with the default mapping. Per-page routing: the page's
+    configured state overrides the form's. Dedup is handled by create_lead.
+    Returns (lead, created) — lead is None when skipped.
+    """
+    from services import facebook_mapping  # lazy: avoid import cycle
+    form_id = lead_json.get("form_id")
+    if (await facebook_mapping.form_status(engine, form_id)) == "inactive":
+        logger.info(f"[fb] form {form_id} inactive; skipping lead {lead_json.get('id')}")
+        return None, False
+
+    payload = await facebook_mapping.build_lead_request(engine, lead_json)
+    if page_id:
+        payload.campaign_data = {**(payload.campaign_data or {}), "page_id": page_id}
+    routing_state = await _page_routing_state(engine, page_id)
+    if routing_state:
+        payload.state = routing_state
+    return await leadService.create_lead(
+        engine, payload, by_user_id="system", source_label="FB Lead Ads")
+
+
+async def ingest_leadgen(engine, page_id: Optional[str], leadgen_id: str) -> None:
     try:
-        lead_json = await fetch_lead(leadgen_id)
+        token = await _page_token(page_id)
+        lead_json = await fetch_lead(leadgen_id, token)
     except Exception as e:
         logger.error(f"[fb] failed to fetch leadgen {leadgen_id}: {e}")
         return
-
     try:
-        payload = map_to_lead_request(lead_json)
+        lead, created = await create_from_lead_json(engine, page_id, lead_json)
     except Exception as e:
-        logger.error(f"[fb] failed to map leadgen {leadgen_id}: {e}")
+        logger.error(f"[fb] failed to ingest leadgen {leadgen_id}: {e}")
         return
+    if lead is None:
+        return  # skipped (deactivated form)
+    logger.info(f"[fb] leadgen {leadgen_id} {'created' if created else 'merged'} -> "
+                f"lead {lead.uid}")
 
-    # Dedup is handled centrally by create_lead: a matching non-deleted lead is
-    # merged (campaign_data backfilled) instead of inserting a duplicate.
-    lead, created = await leadService.create_lead(
-        engine, payload, by_user_id="system", source_label="FB Lead Ads"
-    )
-    if created:
-        logger.info(f"[fb] created lead {lead.lead_number} from leadgen {leadgen_id}")
-    else:
-        logger.info(f"[fb] duplicate from leadgen {leadgen_id}; merged into lead {lead.uid}")
+
+async def _page_token(page_id: Optional[str]) -> Optional[str]:
+    if not page_id:
+        return None
+    from services import facebook_service  # lazy: avoid import cycle
+    return await facebook_service.get_page_token(page_id)

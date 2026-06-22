@@ -199,8 +199,68 @@ class LeadAssignmentManager(ERPGenericManager[LeadAssignmentSchema]):
     pass
 
 
+# ============================================================================
+# FACEBOOK LEAD ADS — leadgen forms catalog + field mapping (Default Mapping)
+# ============================================================================
+
+class FbLeadgenFormSchema(BaseSchema):
+    """A synced Facebook LeadGen form. `status` gates ingestion (deactivate to stop)."""
+    __tablename__ = "fb_leadgen_forms"
+
+    page_id = db.Column(db.String(64), nullable=False, index=True)
+    form_id = db.Column(db.String(64), nullable=False, unique=True)
+    form_name = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.String(16), nullable=False, default="active",
+                       server_default="active", index=True)  # active | inactive
+    questions = db.Column(db.JSON, nullable=True)   # snapshot: [{name, type, label}]
+    fb_created_time = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_synced_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+
+class FbLeadgenFormManager(ERPGenericManager[FbLeadgenFormSchema]):
+    pass
+
+
+class FbFieldMappingSchema(BaseSchema):
+    """One Meta-field -> lead-target mapping row.
+
+    Holds both the global default (`scope="default"`, `form_id=None`) and per-form
+    overrides (`scope="form"`). `field_kind` separates marketing/attribution fields
+    from form question fields. `target=None` means "ignore" (the LSQ -Select Field-).
+    """
+    __tablename__ = "fb_field_mappings"
+
+    scope = db.Column(db.String(16), nullable=False, default="default",
+                      server_default="default", index=True)   # default | form
+    form_id = db.Column(db.String(64), nullable=True, index=True)  # null when scope=default
+    field_kind = db.Column(db.String(16), nullable=False,
+                           default="marketing", server_default="marketing")  # marketing | question
+    meta_field = db.Column(db.String(255), nullable=False)     # incoming field key
+    target = db.Column(db.String(255), nullable=True)          # destination key; null = ignore
+    target_kind = db.Column(db.String(16), nullable=False, default="campaign_data",
+                            server_default="campaign_data")    # lead | campaign_data | custom
+    is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+
+    # Postgres treats NULLs as distinct, so a plain UNIQUE(scope, form_id, ...)
+    # would NOT dedup default rows (form_id IS NULL). Two partial unique indexes
+    # enforce one row per key for both default (NULL form_id) and per-form rows.
+    __table_args__ = (
+        db.Index("uq_fb_mapping_default", "scope", "field_kind", "meta_field",
+                 unique=True, postgresql_where=db.text("form_id IS NULL")),
+        db.Index("uq_fb_mapping_form", "scope", "form_id", "field_kind", "meta_field",
+                 unique=True, postgresql_where=db.text("form_id IS NOT NULL")),
+    )
+
+
+class FbFieldMappingManager(ERPGenericManager[FbFieldMappingSchema]):
+    pass
+
+
 __all__ = [
     "LeadSchema", "LeadManager",
     "LeadActivitySchema", "LeadActivityManager",
     "LeadAssignmentSchema", "LeadAssignmentManager",
+    "FbLeadgenFormSchema", "FbLeadgenFormManager",
+    "FbFieldMappingSchema", "FbFieldMappingManager",
 ]

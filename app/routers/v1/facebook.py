@@ -9,10 +9,19 @@ POST : leadgen notifications — HMAC-verified, then each lead is fetched + crea
 """
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Request, Response, HTTPException, Query
+from typing import List, Literal, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Request, Response, HTTPException, Query, Depends, Body
+from pydantic import BaseModel
 
 from config import get_settings, get_engine
-from services import facebook_leads
+from managers import (
+    FacebookPageManager,
+    FbFieldMappingManager, FbFieldMappingSchema, FbLeadgenFormManager,
+)
+from services import facebook_leads, facebook_service, facebook_mapping
+from utils.auth import require_roles
+from utils.constants import UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +59,204 @@ async def receive(request: Request, background_tasks: BackgroundTasks):
         for change in entry.get("changes", []):
             if change.get("field") != "leadgen":
                 continue
-            leadgen_id = (change.get("value") or {}).get("leadgen_id")
+            value = change.get("value") or {}
+            leadgen_id = value.get("leadgen_id")
+            page_id = value.get("page_id") or entry.get("id")
             if leadgen_id:
-                background_tasks.add_task(facebook_leads.ingest_leadgen, engine, leadgen_id)
+                background_tasks.add_task(
+                    facebook_leads.ingest_leadgen, engine, page_id, leadgen_id)
                 queued += 1
 
     logger.info(f"[fb] webhook accepted, queued {queued} leadgen event(s)")
     return {"status": "ok", "queued": queued}
+
+
+# --------------------------------------------------------------------------
+# Admin: connect/sync pages + per-page routing (SUPER_ADMIN/ADMIN only)
+# --------------------------------------------------------------------------
+
+pages_router = APIRouter(prefix="/facebook/pages", tags=["CRM - Facebook Pages"])
+
+ADMIN = (UserRole.SUPER_ADMIN, UserRole.ADMIN)
+
+
+class PagePatch(BaseModel):
+    routing_state: str | None = None
+    notes: str | None = None
+
+
+@pages_router.post("/sync")
+async def sync(_: str = Depends(require_roles(*ADMIN))):
+    """Discover all business pages and subscribe each to the leadgen webhook.
+
+    Does NOT backfill — new pages come back in `new`; pull each one's history
+    explicitly via POST /facebook/pages/{page_id}/backfill.
+    """
+    return await facebook_service.sync_pages(engine)
+
+
+@pages_router.get("")
+async def list_pages(_: str = Depends(require_roles(*ADMIN))):
+    rows = await FacebookPageManager(engine).fetch_all()
+    return [r.model_dump() for r in rows.items]
+
+
+@pages_router.patch("/{page_id}")
+async def update_page(page_id: str, patch: PagePatch, _: str = Depends(require_roles(*ADMIN))):
+    rows = await FacebookPageManager(engine).fetch_all(filters={"page_id": page_id})
+    if not rows.items:
+        raise HTTPException(status_code=404, detail="Page not found")
+    changes = {k: v for k, v in patch.model_dump().items() if v is not None}
+    return await FacebookPageManager(engine).update(rows.items[0].uid, changes)
+
+
+@pages_router.post("/{page_id}/backfill")
+async def backfill(page_id: str, background_tasks: BackgroundTasks,
+                   _: str = Depends(require_roles(*ADMIN))):
+    background_tasks.add_task(facebook_service.backfill_page, engine, page_id)
+    return {"status": "backfill started", "page_id": page_id}
+
+
+# --------------------------------------------------------------------------
+# Default Mapping + per-form mapping (LSQ-style) — SUPER_ADMIN/ADMIN only
+# --------------------------------------------------------------------------
+
+mappings_router = APIRouter(prefix="/facebook/mappings", tags=["CRM - Facebook Mapping"])
+forms_router = APIRouter(prefix="/facebook/forms", tags=["CRM - Facebook Forms"])
+
+
+class MappingItem(BaseModel):
+    field_kind: Literal["marketing", "question"] = "marketing"
+    meta_field: str
+    target: Optional[str] = None           # null = ignore (-Select Field-)
+    target_kind: Literal["lead", "campaign_data", "custom"] = "campaign_data"
+    is_active: bool = True
+
+
+class MappingPut(BaseModel):
+    items: List[MappingItem]
+
+
+class FormPatch(BaseModel):
+    status: Optional[str] = None           # active | inactive
+    notes: Optional[str] = None
+
+
+def _row_view(r) -> dict:
+    return {"uid": r.uid, "field_kind": r.field_kind, "meta_field": r.meta_field,
+            "label": facebook_mapping.LABELS.get(r.meta_field, r.meta_field),
+            "target": r.target, "target_kind": r.target_kind, "is_active": r.is_active}
+
+
+async def _upsert_mapping(scope: str, form_id: Optional[str], items: List[MappingItem]) -> None:
+    mgr = FbFieldMappingManager(engine)
+    for it in items:
+        f = {"scope": scope, "field_kind": it.field_kind, "meta_field": it.meta_field}
+        if form_id:
+            f["form_id"] = form_id
+        existing = await mgr.fetch_all(filters=f, limit=1)
+        data = {"target": it.target, "target_kind": it.target_kind, "is_active": it.is_active}
+        if existing.items:
+            await mgr.update(existing.items[0].uid, data)
+        else:
+            await mgr.create(FbFieldMappingSchema(
+                scope=scope, form_id=form_id,
+                field_kind=it.field_kind, meta_field=it.meta_field, **data))
+    facebook_mapping.clear_cache()
+
+
+async def _default_payload() -> dict:
+    await facebook_mapping.seed_default_mapping(engine)
+    rows = await FbFieldMappingManager(engine).fetch_all(filters={"scope": "default"}, limit=500)
+    items = [_row_view(r) for r in rows.items]
+    return {"marketing": [i for i in items if i["field_kind"] == "marketing"],
+            "question": [i for i in items if i["field_kind"] == "question"]}
+
+
+@mappings_router.get("/default")
+async def get_default_mapping(_: str = Depends(require_roles(*ADMIN))):
+    """The global Default Mapping (seeded on first read)."""
+    return await _default_payload()
+
+
+@mappings_router.put("/default")
+async def put_default_mapping(body: MappingPut, _: str = Depends(require_roles(*ADMIN))):
+    """Upsert global default mapping rows (by field_kind + meta_field)."""
+    await _upsert_mapping("default", None, body.items)
+    return await _default_payload()
+
+
+@forms_router.get("")
+async def list_forms(page_id: Optional[str] = Query(None), _: str = Depends(require_roles(*ADMIN))):
+    f = {"page_id": page_id} if page_id else {}
+    rows = await FbLeadgenFormManager(engine).fetch_all(filters=f, limit=500)
+    return [r.model_dump() for r in rows.items]
+
+
+@forms_router.post("/sync")
+async def sync_forms(page_id: str = Query(...), _: str = Depends(require_roles(*ADMIN))):
+    """Pull a page's leadgen forms + questions and upsert them."""
+    return await facebook_service.sync_forms(engine, page_id)
+
+
+@forms_router.patch("/{form_id}")
+async def patch_form(form_id: str, patch: FormPatch, _: str = Depends(require_roles(*ADMIN))):
+    """Activate/deactivate a form (ingestion gate) or set notes."""
+    mgr = FbLeadgenFormManager(engine)
+    rows = await mgr.fetch_all(filters={"form_id": form_id})
+    if not rows.items:
+        raise HTTPException(status_code=404, detail="Form not found")
+    changes = {k: v for k, v in patch.model_dump().items() if v is not None}
+    if changes.get("status") and changes["status"] not in ("active", "inactive"):
+        raise HTTPException(status_code=422, detail="status must be 'active' or 'inactive'")
+    res = await mgr.update(rows.items[0].uid, changes)
+    facebook_mapping.clear_cache()
+    return res.model_dump()
+
+
+async def _form_mapping_payload(form_id: str) -> dict:
+    await facebook_mapping.seed_default_mapping(engine)
+    mgr = FbFieldMappingManager(engine)
+    defaults = await mgr.fetch_all(filters={"scope": "default"}, limit=500)
+    forms = await mgr.fetch_all(filters={"scope": "form", "form_id": form_id}, limit=500)
+
+    eff: dict = {}
+    for r in defaults.items:
+        v = _row_view(r); v["source"] = "default"
+        eff[(r.field_kind, r.meta_field)] = v
+    for r in forms.items:                          # form rows overlay defaults
+        v = _row_view(r); v["source"] = "form"
+        eff[(r.field_kind, r.meta_field)] = v
+    items = list(eff.values())
+
+    form_row = await facebook_mapping._form_row(engine, form_id)
+    return {
+        "form": form_row.model_dump() if form_row else {"form_id": form_id},
+        "marketing": [i for i in items if i["field_kind"] == "marketing"],
+        "question": [i for i in items if i["field_kind"] == "question"],
+    }
+
+
+@forms_router.get("/{form_id}/mapping")
+async def get_form_mapping(form_id: str, _: str = Depends(require_roles(*ADMIN))):
+    """Effective mapping for a form (default overlaid by per-form overrides) + questions."""
+    return await _form_mapping_payload(form_id)
+
+
+@forms_router.put("/{form_id}/mapping")
+async def put_form_mapping(form_id: str, body: MappingPut, _: str = Depends(require_roles(*ADMIN))):
+    """Upsert per-form mapping overrides (questions + marketing)."""
+    await _upsert_mapping("form", form_id, body.items)
+    return await _form_mapping_payload(form_id)
+
+
+@forms_router.post("/{form_id}/test")
+async def test_lead(form_id: str, body: dict = Body(...), _: str = Depends(require_roles(*ADMIN))):
+    """Test Lead: run a sample leadgen object through the mapping WITHOUT saving.
+
+    Body is a leadgen-like object, e.g.
+    `{"field_data":[{"name":"phone_number","values":["98765..."]}], "campaign_name":"X"}`.
+    """
+    lead_json = {**body, "form_id": form_id}
+    payload = await facebook_mapping.build_lead_request(engine, lead_json)
+    return {"would_create": payload.model_dump(exclude_none=True)}

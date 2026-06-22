@@ -116,8 +116,15 @@ class Settings(BaseSettings):
     # Facebook Lead Ads Configuration (from environment)
     fb_app_secret: str = os.getenv("FB_APP_SECRET", "")            # app secret -> webhook HMAC
     fb_verify_token: str = os.getenv("FB_VERIFY_TOKEN", "")        # our chosen subscription token
-    fb_page_access_token: str = os.getenv("FB_PAGE_ACCESS_TOKEN", "")  # long-lived/system-user token
+    fb_page_access_token: str = os.getenv("FB_PAGE_ACCESS_TOKEN") or os.getenv("FB_SYSTEM_USER_TOKEN", "")  # long-lived/system-user token
     fb_graph_version: str = os.getenv("FB_GRAPH_VERSION", "v21.0")
+    # Multi-page (System User token in fb_page_access_token above mints page tokens on demand)
+    fb_business_id: str = os.getenv("FB_BUSINESS_ID", "")
+    # Conversions API — lead-stage events back to Meta (defaults to the live GauSampurna-PM dataset)
+    fb_capi_dataset_id: str = os.getenv("FB_CAPI_DATASET_ID", "1426569352558576")
+    fb_capi_access_token: str = (os.getenv("FB_CAPI_ACCESS_TOKEN")
+                                 or os.getenv("FB_SYSTEM_USER_TOKEN")
+                                 or os.getenv("FB_PAGE_ACCESS_TOKEN", ""))
 
     # =============================================================================
     # COMPUTED PROPERTIES
