@@ -8,16 +8,14 @@ already resolves the outlet and round-robin assigns a telecaller.
 import hashlib
 import hmac
 import logging
-import re
 from typing import Optional, Dict, Any
 
 import httpx
 
 from config import get_settings
-from managers import LeadManager
 from models import LeadCreateRequest
 from utils.crm_constants import LeadSource
-from utils.crm_enums import LeadActivityType
+from utils.dedup_utils import normalize_mobile
 from services import leadService
 
 logger = logging.getLogger(__name__)
@@ -74,16 +72,6 @@ async def fetch_lead(leadgen_id: str) -> Dict[str, Any]:
 # Mapping
 # --------------------------------------------------------------------------
 
-def _normalize_mobile(value: Optional[str]) -> Optional[str]:
-    """Strip spaces/punctuation and the +91 / 91 India country prefix."""
-    if not value:
-        return value
-    digits = re.sub(r"\D", "", value)
-    if len(digits) == 12 and digits.startswith("91"):
-        digits = digits[2:]
-    return digits or None
-
-
 def map_to_lead_request(lead_json: Dict[str, Any]) -> LeadCreateRequest:
     fields: Dict[str, Any] = {}
     for entry in lead_json.get("field_data", []):
@@ -107,7 +95,7 @@ def map_to_lead_request(lead_json: Dict[str, Any]) -> LeadCreateRequest:
     return LeadCreateRequest(
         first_name=first_name or "Facebook Lead",
         last_name=last_name,
-        mobile=_normalize_mobile(mapped.get("mobile")) or "",
+        mobile=normalize_mobile(mapped.get("mobile")) or "",
         email=mapped.get("email"),
         city=mapped.get("city"),
         state=mapped.get("state"),
@@ -144,19 +132,12 @@ async def ingest_leadgen(engine, leadgen_id: str) -> None:
         logger.error(f"[fb] failed to map leadgen {leadgen_id}: {e}")
         return
 
-    # Dedup by mobile: if the lead already exists, log a note on it rather than
-    # creating a duplicate record (matches the fetch_all(filters=...) pattern).
-    if payload.mobile:
-        existing = await LeadManager(engine).fetch_all(filters={"mobile": payload.mobile})
-        if getattr(existing, "items", None):
-            lead = existing.items[0]
-            await leadService.record_activity(
-                engine, lead.uid, LeadActivityType.NOTE, user_id="system",
-                body=f"New Facebook Lead Ads form fill (leadgen {leadgen_id})",
-                details=payload.campaign_data,
-            )
-            logger.info(f"[fb] duplicate mobile {payload.mobile}; noted on lead {lead.uid}")
-            return
-
-    lead = await leadService.create_lead(engine, payload, by_user_id="system")
-    logger.info(f"[fb] created lead {lead.lead_number} from leadgen {leadgen_id}")
+    # Dedup is handled centrally by create_lead: a matching non-deleted lead is
+    # merged (campaign_data backfilled) instead of inserting a duplicate.
+    lead, created = await leadService.create_lead(
+        engine, payload, by_user_id="system", source_label="FB Lead Ads"
+    )
+    if created:
+        logger.info(f"[fb] created lead {lead.lead_number} from leadgen {leadgen_id}")
+    else:
+        logger.info(f"[fb] duplicate from leadgen {leadgen_id}; merged into lead {lead.uid}")

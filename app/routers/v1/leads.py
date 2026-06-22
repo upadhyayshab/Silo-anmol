@@ -12,7 +12,8 @@ in bulk via POST /leads/distribute; the owner is changed via POST /leads/{id}/as
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, UploadFile, File
+from fastapi.responses import JSONResponse
 
 from config import get_settings, get_engine
 from managers import LeadManager, LeadActivityManager, UserManager
@@ -21,11 +22,12 @@ from models import (
     CallLogRequest, AssignRequest, DistributeRequest, DistributeResponse,
     LeadResponse, LeadDetailResponse,
     LeadActivityResponse, LeadListResponse, StatusResponse,
+    LeadImportSummary, TodayQueueResponse,
 )
 from utils.auth import require_roles
 from utils.constants import UserRole
 from utils.dependencies import filtering_dependency, sorting_dependency
-from services import leadService
+from services import leadService, leadImportService
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -95,6 +97,25 @@ async def list_leads(
     return LeadListResponse(items=responses, count=len(responses), total=total, limit=limit, offset=offset)
 
 
+# --------------------------------------------------------------------------
+# Today's callback queue (2.5) — registered before /{lead_id} so the static
+# path is never shadowed by the lead-detail route.
+# --------------------------------------------------------------------------
+
+@router.get("/queue/today", response_model=TodayQueueResponse)
+async def get_today_queue(
+    owner_id: Optional[str] = Query(None, description="Admin-only: scope to one telecaller"),
+    limit: int = Query(100, ge=1, le=500),
+    current_user=Depends(get_current_crm_user),
+):
+    """Overdue / due-today / newly-assigned buckets for the caller's leads.
+
+    Telecallers are auto-scoped to their own leads; admins see everyone (or one
+    telecaller via `owner_id`). Soft-deleted leads are excluded.
+    """
+    return await leadService.today_queue(engine, current_user, owner_id=owner_id, limit=limit)
+
+
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
 async def get_lead(lead_id: str, current_user=Depends(get_current_crm_user)):
     """Full lead profile incl. activity timeline."""
@@ -118,13 +139,62 @@ async def list_lead_activities(
 # --------------------------------------------------------------------------
 
 @router.post("", response_model=LeadDetailResponse, status_code=status.HTTP_201_CREATED)
-async def create_lead(payload: LeadCreateRequest, current_user=Depends(get_current_crm_user)):
-    """Create a lead. Attributed to the creating user by default.
+async def create_lead(payload: LeadCreateRequest, response: Response,
+                      current_user=Depends(get_current_crm_user)):
+    """Create a lead, attributed to the creating user by default.
 
     Pass `owner_id` to assign it directly to a specific telecaller instead.
+
+    Deduplicated: if a non-deleted lead already exists with this mobile/email,
+    the incoming data is merged into it and that lead is returned with **200**
+    instead of a new lead with **201**.
+
+    Scoping: if a *telecaller* merges into a lead they don't own, the response is
+    a minimal ack (`{status, detail, lead_id, owner_name}`) rather than the full
+    record/timeline — the same owner-scoping the list/detail endpoints enforce.
+    Admins (and the owner) get the full lead detail.
     """
-    lead = await leadService.create_lead(engine, payload, by_user_id=current_user.uid)
+    lead, created = await leadService.create_lead(engine, payload, by_user_id=current_user.uid)
+    if not created:
+        is_owner = lead.owner_id == current_user.uid
+        is_admin = current_user.role in ADMIN_ROLES
+        if not is_owner and not is_admin:
+            owner_name = None
+            if lead.owner_id:
+                try:
+                    owner_name = (await user_manager.fetch(lead.owner_id)).full_name
+                except Exception:
+                    owner_name = None
+            return JSONResponse(status_code=status.HTTP_200_OK, content={
+                "status": "merged",
+                "detail": "A lead with this contact already exists and has been updated.",
+                "lead_id": lead.uid,
+                "owner_name": owner_name,
+            })
+        response.status_code = status.HTTP_200_OK
     return await leadService.build_lead_response(engine, lead, include_activities=True)
+
+
+@router.post("/import", response_model=LeadImportSummary)
+async def import_leads(
+    file: UploadFile = File(...),
+    admin_id: str = Depends(require_roles(*ADMIN_ROLES)),
+):
+    """Bulk-import leads from a CSV (LSQ export or native). Admin only.
+
+    Accepts both LeadSquared export headers and our native column names. Each
+    row is deduplicated (merged into an existing lead if the phone/email already
+    exists). Imported leads are round-robin assigned across telecallers.
+    Returns a summary with per-row errors.
+    """
+    if file.content_type and "csv" not in file.content_type and \
+            not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    summary = await leadImportService.import_leads_csv(engine, content, by_user_id=admin_id)
+    return LeadImportSummary(**summary)
 
 
 # --------------------------------------------------------------------------
@@ -166,7 +236,7 @@ async def log_lead_call(lead_id: str, payload: CallLogRequest, current_user=Depe
     lead = await _get_lead_or_404(lead_id, current_user)
     activity = await leadService.log_call(
         engine, lead, payload.outcome.value, payload.note, payload.follow_up_at,
-        by_user_id=current_user.uid,
+        by_user_id=current_user.uid, duration_seconds=payload.duration_seconds,
     )
     resp = LeadActivityResponse.model_validate(activity)
     resp.user_name = current_user.full_name

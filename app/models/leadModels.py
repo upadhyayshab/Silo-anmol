@@ -31,6 +31,10 @@ class LeadCreateRequest(BaseModel):
     country: Optional[str] = None
     source: Optional[LeadSource] = None
     lead_score: Optional[int] = None
+    # Contact-preference flags (honoured on import from LSQ opt-outs).
+    do_not_call: Optional[bool] = None
+    do_not_sms: Optional[bool] = None
+    do_not_email: Optional[bool] = None
     custom_fields: Optional[Dict[str, Any]] = None
     campaign_data: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
@@ -76,6 +80,8 @@ class CallLogRequest(BaseModel):
     outcome: CallOutcome
     note: Optional[str] = None
     follow_up_at: Optional[datetime] = None
+    # Optional call length (seconds). Stored in the activity's `details` JSON.
+    duration_seconds: Optional[int] = None
 
 
 class AssignRequest(BaseModel):
@@ -166,9 +172,44 @@ class LeadListResponse(BaseModel):
     offset: int
 
 
+# --------------------------------------------------------------------------
+# Stage 2 — CSV import (2.4)
+# --------------------------------------------------------------------------
+
+class LeadImportError(BaseModel):
+    row: int        # 1-based source row (the header is row 1)
+    reason: str
+
+
+class LeadImportSummary(BaseModel):
+    total_rows: int
+    created: int            # new leads inserted
+    merged: int             # duplicates merged into existing leads
+    skipped: int            # rows rejected (see `errors`)
+    errors: List[LeadImportError] = []
+
+
+# --------------------------------------------------------------------------
+# Stage 2 — Today's callback queue (2.5)
+# --------------------------------------------------------------------------
+
+class TodayQueueBucket(BaseModel):
+    count: int                       # true total in this bucket (may exceed len(items))
+    items: List[LeadResponse] = []
+
+
+class TodayQueueResponse(BaseModel):
+    overdue: TodayQueueBucket        # follow_up_at < now
+    due_today: TodayQueueBucket      # follow_up_at later today (IST)
+    newly_assigned: TodayQueueBucket  # assigned < 24h ago, never called
+    generated_at: datetime
+
+
 __all__ = [
     "LeadCreateRequest", "LeadUpdateRequest", "StageChangeRequest",
     "NoteRequest", "CallLogRequest", "AssignRequest",
     "DistributeRequest", "DistributeResponse",
     "LeadActivityResponse", "LeadResponse", "LeadDetailResponse", "LeadListResponse",
+    "LeadImportError", "LeadImportSummary",
+    "TodayQueueBucket", "TodayQueueResponse",
 ]

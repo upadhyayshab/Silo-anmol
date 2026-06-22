@@ -32,12 +32,13 @@ class LeadActivityType(str, Enum):
 
 
 class CallOutcome(str, Enum):
-    """Outcome of a manually logged call (Stage 2 workflow, endpoint ready now)."""
+    """Outcome of a manually logged call (Stage 2 workflow)."""
     ANSWERED = "answered"
     NOT_ANSWERED = "not_answered"
     BUSY = "busy"
     WRONG_NUMBER = "wrong_number"
     SWITCHED_OFF = "switched_off"
+    CALL_BACK_LATER = "call_back_later"   # answered but asked to be called again
 
 
 class AssignmentReason(str, Enum):

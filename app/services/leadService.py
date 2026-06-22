@@ -5,22 +5,31 @@ consistently from one place. Routers stay thin and just translate HTTP.
 """
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone, timedelta
+from typing import Optional, Dict, Any, List, Tuple
 
 import sqlalchemy as db
 
 from managers import (
     LeadManager, LeadSchema,
     LeadActivityManager, LeadActivitySchema,
+    LeadAssignmentSchema,
     UserManager, OutletManager,
 )
-from models import LeadResponse, LeadDetailResponse, LeadActivityResponse
+from models import (
+    LeadResponse, LeadDetailResponse, LeadActivityResponse,
+    TodayQueueBucket, TodayQueueResponse,
+)
 from utils.constants import UserRole
 from utils.crm_enums import LeadStage, LeadActivityType, AssignmentReason
+from utils import dedup_utils
 from services import assignmentService
 
 logger = logging.getLogger(__name__)
+
+# India Standard Time — the business is India-wide, so "today" for the callback
+# queue is bucketed on the IST calendar day.
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 # Fields a telecaller/admin may edit via PATCH (stage & owner are excluded — they
@@ -101,10 +110,16 @@ async def record_activity(engine, lead_id: str, activity_type: LeadActivityType,
 # Mutations
 # --------------------------------------------------------------------------
 
-async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
-    """Create a lead and assign an owner.
+async def create_lead(engine, payload, by_user_id: str,
+                      *, source_label: Optional[str] = None) -> Tuple[LeadSchema, bool]:
+    """Create a lead, or merge it into an existing duplicate.
 
-    Ownership rules:
+    Returns ``(lead, created)`` — ``created`` is ``False`` when an existing
+    (non-deleted) lead matched on phone/email and the incoming data was merged
+    into it instead of inserting a new row. Dedup runs on **every** create path
+    (manual API, FB webhook, CSV import).
+
+    Ownership rules (only when a new lead is created):
       1. explicit ``payload.owner_id``  -> assigned to that telecaller (manual)
       2. created by a real user (telecaller/admin via API) -> attributed to the creator
       3. system / webhook (no human creator) -> round-robin within the lead's region
@@ -114,6 +129,20 @@ async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
     lead_manager = LeadManager(engine)
 
     creator = _real_user(by_user_id)  # None for system/webhook/microservice
+
+    # --- Deduplication: merge into an existing non-deleted lead if one matches.
+    existing = await dedup_utils.find_duplicate(
+        engine, mobile=payload.mobile, email=payload.email
+    )
+    if existing is not None:
+        label = source_label or (
+            payload.source.value if getattr(payload, "source", None) else None
+        ) or "manual entry"
+        merged = await dedup_utils.merge_into_existing(
+            engine, existing, payload.model_dump(),
+            source_label=label, by_user_id=by_user_id,
+        )
+        return merged, False
 
     outlet = await assignmentService.resolve_outlet(
         engine, district=payload.district, pincode=payload.pincode, state=payload.state
@@ -137,7 +166,10 @@ async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
     lead = LeadSchema(
         first_name=payload.first_name,
         last_name=payload.last_name,
-        mobile=payload.mobile,
+        # Store the canonical bare-digit mobile so the column is clean for
+        # downstream dialing/search; fall back to the raw value if it has no
+        # digits. (Matching still tolerates legacy formats via find_duplicate.)
+        mobile=dedup_utils.normalize_mobile(payload.mobile) or payload.mobile,
         phone=payload.phone,
         email=payload.email,
         address_line=payload.address_line,
@@ -149,6 +181,9 @@ async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
         country=payload.country,
         source=payload.source,
         lead_score=payload.lead_score,
+        do_not_call=bool(getattr(payload, "do_not_call", None)),
+        do_not_sms=bool(getattr(payload, "do_not_sms", None)),
+        do_not_email=bool(getattr(payload, "do_not_email", None)),
         custom_fields=payload.custom_fields,
         campaign_data=payload.campaign_data,
         notes=payload.notes,
@@ -171,7 +206,7 @@ async def create_lead(engine, payload, by_user_id: str) -> LeadSchema:
                               user_id=creator, body=f"Assigned to telecaller ({reason})",
                               details={"telecaller_id": owner_id, "reason": reason})
 
-    return await lead_manager.fetch(lead.uid)
+    return await lead_manager.fetch(lead.uid), True
 
 
 async def update_lead(engine, lead: LeadSchema, changes: Dict[str, Any],
@@ -223,11 +258,14 @@ async def add_note(engine, lead_id: str, body: str, by_user_id: str) -> LeadActi
 
 
 async def log_call(engine, lead: LeadSchema, outcome: str, note: Optional[str],
-                   follow_up_at: Optional[datetime], by_user_id: str) -> LeadActivitySchema:
+                   follow_up_at: Optional[datetime], by_user_id: str,
+                   duration_seconds: Optional[int] = None) -> LeadActivitySchema:
     if follow_up_at is not None:
         await LeadManager(engine).update(lead.uid, {"follow_up_at": follow_up_at})
+    details = {"duration_seconds": duration_seconds} if duration_seconds is not None else None
     return await record_activity(engine, lead.uid, LeadActivityType.CALL_LOG,
-                                 user_id=by_user_id, outcome=outcome, body=note)
+                                 user_id=by_user_id, outcome=outcome, body=note,
+                                 details=details)
 
 
 async def reassign(engine, lead: LeadSchema, telecaller_id: str, by_user_id: str,
@@ -292,6 +330,96 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         by_tc[tid] = by_tc.get(tid, 0) + 1
 
     return {"assigned": assigned, "skipped": skipped, "by_telecaller": by_tc}
+
+
+# --------------------------------------------------------------------------
+# Today's callback queue (checkpoint 2.5 — backend support)
+# --------------------------------------------------------------------------
+
+async def today_queue(engine, user, *, owner_id: Optional[str] = None,
+                      limit: int = 100) -> TodayQueueResponse:
+    """The telecaller's callback queue, split into three buckets.
+
+    - **overdue**         — ``follow_up_at`` in the past, oldest first
+    - **due_today**       — ``follow_up_at`` later today (IST), soonest first
+    - **newly_assigned**  — current active assignment < 24h old, never called
+
+    Role-scoped: a telecaller sees only their own leads; an admin sees all, or a
+    single telecaller's via ``owner_id``. Soft-deleted leads are excluded from
+    every bucket. Each bucket carries its true ``count`` even when ``items`` is
+    capped at ``limit``.
+    """
+    lead_manager = LeadManager(engine)
+
+    if user.role in (UserRole.SUPER_ADMIN, UserRole.ADMIN):
+        scope_owner = owner_id            # None -> all telecallers
+    else:
+        scope_owner = user.uid            # telecaller -> own leads only
+
+    now = _now()
+    now_ist = now.astimezone(IST)
+    day_end_ist = (now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+                   + timedelta(days=1))
+    cutoff_24h = now - timedelta(hours=24)
+
+    def _scope(q):
+        q = q.where(LeadSchema.deleted_at.is_(None))
+        if scope_owner:
+            q = q.where(LeadSchema.owner_id == scope_owner)
+        return q
+
+    user_cache, outlet_cache = {}, {}
+
+    async def _materialize(base, order_col) -> TodayQueueBucket:
+        rows_q = base.order_by(order_col).limit(limit)
+        count_q = db.select(db.func.count()).select_from(base.subquery())
+        async with lead_manager.session_factory() as session:
+            total = int((await session.execute(count_q)).scalar_one())
+            rows = list((await session.execute(rows_q)).unique().scalars().all())
+        items = [
+            await build_lead_response(engine, r, user_cache=user_cache,
+                                      outlet_cache=outlet_cache)
+            for r in rows
+        ]
+        return TodayQueueBucket(count=total, items=items)
+
+    # Overdue: follow-up time already passed.
+    overdue_base = _scope(db.select(LeadSchema)).where(
+        LeadSchema.follow_up_at.is_not(None),
+        LeadSchema.follow_up_at < now,
+    )
+    overdue = await _materialize(overdue_base, LeadSchema.follow_up_at.asc())
+
+    # Due today: the remaining part of the IST day (now .. end of today).
+    due_base = _scope(db.select(LeadSchema)).where(
+        LeadSchema.follow_up_at >= now,
+        LeadSchema.follow_up_at < day_end_ist,
+    )
+    due_today = await _materialize(due_base, LeadSchema.follow_up_at.asc())
+
+    # Newly assigned: a current active assignment < 24h old, with no call yet.
+    # Built with IN-subqueries (not a JOIN) so the select stays one-row-per-lead
+    # — this keeps the bucket count exact even if a lead momentarily had >1
+    # active assignment (e.g. a race during reassignment).
+    called_subq = db.select(LeadActivitySchema.lead_id).where(
+        LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG
+    )
+    recent_assign = db.select(LeadAssignmentSchema.lead_id).where(
+        LeadAssignmentSchema.is_active.is_(True),
+        LeadAssignmentSchema.created_at >= cutoff_24h,
+    )
+    if scope_owner:
+        recent_assign = recent_assign.where(LeadAssignmentSchema.telecaller_id == scope_owner)
+    newly_base = _scope(db.select(LeadSchema)).where(
+        LeadSchema.uid.in_(recent_assign),
+        LeadSchema.uid.not_in(called_subq),
+    )
+    newly_assigned = await _materialize(newly_base, LeadSchema.created_at.desc())
+
+    return TodayQueueResponse(
+        overdue=overdue, due_today=due_today, newly_assigned=newly_assigned,
+        generated_at=now,
+    )
 
 
 # --------------------------------------------------------------------------
