@@ -94,6 +94,26 @@
                 {
                     "name": "SMARTPING_API_KEY",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/SMARTPING_API_KEY"
+                },
+                {
+                    "name": "FB_APP_SECRET",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/FB_APP_SECRET"
+                },
+                {
+                    "name": "FB_VERIFY_TOKEN",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/FB_VERIFY_TOKEN"
+                },
+                {
+                    "name": "FB_BUSINESS_ID",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/FB_BUSINESS_ID"
+                },
+                {
+                    "name": "FB_SYSTEM_USER_TOKEN",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/FB_SYSTEM_USER_TOKEN"
+                },
+                {
+                    "name": "FB_GRAPH_VERSION",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/FB_GRAPH_VERSION"
                 }
             ],
             "logConfiguration": {
