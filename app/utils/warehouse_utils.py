@@ -16,6 +16,11 @@ from utils.constants import OutletType
 # (e.g. during first-run / migrations).  Do NOT reference this in business logic.
 _LEGACY_WAREHOUSE_ID = "outlets_1bd14da6-954e-4f7d-bbf9-dafa4a6c3cf2"
 
+# ponytail: AP & Telangana share one warehouse (stored with state "Telangana").
+# Collapse AP -> TG so the state-based fallback matches that single warehouse.
+# Flip the value if the warehouse is stored as "Andhra Pradesh" instead.
+_WAREHOUSE_STATE_ALIASES = {"andhra pradesh": "telangana"}
+
 
 async def get_default_warehouse_id(engine) -> str:
     """Return the UID of the oldest active warehouse outlet.
@@ -45,11 +50,12 @@ async def get_fallback_warehouse(engine, state: Optional[str] = None):
     from managers import OutletSchema
     async with AsyncSession(engine) as session:
         if state:
+            state = _WAREHOUSE_STATE_ALIASES.get(state.lower(), state.lower())
             result = await session.execute(
                 db.select(OutletSchema)
                 .where(OutletSchema.outlet_type == OutletType.WAREHOUSE)
                 .where(OutletSchema.is_active == True)
-                .where(func.lower(OutletSchema.state) == state.lower())
+                .where(func.lower(OutletSchema.state) == state)
                 .limit(1)
             )
             outlet = result.scalar_one_or_none()
