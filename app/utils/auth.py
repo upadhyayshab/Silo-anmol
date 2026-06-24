@@ -159,6 +159,196 @@ def require_roles(*allowed_roles: UserRole, allowed_scopes: list[str] = None):
     return role_checker
 
 
+# ============================================================================
+# PERMISSION + SCOPE ENFORCEMENT (RBAC blueprint — additive, sits next to
+# require_roles. See utils/permissions.py and RBAC_ACCESS_BLUEPRINT.md.)
+# ============================================================================
+from dataclasses import dataclass, field
+from utils.permissions import (
+    ScopeLevel, WILDCARD, role_perms, role_scope_level, has_permission,
+    masked_columns_for, _perm_value,
+)
+
+
+@dataclass
+class AuthContext:
+    """Resolved identity passed downstream for scope filtering + field masking."""
+    user_id: str
+    role: Optional[str] = None
+    is_microservice: bool = False
+    scope_level: str = ScopeLevel.OUTLET.value
+    outlet_id: Optional[str] = None
+    states: list = field(default_factory=list)        # STATE scope (multi-valued)
+    cluster_ids: list = field(default_factory=list)   # CLUSTER scope (multi-valued)
+    perms: set = field(default_factory=set)
+
+    @property
+    def scope_value(self):
+        if self.scope_level == ScopeLevel.OUTLET.value:
+            return self.outlet_id
+        if self.scope_level == ScopeLevel.STATE.value:
+            return self.states
+        if self.scope_level == ScopeLevel.CLUSTER.value:
+            return self.cluster_ids
+        return None
+
+    def has(self, perm) -> bool:
+        if WILDCARD in self.perms:
+            return True
+        return _perm_value(perm) in self.perms
+
+
+def _build_context(request: Request, credentials: Optional[HTTPAuthorizationCredentials]) -> AuthContext:
+    """Authenticate (API key or JWT) and resolve perms + scope. No permission gate."""
+    # Microservice path: SDKMiddleware put verified scopes on request.state.
+    req_scopes = getattr(request.state, "scopes", None)
+    if not credentials and req_scopes is not None:
+        return AuthContext(
+            user_id="microservice", is_microservice=True,
+            scope_level=ScopeLevel.GLOBAL.value, perms=set(req_scopes),
+        )
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = decode_token(credentials.credentials)
+    user_id = payload.get("sub")
+    role = payload.get("role")
+    if user_id is None or role is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+    return AuthContext(
+        user_id=user_id,
+        role=role,
+        scope_level=role_scope_level(role).value,
+        outlet_id=payload.get("outlet_id"),
+        states=payload.get("states") or ([payload["state"]] if payload.get("state") else []),
+        cluster_ids=payload.get("cluster_ids") or [],
+        perms=role_perms(role),
+    )
+
+
+async def get_auth_context(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> AuthContext:
+    """Dependency: authenticated context with resolved perms/scope, no perm gate."""
+    return _build_context(request, credentials)
+
+
+def require_permission(perm, *, allow_scopes: Optional[list] = None):
+    """Dependency factory: gate an endpoint on a single Permission.
+
+    Mirrors require_roles' dual path — an API key whose scopes intersect the
+    required permission (or `allow_scopes`) passes as a microservice; otherwise
+    the JWT role must hold the permission. Returns an AuthContext.
+    """
+    async def checker(
+        request: Request,
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    ) -> AuthContext:
+        req_scopes = getattr(request.state, "scopes", None)
+        if req_scopes is not None:
+            allowed = set(allow_scopes or []) | {_perm_value(perm)}
+            if allowed.intersection(req_scopes):
+                return AuthContext(
+                    user_id="microservice", is_microservice=True,
+                    scope_level=ScopeLevel.GLOBAL.value, perms=set(req_scopes),
+                )
+        ctx = _build_context(request, credentials)
+        if not ctx.has(perm):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing permission: {_perm_value(perm)}",
+            )
+        return ctx
+    return checker
+
+
+_outlet_mgr = None
+
+
+def _get_outlet_mgr():
+    # Lazy: keeps utils.auth importable without pulling the managers tree (tests).
+    global _outlet_mgr
+    if _outlet_mgr is None:
+        from config import get_engine
+        from managers import OutletManager
+        _outlet_mgr = OutletManager(get_engine(settings.name))
+    return _outlet_mgr
+
+
+async def _scoped_outlet_ids(ctx: AuthContext) -> list:
+    """Expand a STATE/CLUSTER user's assignments to the outlet ids they cover."""
+    mgr = _get_outlet_mgr()
+    if ctx.scope_level == ScopeLevel.CLUSTER.value and ctx.cluster_ids:
+        res = await mgr.fetch_all(filters={"cluster_id": ctx.cluster_ids}, limit=0)
+        return [o.uid for o in res.items]
+    if ctx.scope_level == ScopeLevel.STATE.value and ctx.states:
+        res = await mgr.fetch_all(filters={"state": ctx.states}, limit=0)
+        return [o.uid for o in res.items]
+    return []
+
+
+async def apply_scope(filters: Optional[dict], ctx: AuthContext, outlet_column: str = "outlet_id") -> dict:
+    """Narrow filters to the caller's row scope and return them.
+
+    OVERRIDES `outlet_column` for scoped roles so query params can't escape scope;
+    no-op for GLOBAL / microservice. STATE/CLUSTER expand to the covered outlet ids
+    (a user may manage several). Deny-by-default: a scoped user with no assignment
+    matches nothing (the "__none__" sentinel never equals a real uuid uid).
+    Endpoints whose outlet FK isn't `outlet_id` pass `outlet_column=...`.
+    """
+    out = dict(filters or {})
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return out
+    if ctx.scope_level == ScopeLevel.OUTLET.value:
+        out[outlet_column] = ctx.outlet_id or "__none__"
+        return out
+    ids = await _scoped_outlet_ids(ctx)
+    out[outlet_column] = ids or ["__none__"]
+    return out
+
+
+def mask_fields(obj, columns: list):
+    """Null the given attributes/keys on a pydantic model, ORM row, or dict (in place)."""
+    if not columns:
+        return obj
+    if isinstance(obj, dict):
+        for c in columns:
+            if c in obj:
+                obj[c] = None
+    else:
+        for c in columns:
+            if hasattr(obj, c):
+                try:
+                    setattr(obj, c, None)
+                except Exception:
+                    pass
+    return obj
+
+
+def apply_field_mask(resource: str, ctx: AuthContext, data):
+    """Strip sensitive columns (cost/margin, tax ids) the caller may not see.
+
+    Accepts a single object or a list; mutates and returns it. Microservices and
+    wildcard holders are never masked.
+    """
+    if ctx.is_microservice:
+        return data
+    columns = masked_columns_for(resource, ctx.role)
+    if not columns:
+        return data
+    items = data if isinstance(data, (list, tuple)) else [data]
+    for item in items:
+        mask_fields(item, columns)
+    return data
+
+
 __all__ = [
     "verify_password",
     "get_password_hash",
@@ -167,4 +357,11 @@ __all__ = [
     "decode_token",
     "get_current_user_id",
     "require_roles",
+    # RBAC blueprint
+    "AuthContext",
+    "get_auth_context",
+    "require_permission",
+    "apply_scope",
+    "mask_fields",
+    "apply_field_mask",
 ]

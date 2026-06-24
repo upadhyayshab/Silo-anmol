@@ -9,6 +9,27 @@ class UserRole(str, Enum):
     TELECALLER = "TELECALLER"
     ACCOUNTANT = "ACCOUNTANT"
     DELIVERY_GUY = "DELIVERY_GUY"
+    # --- RBAC blueprint roles (see utils/permissions.ROLE_DEFINITIONS) ---
+    # Additive: existing JWTs/rows are unaffected. Assigning one of these to a
+    # user requires a Postgres ENUM `ADD VALUE` migration first (Phase 2).
+    VIEWER = "VIEWER"                          # L1 read-only
+    CLUSTER_MANAGER = "CLUSTER_MANAGER"        # L3 ops, cluster scope
+    STATE_HEAD = "STATE_HEAD"                  # L4 oversight, state scope
+    MARKETING_EXECUTIVE = "MARKETING_EXECUTIVE"
+    MARKETING_HEAD = "MARKETING_HEAD"
+    FINANCE_LEAD = "FINANCE_LEAD"              # L4 finance, read-only
+    AUDITOR = "AUDITOR"                        # L4 read-only + audit logs
+    # Leadership (read-only, global, function-filtered)
+    CEO = "CEO"
+    CFO = "CFO"
+    COO = "COO"
+    CGO = "CGO"
+    # Admins (function-scoped write/admin)
+    USER_ADMIN = "USER_ADMIN"
+    CATALOGUE_ADMIN = "CATALOGUE_ADMIN"
+    CONFIG_ADMIN = "CONFIG_ADMIN"
+    OPS_ADMIN = "OPS_ADMIN"
+    FINANCE_ADMIN = "FINANCE_ADMIN"
 
 
 class OrderStatus(str, Enum):

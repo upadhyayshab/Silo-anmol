@@ -374,6 +374,23 @@ class UserManager(ERPBasePassManager[UserSchema]):
         return await self.fetch(uid, session=session, joins=joins, include=include, exclude=exclude)
 
 
+class UserScopeAssignmentSchema(BaseSchema):
+    """Multi-valued row-scope grants for a user (e.g. a manager over several
+    clusters, or a head over several states). One row per (user, level, value)."""
+    __tablename__ = "user_scope_assignments"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "scope_level", "scope_value", name="uq_user_scope"),
+    )
+
+    user_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    scope_level = db.Column(db.String, nullable=False)   # CLUSTER | STATE | OUTLET
+    scope_value = db.Column(db.String, nullable=False)
+
+
+class UserScopeAssignmentManager(ERPGenericManager[UserScopeAssignmentSchema]):
+    pass
+
+
 # ============================================================================
 # OUTLET MANAGEMENT
 # ============================================================================
@@ -1626,6 +1643,7 @@ class FacebookPageManager(ERPGenericManager[FacebookPageSchema]):
 __all__ = [
     # User Management
     "UserSchema", "UserManager",
+    "UserScopeAssignmentSchema", "UserScopeAssignmentManager",
     
     # Outlet Management
     "OutletSchema", "OutletManager",

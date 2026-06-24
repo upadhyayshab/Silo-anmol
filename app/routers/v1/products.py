@@ -8,7 +8,8 @@ from models import (
     ProductCategoryCreateRequest, ProductCategoryResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles
+from utils.auth import require_roles, require_permission, apply_field_mask, AuthContext
+from utils.permissions import Permission
 from utils.constants import UserRole
 
 settings = get_settings()
@@ -122,13 +123,12 @@ async def list_products(
     search: str = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PRODUCTS_READ)),
 ):
     """
-    List all products with optional filters
+    List all products with optional filters.
+    cost_price/margin/commission are masked unless the caller holds
+    products:cost:read (finance roles + super admin).
     """
     try:
         filters = {}
@@ -169,7 +169,9 @@ async def list_products(
             )
             for prod in products.items
         ]
-        
+
+        apply_field_mask("products", ctx, product_responses)
+
         return ListResponse(items=product_responses, count=len(product_responses))
     
     except Exception as e:
@@ -182,26 +184,23 @@ async def list_products(
 @router.get("/products/barcode/{barcode}", response_model=ProductResponse)
 async def get_product_by_barcode(
     barcode: str,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PRODUCTS_READ)),
 ):
     """
     Get product by barcode
     """
     try:
         products = await product_manager.fetch_all(filters={"barcode": barcode})
-        
+
         if not products.items:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Product not found"
             )
-        
+
         prod = products.items[0]
-        
-        return ProductResponse(
+
+        resp = ProductResponse(
             uid=prod.uid,
             sku=prod.sku,
             product_name=prod.product_name,
@@ -222,6 +221,7 @@ async def get_product_by_barcode(
             is_active=prod.is_active,
             created_at=prod.created_at
         )
+        return apply_field_mask("products", ctx, resp)
     
     except HTTPException:
         raise
@@ -235,18 +235,15 @@ async def get_product_by_barcode(
 @router.get("/products/{product_id}", response_model=ProductResponse)
 async def get_product(
     product_id: str,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PRODUCTS_READ)),
 ):
     """
     Get product by ID
     """
     try:
         prod = await product_manager.fetch(product_id)
-        
-        return ProductResponse(
+
+        resp = ProductResponse(
             uid=prod.uid,
             sku=prod.sku,
             product_name=prod.product_name,
@@ -267,6 +264,7 @@ async def get_product(
             is_active=prod.is_active,
             created_at=prod.created_at
         )
+        return apply_field_mask("products", ctx, resp)
     
     except Exception as e:
         raise HTTPException(

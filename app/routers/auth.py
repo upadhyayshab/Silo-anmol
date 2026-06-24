@@ -2,19 +2,21 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings, get_engine
-from managers import UserManager
+from managers import UserManager, UserScopeAssignmentManager
 from models import (
     LoginRequest, LoginResponse, RefreshTokenRequest, RefreshTokenResponse,
     ForgotPasswordRequest, ResetPasswordRequest, StatusResponse, UserResponse
 )
 from utils.auth import (
     verify_password, create_access_token, create_refresh_token,
-    decode_token, get_current_user_id
+    decode_token, get_current_user_id, get_auth_context, AuthContext
 )
+from utils.permissions import masked_columns_for
 
 settings = get_settings()
 engine = get_engine(settings.name)
 user_manager = UserManager(engine)
+scope_assignment_manager = UserScopeAssignmentManager(engine)
 
 router = APIRouter(tags=["Authentication"])
 
@@ -58,11 +60,21 @@ async def login(payload: LoginRequest):
             {"last_login": datetime.now()}
         )
         
-        # Create tokens
+        # Resolve multi-valued scope (a user may manage several clusters/states).
+        assignments = await scope_assignment_manager.fetch_all(filters={"user_id": user.uid}, limit=0)
+        cluster_ids = [a.scope_value for a in assignments.items if a.scope_level == "CLUSTER"]
+        states = [a.scope_value for a in assignments.items if a.scope_level == "STATE"]
+
+        # Scope claims ride along so require_permission/apply_scope filter rows
+        # without a per-request DB hit (outlet expansion still queries on use).
         token_data = {
             "sub": user.uid,
             "email": user.email,
-            "role": user.role  # Remove .value since role is already a string in the database
+            "role": user.role,  # already a string in the database
+            "outlet_id": user.outlet_id,
+            "state": getattr(user, "state", None),
+            "cluster_ids": cluster_ids,
+            "states": states,
         }
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
@@ -101,11 +113,15 @@ async def refresh_token(payload: RefreshTokenRequest):
                 detail="Invalid token type"
             )
         
-        # Create new access token
+        # Create new access token (preserve scope claims from the refresh token)
         new_token_data = {
             "sub": token_data.get("sub"),
             "email": token_data.get("email"),
-            "role": token_data.get("role")
+            "role": token_data.get("role"),
+            "outlet_id": token_data.get("outlet_id"),
+            "state": token_data.get("state"),
+            "cluster_ids": token_data.get("cluster_ids") or [],
+            "states": token_data.get("states") or [],
         }
         access_token = create_access_token(new_token_data)
         
@@ -154,6 +170,27 @@ async def get_current_user(user_id: str = Depends(get_current_user_id)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User not found: {str(e)}"
         )
+
+
+@router.get("/access")
+async def get_access(ctx: AuthContext = Depends(get_auth_context)):
+    """
+    Report the caller's resolved RBAC access: role, scope, granted permissions,
+    and which sensitive columns are masked for them. Lets the frontend gate menus
+    and fields from one source instead of hard-coding role lists.
+    """
+    return {
+        "user_id": ctx.user_id,
+        "role": ctx.role,
+        "is_microservice": ctx.is_microservice,
+        "scope_level": ctx.scope_level,
+        "scope_value": ctx.scope_value,
+        "permissions": sorted(ctx.perms),
+        "masked_fields": {
+            "products": masked_columns_for("products", ctx.role),
+            "outlets": masked_columns_for("outlets", ctx.role),
+        },
+    }
 
 
 @router.post("/forgot-password", response_model=StatusResponse)

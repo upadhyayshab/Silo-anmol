@@ -13,7 +13,8 @@ from models import (
     OutletCollectionResponse, OutletCollectionSummaryResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id
+from utils.auth import require_roles, get_current_user_id, require_permission, apply_scope, AuthContext
+from utils.permissions import Permission
 from utils.constants import UserRole, OutletCollectionStatus, OrderStatus
 from utils.functions import ensure_date
 
@@ -222,29 +223,25 @@ async def list_collections(
     confirmation_status: Optional[OutletCollectionStatus] = Query(None, description="Filter by status"),
     limit: int = Query(100, ge=0, le=500),
     offset: int = Query(0, ge=0),
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT , UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_READ)),
 ):
     """
-    List outlet collections with filters
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT, OUTLET_MANAGER
+    List outlet collections with filters.
+
+    Row scope via apply_scope: outlet managers see their outlet, cluster/state
+    heads their outlets, finance/admin global. A scoped role can't widen via the
+    outlet_id query param (apply_scope overrides it).
     """
     try:
         # Build filters
         filters = {}
-        current_user = await user_manager.fetch(current_user_id)
-       
         if outlet_id:
             filters["outlet_id"] = outlet_id
         if confirmation_status:
             filters["confirmation_status"] = confirmation_status
-        
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id:
-                filters["outlet_id"] = current_user.outlet_id
-        
+
+        filters = await apply_scope(filters, ctx)
+
         # Note: Date filtering has issues with SharedBackend's filter syntax
         # For now, we'll fetch all and filter in Python if date filters are provided
         # This is a temporary workaround until SharedBackend filter is fixed

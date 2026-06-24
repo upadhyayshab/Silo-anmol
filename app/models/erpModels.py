@@ -188,15 +188,16 @@ class ProductResponse(BaseModel):
     hsn_code: str
     tax_rate: Decimal
     unit_price: Decimal
-    cost_price: Decimal
+    # Masked (nulled) for roles without products:cost:read — see utils.permissions.MASKED_COLUMNS
+    cost_price: Optional[Decimal] = None
     unit_of_measure: UnitOfMeasure
     barcode: Optional[str] = None
     image_url: Optional[str] = None
     min_stock_level: int
     lsq_display_name: Optional[str] = None
-    commission: Decimal
+    commission: Optional[Decimal] = None  # masked with cost_price
     discount: Decimal
-    margin: Decimal
+    margin: Optional[Decimal] = None       # masked with cost_price
     is_active: bool
     created_at: datetime
 
