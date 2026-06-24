@@ -23,6 +23,7 @@ class UserCreateRequest(BaseModel):
     role: UserRole
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
+    agency_id: Optional[str] = None
 
     @validator('email')
     def validate_email(cls, v):
@@ -37,6 +38,7 @@ class UserUpdateRequest(BaseModel):
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
     is_active: Optional[bool] = None
+    agency_id: Optional[str] = None
 
 
 class UserPasswordChangeRequest(BaseModel):
@@ -51,6 +53,7 @@ class UserResponse(BaseModel):
     role: UserRole
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
+    agency_id: Optional[str] = None
     is_active: bool
     last_login: Optional[datetime] = None
     created_at: datetime
@@ -63,6 +66,20 @@ class UserResponse(BaseModel):
 # ============================================================================
 # OUTLET MODELS
 # ============================================================================
+
+class AgencyCreateRequest(BaseModel):
+    name: str
+
+
+class AgencyResponse(BaseModel):
+    uid: str
+    name: str
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 
 class OutletCreateRequest(BaseModel):
     outlet_name: str
@@ -442,6 +459,7 @@ class OrderResponse(BaseModel):
     pincode: str
     lat_lon: Optional[List[Decimal]] = None
     telecaller_id: str
+    agency_id: Optional[str] = None
     assigned_outlet_id: Optional[str] = None
     order_status: OrderStatus
     collection_type: CollectionType
@@ -1157,6 +1175,9 @@ class SmartpingEnqueueResponse(BaseModel):
 # ============================================================================
 
 __all__ = [
+    # Agency
+    "AgencyCreateRequest", "AgencyResponse",
+
     # User
     "UserCreateRequest", "UserUpdateRequest", "UserPasswordChangeRequest", "UserResponse",
     

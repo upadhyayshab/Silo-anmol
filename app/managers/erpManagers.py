@@ -334,6 +334,7 @@ class UserSchema(BasePassSchema):
     # Region for CRM lead routing — telecallers are matched to leads in the same state.
     # Backfilled from the user's outlet state; can be overridden explicitly.
     state = db.Column(db.String(100), nullable=True, index=True)
+    agency_id = db.Column(db.String, db.ForeignKey("agencies.uid"), nullable=True, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     last_login = db.Column(db.DateTime(timezone=True), nullable=True)
     
@@ -372,6 +373,18 @@ class UserManager(ERPBasePassManager[UserSchema]):
         # Always fetch fresh data after update to avoid session issues
         await super().update(uid, updates, session=session, joins=joins, include=include, exclude=exclude)
         return await self.fetch(uid, session=session, joins=joins, include=include, exclude=exclude)
+
+
+class AgencySchema(BaseSchema):
+    """External calling agency (a group of telecallers with their own admin)."""
+    __tablename__ = "agencies"
+
+    name = db.Column(db.String(255), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+
+class AgencyManager(ERPGenericManager[AgencySchema]):
+    pass
 
 
 class UserScopeAssignmentSchema(BaseSchema):
@@ -691,6 +704,7 @@ class CustomerOrderSchema(BaseSchema):
     
     # Order management
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    agency_id = db.Column(db.String, db.ForeignKey("agencies.uid"), nullable=True, index=True)
     assigned_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True, index=True)
     order_status = db.Column(db.Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False, index=True)
     collection_type = db.Column(db.Enum(CollectionType), nullable=False)
@@ -1642,6 +1656,7 @@ class FacebookPageManager(ERPGenericManager[FacebookPageSchema]):
 
 __all__ = [
     # User Management
+    "AgencySchema", "AgencyManager",
     "UserSchema", "UserManager",
     "UserScopeAssignmentSchema", "UserScopeAssignmentManager",
     

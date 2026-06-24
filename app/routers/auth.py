@@ -64,6 +64,7 @@ async def login(payload: LoginRequest):
         assignments = await scope_assignment_manager.fetch_all(filters={"user_id": user.uid}, limit=0)
         cluster_ids = [a.scope_value for a in assignments.items if a.scope_level == "CLUSTER"]
         states = [a.scope_value for a in assignments.items if a.scope_level == "STATE"]
+        agency_ids = [a.scope_value for a in assignments.items if a.scope_level == "AGENCY"]
 
         # Scope claims ride along so require_permission/apply_scope filter rows
         # without a per-request DB hit (outlet expansion still queries on use).
@@ -75,6 +76,7 @@ async def login(payload: LoginRequest):
             "state": getattr(user, "state", None),
             "cluster_ids": cluster_ids,
             "states": states,
+            "agency_ids": agency_ids,
         }
         access_token = create_access_token(token_data)
         refresh_token = create_refresh_token(token_data)
@@ -122,6 +124,7 @@ async def refresh_token(payload: RefreshTokenRequest):
             "state": token_data.get("state"),
             "cluster_ids": token_data.get("cluster_ids") or [],
             "states": token_data.get("states") or [],
+            "agency_ids": token_data.get("agency_ids") or [],
         }
         access_token = create_access_token(new_token_data)
         

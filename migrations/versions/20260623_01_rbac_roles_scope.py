@@ -29,29 +29,37 @@ NEW_ROLES = [
 
 
 def upgrade() -> None:
-    op.create_table(
-        "user_scope_assignments",
-        sa.Column("uid", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.uid"), nullable=False, index=True),
-        sa.Column("scope_level", sa.String(), nullable=False),   # CLUSTER | STATE | OUTLET
-        sa.Column("scope_value", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True)),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.UniqueConstraint("user_id", "scope_level", "scope_value", name="uq_user_scope"),
-    )
-
     bind = op.get_bind()
+    insp = sa.inspect(bind)
+    # Idempotent: the app's create_all may already have built this table on a
+    # shared dev DB where alembic's version pointer lags the live schema.
+    if not insp.has_table("user_scope_assignments"):
+        op.create_table(
+            "user_scope_assignments",
+            sa.Column("uid", sa.String(), primary_key=True),
+            sa.Column("user_id", sa.String(), sa.ForeignKey("users.uid"), nullable=False, index=True),
+            sa.Column("scope_level", sa.String(), nullable=False),   # CLUSTER | STATE | OUTLET
+            sa.Column("scope_value", sa.String(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(timezone=True)),
+            sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+            sa.UniqueConstraint("user_id", "scope_level", "scope_value", name="uq_user_scope"),
+        )
+
     if bind.dialect.name != "postgresql":
         return  # sqlite (tests) stores the enum as plain text — nothing to alter
 
-    # Discover the actual enum type backing users.role rather than guessing its name.
+    # Discover the enum backing users.role. Scope to current_schema(): this DB
+    # holds sibling services (orchestrator_dev, gausampurna_leads_dev) that each
+    # have their own users.role enum — an unscoped match alters the wrong one.
     type_name = bind.execute(sa.text("""
         SELECT t.typname
         FROM pg_type t
         JOIN pg_attribute a ON a.atttypid = t.oid
         JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relname = 'users' AND a.attname = 'role' AND a.attnum > 0
+          AND n.nspname = current_schema()
     """)).scalar()
     if not type_name:
         return  # role column isn't a native enum in this environment

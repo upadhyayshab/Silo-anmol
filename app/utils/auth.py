@@ -180,6 +180,7 @@ class AuthContext:
     outlet_id: Optional[str] = None
     states: list = field(default_factory=list)        # STATE scope (multi-valued)
     cluster_ids: list = field(default_factory=list)   # CLUSTER scope (multi-valued)
+    agency_ids: list = field(default_factory=list)   # AGENCY scope (admin's agencies)
     perms: set = field(default_factory=set)
 
     @property
@@ -190,6 +191,8 @@ class AuthContext:
             return self.states
         if self.scope_level == ScopeLevel.CLUSTER.value:
             return self.cluster_ids
+        if self.scope_level == ScopeLevel.AGENCY.value:
+            return self.agency_ids
         return None
 
     def has(self, perm) -> bool:
@@ -228,6 +231,7 @@ def _build_context(request: Request, credentials: Optional[HTTPAuthorizationCred
         outlet_id=payload.get("outlet_id"),
         states=payload.get("states") or ([payload["state"]] if payload.get("state") else []),
         cluster_ids=payload.get("cluster_ids") or [],
+        agency_ids=payload.get("agency_ids") or [],
         perms=role_perms(role),
     )
 
@@ -294,6 +298,26 @@ async def _scoped_outlet_ids(ctx: AuthContext) -> list:
     return []
 
 
+_user_mgr = None
+
+
+def _get_user_mgr():
+    global _user_mgr
+    if _user_mgr is None:
+        from config import get_engine
+        from managers import UserManager
+        _user_mgr = UserManager(get_engine(settings.name))
+    return _user_mgr
+
+
+async def _scoped_telecaller_ids(ctx: AuthContext) -> list:
+    """Expand an agency admin's agencies to the telecaller user-ids they cover."""
+    if not ctx.agency_ids:
+        return []
+    res = await _get_user_mgr().fetch_all(filters={"agency_id": ctx.agency_ids}, limit=0)
+    return [u.uid for u in res.items]
+
+
 async def apply_scope(filters: Optional[dict], ctx: AuthContext, outlet_column: str = "outlet_id") -> dict:
     """Narrow filters to the caller's row scope and return them.
 
@@ -305,6 +329,10 @@ async def apply_scope(filters: Optional[dict], ctx: AuthContext, outlet_column: 
     """
     out = dict(filters or {})
     if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return out
+    if ctx.scope_level == ScopeLevel.AGENCY.value:
+        ids = await _scoped_telecaller_ids(ctx)
+        out["telecaller_id"] = ids or ["__none__"]
         return out
     if ctx.scope_level == ScopeLevel.OUTLET.value:
         out[outlet_column] = ctx.outlet_id or "__none__"
@@ -349,6 +377,35 @@ def apply_field_mask(resource: str, ctx: AuthContext, data):
     return data
 
 
+def enforce_agency_roster_fence(ctx: "AuthContext", target_role, target_agency_id) -> None:
+    """An AGENCY_ADMIN may only create/modify AGENCY_TELECALLERs inside their own
+    agency. No-op for everyone else. Raises 403 on violation."""
+    if ctx.role != "AGENCY_ADMIN":
+        return
+    role_val = target_role.value if hasattr(target_role, "value") else str(target_role)
+    if role_val != "AGENCY_TELECALLER":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Agency admins may only manage AGENCY_TELECALLER accounts")
+    if target_agency_id not in ctx.agency_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Agency admins may only manage their own agency")
+
+
+def enforce_agency_update_fence(ctx: "AuthContext", target_role, target_agency_id, updates: dict) -> None:
+    """Fence for modifying an existing user. First the create-time fence (target
+    must be an own-agency AGENCY_TELECALLER), then forbid an AGENCY_ADMIN from
+    re-targeting the member's agency or outlet."""
+    enforce_agency_roster_fence(ctx, target_role, target_agency_id)
+    if ctx.role != "AGENCY_ADMIN":
+        return
+    if "agency_id" in updates and updates["agency_id"] not in ctx.agency_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Agency admins may not move a member to another agency")
+    if "outlet_id" in updates:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Agency admins may not change a member's outlet")
+
+
 __all__ = [
     "verify_password",
     "get_password_hash",
@@ -364,4 +421,6 @@ __all__ = [
     "apply_scope",
     "mask_fields",
     "apply_field_mask",
+    "enforce_agency_roster_fence",
+    "enforce_agency_update_fence",
 ]

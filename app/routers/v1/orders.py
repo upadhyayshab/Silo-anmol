@@ -17,7 +17,7 @@ from models import (
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult
 )
-from utils.auth import require_roles, get_current_user_id
+from utils.auth import require_roles, get_current_user_id, get_auth_context, AuthContext, apply_scope
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType
 from utils.crm_constants import ActivityType
 from utils.warehouse_utils import get_default_warehouse_id
@@ -67,7 +67,8 @@ async def create_order(
     payload: OrderCreateRequest,
     background_tasks: BackgroundTasks,
     current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
+        UserRole.AGENCY_TELECALLER
     ))
 ):
     """
@@ -200,6 +201,11 @@ async def create_order(
         if payload.prepaid_amount != original_prepaid:
             print(f"❌ CRITICAL: prepaid_amount changed from {original_prepaid} to {payload.prepaid_amount}!")
         
+        caller_agency_id = None
+        if current_user_id != "microservice":
+            _caller = await user_manager.fetch(current_user_id)
+            caller_agency_id = getattr(_caller, "agency_id", None)
+
         new_order = CustomerOrderSchema(
             order_number=order_number,
             customer_name=payload.customer_name,
@@ -227,7 +233,8 @@ async def create_order(
             prepaid_amount=payload.prepaid_amount,
             total_amount=final_total_amount,
             total_commission=total_commission,  # New field
-            priority_level=payload.priority_level
+            priority_level=payload.priority_level,
+            agency_id=caller_agency_id,
         )
         
         # DEBUG: Log the created order schema values
@@ -336,6 +343,7 @@ async def create_order(
                 state=created_order.state,
                 pincode=created_order.pincode,
                 telecaller_id=created_order.telecaller_id,
+                agency_id=created_order.agency_id,
                 assigned_outlet_id=assigned_outlet_id,
                 order_status=created_order.order_status,
                 collection_type=created_order.collection_type,
@@ -569,7 +577,10 @@ async def create_proxy_order(
         # IMPORTANT: For proxy orders, NEVER auto-assign to outlet
         # Always use Google API assignment (assigned_outlet_id = None initially)
         assigned_outlet_id = None
-        
+
+        _tc = await user_manager.fetch(payload.telecaller_id)
+        proxy_agency_id = getattr(_tc, "agency_id", None)
+
         new_order = CustomerOrderSchema(
             order_number=order_number,
             customer_name=payload.customer_name,
@@ -597,7 +608,8 @@ async def create_proxy_order(
             prepaid_amount=payload.prepaid_amount,
             total_amount=final_total_amount,
             total_commission=total_commission,
-            priority_level=payload.priority_level
+            priority_level=payload.priority_level,
+            agency_id=proxy_agency_id,
         )
         
         created_order = await order_manager.create(new_order)
@@ -694,6 +706,7 @@ async def create_proxy_order(
             state=created_order.state,
             pincode=created_order.pincode,
             telecaller_id=created_order.telecaller_id,  # Shows target telecaller
+            agency_id=created_order.agency_id,
             assigned_outlet_id=assigned_outlet_id,
             order_status=created_order.order_status,
             collection_type=created_order.collection_type,
@@ -1242,9 +1255,10 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     dynamic_filters: Dict[str, Any] = Depends(D.filtering_dependency),
     sorts: List[str] = Depends(D.sorting_dependency),
     current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DELIVERY_GUY,
+        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DELIVERY_GUY, UserRole.AGENCY_ADMIN,
         allowed_scopes=["delivery:read"]
-    ))
+    )),
+    ctx: AuthContext = Depends(get_auth_context),
 ):
     """
     Get orders with filters
@@ -1270,6 +1284,8 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
                     filters["assigned_outlet_id"] = current_user.outlet_id
             elif current_user.role == UserRole.DELIVERY_GUY:
                 filters["delivery_person_id"] = current_user_id
+            elif current_user.role == UserRole.AGENCY_ADMIN:
+                filters = await apply_scope(filters, ctx)
         
         # 2. Manual filters
         if transfer_status:
@@ -1441,6 +1457,7 @@ async def get_order_response(order_id: str) -> OrderResponse:
         state=order.state,
         pincode=order.pincode,
         telecaller_id=order.telecaller_id,
+        agency_id=order.agency_id,
         assigned_outlet_id=order.assigned_outlet_id,
         order_status=order.order_status,
         collection_type=order.collection_type,
@@ -1557,6 +1574,7 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
         state=order.state,
         pincode=order.pincode,
         telecaller_id=order.telecaller_id,
+        agency_id=order.agency_id,
         assigned_outlet_id=order.assigned_outlet_id,
         order_status=order.order_status,
         collection_type=order.collection_type,
@@ -1577,7 +1595,7 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
         delivery_person=delivery_person_dict,
         items=items,
         created_at=order.created_at,
-        
+
         # --- Appended Joined Relationships ---
         telecaller=telecaller,
         assigned_outlet=assigned_outlet,

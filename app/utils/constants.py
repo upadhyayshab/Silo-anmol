@@ -30,6 +30,9 @@ class UserRole(str, Enum):
     CONFIG_ADMIN = "CONFIG_ADMIN"
     OPS_ADMIN = "OPS_ADMIN"
     FINANCE_ADMIN = "FINANCE_ADMIN"
+    # External calling agencies (see agency-grouping design)
+    AGENCY_TELECALLER = "AGENCY_TELECALLER"
+    AGENCY_ADMIN = "AGENCY_ADMIN"
 
 
 class OrderStatus(str, Enum):

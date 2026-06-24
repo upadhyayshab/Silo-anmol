@@ -77,6 +77,7 @@ class ScopeLevel(str, Enum):
     STATE = "STATE"
     CLUSTER = "CLUSTER"
     OUTLET = "OUTLET"
+    AGENCY = "AGENCY"
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +151,7 @@ ROLE_DEFINITIONS = {
         P.PRODUCTS_READ, P.PRODUCTS_WRITE, P.INVENTORY_READ, P.INVENTORY_WRITE,
         P.TRANSFERS_READ, P.TRANSFERS_WRITE, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
         P.CLUSTERS_READ, P.REPORTS_READ, P.ORDERS_READ, P.COLLECTIONS_READ,
+        P.USERS_MANAGE,
     }),
 
     # ----- L4: oversee (read-heavy; accountant/finance write) -----
@@ -224,6 +226,14 @@ ROLE_DEFINITIONS = {
         P.PAYOUTS_READ, P.PAYOUTS_WRITE, P.PAYOUTS_APPROVE, P.DRIVER_PAY_WRITE,
         P.PRODUCTS_READ, P.PRODUCTS_COST_READ, P.PRODUCTS_COST_WRITE,
         P.CONFIG_READ, P.CONFIG_WRITE, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
+    }),
+
+    # ----- External calling agencies -----
+    UserRole.AGENCY_TELECALLER: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
+        P.ORDERS_READ, P.ORDERS_WRITE, P.PRODUCTS_READ, P.LEADS_READ,
+    }),
+    UserRole.AGENCY_ADMIN: dict(scope=ScopeLevel.AGENCY, location_type=None, perms={
+        P.ORDERS_READ, P.REPORTS_READ, P.LEADS_READ, P.USERS_READ, P.USERS_MANAGE,
     }),
 }
 

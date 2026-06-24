@@ -9,7 +9,11 @@ from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
 )
-from utils.auth import get_password_hash, verify_password, require_roles, get_current_user_id
+from utils.auth import (get_password_hash, verify_password, require_roles,
+                        get_current_user_id, require_permission, AuthContext,
+                        enforce_agency_roster_fence, enforce_agency_update_fence,
+                        get_auth_context)
+from utils.permissions import Permission
 from utils.constants import UserRole
 
 settings = get_settings()
@@ -184,21 +188,25 @@ async def sync_lsq_telecallers(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT))
+    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT, UserRole.AGENCY_ADMIN)),
+    ctx: AuthContext = Depends(get_auth_context),
 ):
     """Get specific user details"""
     try:
         # Users can view their own profile, admins and warehouse managers can view any user
         current_user = await user_manager.fetch(current_user_id)
-        
+
         if current_user_id != user_id and current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: You can only view your own profile"
             )
-        
+
         user = await user_manager.fetch(user_id)
-        
+
+        if ctx.role == "AGENCY_ADMIN" and getattr(user, "agency_id", None) not in ctx.agency_ids:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Out of agency scope")
+
         return UserResponse(
             uid=user.uid,
             email=user.email,
@@ -280,7 +288,8 @@ async def list_users(
     is_active: bool = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT))
+    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT, UserRole.AGENCY_ADMIN)),
+    ctx: AuthContext = Depends(get_auth_context),
 ):
     """
     List all users with optional filters
@@ -294,7 +303,10 @@ async def list_users(
             filters["outlet_id"] = outlet_id
         if is_active is not None:
             filters["is_active"] = is_active
-        
+
+        if ctx.role == "AGENCY_ADMIN":
+            filters["agency_id"] = ctx.agency_ids or ["__none__"]
+
         users = await user_manager.fetch_all(
             limit=limit,
             offset=offset,
@@ -329,13 +341,14 @@ async def list_users(
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     payload: UserCreateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_MANAGE)),
 ):
     """
     Create new user
-    Requires: super_admin or admin role
+    Requires: USERS_MANAGE permission
     """
     try:
+        enforce_agency_roster_fence(ctx, payload.role, payload.agency_id)
         # Check if email already exists
         existing = await user_manager.fetch_all(filters={"email": payload.email})
         if existing.items:
@@ -343,7 +356,7 @@ async def create_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already exists"
             )
-        
+
         # Create user with hashed password using bcrypt
         from managers import UserSchema
         user = UserSchema(
@@ -353,11 +366,12 @@ async def create_user(
             role=payload.role,
             phone=payload.phone,
             outlet_id=payload.outlet_id,
+            agency_id=payload.agency_id,
             is_active=True
         )
-        
+
         created_user = await user_manager.create(user)
-        
+
         return UserResponse(
             uid=created_user.uid,
             email=created_user.email,
@@ -365,6 +379,7 @@ async def create_user(
             role=created_user.role,
             phone=created_user.phone,
             outlet_id=created_user.outlet_id,
+            agency_id=created_user.agency_id,
             is_active=created_user.is_active,
             last_login=created_user.last_login,
             created_at=created_user.created_at,
@@ -384,23 +399,25 @@ async def create_user(
 async def update_user(
     user_id: str,
     payload: UserUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_MANAGE)),
 ):
     """
     Update user details
-    Requires: super_admin or admin role
+    Requires: USERS_MANAGE permission
     """
     try:
+        target = await user_manager.fetch(user_id)
         updates = payload.dict(exclude_unset=True)
-        
+        enforce_agency_update_fence(ctx, target.role, getattr(target, "agency_id", None), updates)
+
         if not updates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No fields to update"
             )
-        
+
         updated_user = await user_manager.update(user_id, updates)
-        
+
         return UserResponse(
             uid=updated_user.uid,
             email=updated_user.email,
@@ -408,6 +425,7 @@ async def update_user(
             role=updated_user.role,
             phone=updated_user.phone,
             outlet_id=updated_user.outlet_id,
+            agency_id=updated_user.agency_id,
             is_active=updated_user.is_active,
             last_login=updated_user.last_login,
             created_at=updated_user.created_at,
@@ -426,16 +444,20 @@ async def update_user(
 @router.delete("/{user_id}", response_model=StatusResponse)
 async def deactivate_user(
     user_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_MANAGE)),
 ):
     """
     Deactivate user (soft delete)
-    Requires: super_admin role only
+    Requires: USERS_MANAGE permission
     """
     try:
+        target = await user_manager.fetch(user_id)
+        enforce_agency_roster_fence(ctx, target.role, getattr(target, "agency_id", None))
         await user_manager.update(user_id, {"is_active": False})
         return StatusResponse(status="ok", message="User deactivated successfully")
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
