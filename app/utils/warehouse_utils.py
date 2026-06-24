@@ -18,13 +18,19 @@ _LEGACY_WAREHOUSE_ID = "outlets_1bd14da6-954e-4f7d-bbf9-dafa4a6c3cf2"
 
 
 async def get_default_warehouse_id(engine) -> str:
-    """Return the UID of the first active warehouse outlet."""
+    """Return the UID of the oldest active warehouse outlet.
+
+    Ordered by created_at so the result is deterministic across multiple
+    warehouses (the original Hassan warehouse wins). Only a fallback now —
+    transfers store an explicit from_outlet_id; NULL is legacy data only.
+    """
     from managers import OutletSchema
     async with AsyncSession(engine) as session:
         result = await session.execute(
             db.select(OutletSchema.uid)
             .where(OutletSchema.outlet_type == OutletType.WAREHOUSE)
             .where(OutletSchema.is_active == True)
+            .order_by(OutletSchema.created_at.asc())
             .limit(1)
         )
         row = result.scalar_one_or_none()

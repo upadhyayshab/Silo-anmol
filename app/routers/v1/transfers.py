@@ -54,7 +54,19 @@ async def create_transfer_request(
     try:
         # Get current user to determine permissions
         current_user = await user_manager.fetch(current_user_id)
-        
+
+        # Source and destination are both mandatory and must differ
+        if not payload.from_outlet_id or not payload.to_outlet_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Both source and destination outlets are required."
+            )
+        if payload.from_outlet_id == payload.to_outlet_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Source and destination outlets must be different."
+            )
+
         # Validate source and destination
         if payload.from_outlet_id:
             try:
@@ -227,6 +239,12 @@ async def mass_upload_transfer_requests(
             except Exception as e:
                 raise ValueError(str(e))
 
+            # Source is mandatory and must differ from destination
+            if not from_outlet_id:
+                raise ValueError("Source outlet is required")
+            if from_outlet_id == to_outlet_id:
+                raise ValueError("Source and destination outlets must be different")
+
             # 3. Validate Products and Check Availability
             validated_items = []
             for item in transfer_req.items:
@@ -389,6 +407,16 @@ async def get_transfer_responses_batch(transfers: List[StockTransferOrderSchema]
     # 3. Assemble responses
     responses = []
     for transfer in transfers:
+        # Nested: source outlet
+        from_outlet = None
+        if transfer.from_outlet_id and transfer.from_outlet_id in outlets_map:
+            outlet = outlets_map[transfer.from_outlet_id]
+            from_outlet = OutletBrief(
+                uid=outlet.uid,
+                outlet_name=outlet.outlet_name,
+                outlet_code=outlet.outlet_code,
+            )
+
         # Nested: destination outlet
         to_outlet = None
         if transfer.to_outlet_id and transfer.to_outlet_id in outlets_map:
@@ -434,6 +462,7 @@ async def get_transfer_responses_batch(transfers: List[StockTransferOrderSchema]
             uid=transfer.uid,
             transfer_number=transfer.transfer_number,
             from_outlet_id=transfer.from_outlet_id,
+            from_outlet=from_outlet,
             to_outlet_id=transfer.to_outlet_id,
             to_outlet=to_outlet,
             status=transfer.status,
@@ -971,6 +1000,19 @@ async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
     try:
         transfer = await transfer_manager.fetch(transfer_id)
 
+        # Nested: source outlet
+        from_outlet = None
+        if transfer.from_outlet_id:
+            try:
+                outlet = await outlet_manager.fetch(transfer.from_outlet_id)
+                from_outlet = OutletBrief(
+                    uid=outlet.uid,
+                    outlet_name=outlet.outlet_name,
+                    outlet_code=outlet.outlet_code,
+                )
+            except Exception:
+                pass
+
         # Nested: destination outlet
         to_outlet = None
         try:
@@ -1027,6 +1069,7 @@ async def get_transfer_response(transfer_id: str) -> StockTransferResponse:
             uid=transfer.uid,
             transfer_number=transfer.transfer_number,
             from_outlet_id=transfer.from_outlet_id,
+            from_outlet=from_outlet,
             to_outlet_id=transfer.to_outlet_id,
             to_outlet=to_outlet,
             status=transfer.status,

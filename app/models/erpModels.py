@@ -606,8 +606,8 @@ class TransferItemRequest(BaseModel):
 
 
 class StockTransferCreateRequest(BaseModel):
-    from_outlet_id: Optional[str] = None  # NULL for warehouse
-    to_outlet_id: str
+    from_outlet_id: str = Field(..., min_length=1)  # source is mandatory (no NULL warehouse)
+    to_outlet_id: str = Field(..., min_length=1)
     scheduled_date: Optional[date] = None
     items: List[TransferItemRequest]
     notes: Optional[str] = None
@@ -618,8 +618,8 @@ class TransferItemRequestBulk(BaseModel):
 
 
 class StockTransferCreateRequestBulk(BaseModel):
-    from_outlet_name: Optional[str] = None  # NULL for warehouse
-    to_outlet_name: str
+    from_outlet_name: str = Field(..., min_length=1)  # source is mandatory (no NULL warehouse)
+    to_outlet_name: str = Field(..., min_length=1)
     scheduled_date: Optional[date] = None
     items: List[TransferItemRequestBulk]
     notes: Optional[str] = None
@@ -682,6 +682,7 @@ class StockTransferResponse(BaseModel):
     uid: str
     transfer_number: Optional[str] = None
     from_outlet_id: Optional[str] = None
+    from_outlet: Optional[OutletBrief] = None
     to_outlet_id: str
     to_outlet: Optional[OutletBrief] = None
     status: TransferStatus
