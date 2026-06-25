@@ -1112,9 +1112,15 @@ class SalesTransactionManager(ERPGenericManager[SalesTransactionSchema]):
 class StockTransferOrderSchema(BaseSchema):
     """Stock transfer between warehouse and outlets"""
     __tablename__ = "stock_transfer_orders"
+    # DB-level guarantee that no path (API, script, raw SQL) can create a transfer
+    # without a source. Applied NOT VALID on existing DBs to grandfather legacy
+    # NULL rows; new inserts/updates are still checked. to_outlet_id is NOT NULL.
+    __table_args__ = (
+        db.CheckConstraint("from_outlet_id IS NOT NULL", name="ck_transfers_from_outlet_not_null"),
+    )
 
     transfer_number = db.Column(db.String(50), unique=True, nullable=True, index=True)
-    from_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)  # NULL = warehouse
+    from_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)  # legacy NULLs exist; CHECK blocks new ones
     to_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False, index=True)
     status = db.Column(db.Enum(TransferStatus), default=TransferStatus.PENDING, nullable=False, index=True)
     requested_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
