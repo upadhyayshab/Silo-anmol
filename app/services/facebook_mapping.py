@@ -140,6 +140,85 @@ def apply_resolved(resolved: Dict[Tuple[str, str], dict],
 
 
 # --------------------------------------------------------------------------
+# Question display labels (English) — pure helpers, unit-tested
+# --------------------------------------------------------------------------
+
+def custom_bound(resolved: Dict[Tuple[str, str], dict], key: str) -> bool:
+    """True if a question is shown in custom_fields (vs a real lead column).
+
+    Only custom-bound questions need an English display label — ones routed to a
+    real column (phone_number -> mobile) or campaign_data show structured already.
+    """
+    row = resolved.get(("question", key))
+    if (row and row.get("is_active") and row.get("target")
+            and row.get("target_kind") in ("lead", "campaign_data")):
+        return False
+    return True
+
+
+def relabel_custom_fields(custom_fields: Optional[dict],
+                          labels: Dict[str, str]) -> Optional[dict]:
+    """Re-key a lead's custom_fields to English labels for the details tab.
+
+    Falls back to the stored key when there's no label yet, so nothing vanishes.
+    Read-time only — stored keys never change, so adding a translation relabels
+    every past lead with no backfill.
+    """
+    if not custom_fields:
+        return custom_fields
+    return {(labels.get(k) or k): v for k, v in custom_fields.items()}
+
+
+def _routes_to_column(view: Optional[dict]) -> bool:
+    """True if a question mapping sends the answer to a real lead column /
+    campaign_data (so it shows structured and needs no English label)."""
+    return bool(view and view.get("is_active") and view.get("target")
+                and view.get("target_kind") in ("lead", "campaign_data"))
+
+
+def merge_questions(form_questions: Optional[List[dict]],
+                    mapped_by_key: Dict[str, dict]) -> List[dict]:
+    """Per-form question views for the mapping UI.
+
+    Shows the form's actual questions (the snapshot), each enriched with any
+    matching mapping row. ``pending=True`` only when a question lands in
+    custom_fields AND has no English label — questions routed to a real column
+    (phone -> mobile) are never flagged. ``mapped_by_key`` is {meta_field -> _row_view}.
+
+    Falls back to the configured mapping rows only when the form has no snapshot
+    yet, so the step isn't empty before the first form sync.
+    """
+    out: List[dict] = []
+    for q in form_questions or []:
+        key = q.get("name")
+        if not key:
+            continue
+        mv = mapped_by_key.get(key)
+        view = dict(mv or {})
+        view.setdefault("meta_field", key)
+        view.setdefault("field_kind", "question")
+        view.setdefault("target", None)
+        view.setdefault("target_kind", "custom")
+        view.setdefault("is_active", True)
+        view.setdefault("label", None)
+        view["label_raw"] = q.get("label")
+        view["type"] = q.get("type")
+        # Only CUSTOM (advertiser-written) questions need an English label. Standard
+        # FB fields (FULL_NAME/EMAIL/PHONE/...) are already structured / pre-routed.
+        view["pending"] = (q.get("type") == "CUSTOM"
+                           and not view.get("label")
+                           and not _routes_to_column(mv))
+        out.append(view)
+    if not out:                                    # no snapshot yet -> show config rows
+        for view in mapped_by_key.values():
+            v = dict(view)
+            v.setdefault("label_raw", None)
+            v["pending"] = False
+            out.append(v)
+    return out
+
+
+# --------------------------------------------------------------------------
 # DB-backed resolution + seeding
 # --------------------------------------------------------------------------
 
@@ -185,12 +264,14 @@ async def resolve(engine, form_id: Optional[str] = None) -> Dict[Tuple[str, str]
     out: Dict[Tuple[str, str], dict] = {}
     for r in defaults.items:
         out[(r.field_kind, r.meta_field)] = {
-            "target": r.target, "target_kind": r.target_kind, "is_active": r.is_active}
+            "target": r.target, "target_kind": r.target_kind,
+            "is_active": r.is_active, "label": r.label}
     if form_id:
         forms = await mgr.fetch_all(filters={"scope": "form", "form_id": form_id}, limit=500)
         for r in forms.items:
             out[(r.field_kind, r.meta_field)] = {
-                "target": r.target, "target_kind": r.target_kind, "is_active": r.is_active}
+                "target": r.target, "target_kind": r.target_kind,
+                "is_active": r.is_active, "label": r.label}
 
     _cache[key] = (out, time.monotonic())
     return out
@@ -214,6 +295,47 @@ async def form_status(engine, form_id: Optional[str]) -> Optional[str]:
     """A form's ingestion status ('active'/'inactive'), or None if not synced yet."""
     row = await _form_row(engine, form_id)
     return row.status if row else None
+
+
+async def question_labels(engine, form_id: Optional[str]) -> Dict[str, str]:
+    """{question_key -> best display label} for relabeling custom_fields at read time.
+
+    English (ops-set) overlays the raw FB question text; the raw text is the
+    fallback so an untranslated question still shows its real wording.
+    """
+    out: Dict[str, str] = {}
+    row = await _form_row(engine, form_id)
+    for q in (row.questions if row else None) or []:
+        if q.get("name") and q.get("label"):
+            out[q["name"]] = q["label"]            # raw FB text (e.g. Kannada)
+    resolved = await resolve(engine, form_id)
+    for (kind, key), r in resolved.items():
+        if kind == "question" and r.get("label"):
+            out[key] = r["label"]                  # English overlays raw
+    return out
+
+
+async def pending_translations(engine) -> List[dict]:
+    """Across active forms, every custom-bound question with no English label yet.
+
+    This is the ops flag/badge — new Kannada questions land here until translated.
+    Questions routed to real lead columns are excluded (they need no label).
+    """
+    from managers import FbLeadgenFormManager
+    forms = await FbLeadgenFormManager(engine).fetch_all(filters={"status": "active"}, limit=500)
+    out: List[dict] = []
+    for form in forms.items:
+        resolved = await resolve(engine, form.form_id)
+        for q in form.questions or []:
+            key = q.get("name")
+            if not key or q.get("type") != "CUSTOM" or not custom_bound(resolved, key):
+                continue                           # only advertiser-written questions
+            row = resolved.get(("question", key))
+            if row and row.get("label"):
+                continue                           # already translated
+            out.append({"form_id": form.form_id, "form_name": form.form_name,
+                        "meta_field": key, "label_raw": q.get("label"), "type": q.get("type")})
+    return out
 
 
 # --------------------------------------------------------------------------

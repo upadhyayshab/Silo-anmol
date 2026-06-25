@@ -131,6 +131,7 @@ class MappingItem(BaseModel):
     target: Optional[str] = None           # null = ignore (-Select Field-)
     target_kind: Literal["lead", "campaign_data", "custom"] = "campaign_data"
     is_active: bool = True
+    label: Optional[str] = None            # ops English label (questions); shown on the lead
 
 
 class MappingPut(BaseModel):
@@ -143,9 +144,13 @@ class FormPatch(BaseModel):
 
 
 def _row_view(r) -> dict:
+    # Marketing fields have a built-in friendly label; question labels are ops-set
+    # (None until translated, which the UI flags as pending).
+    label = r.label or (facebook_mapping.LABELS.get(r.meta_field, r.meta_field)
+                        if r.field_kind == "marketing" else None)
     return {"uid": r.uid, "field_kind": r.field_kind, "meta_field": r.meta_field,
-            "label": facebook_mapping.LABELS.get(r.meta_field, r.meta_field),
-            "target": r.target, "target_kind": r.target_kind, "is_active": r.is_active}
+            "label": label, "target": r.target,
+            "target_kind": r.target_kind, "is_active": r.is_active}
 
 
 async def _upsert_mapping(scope: str, form_id: Optional[str], items: List[MappingItem]) -> None:
@@ -155,7 +160,8 @@ async def _upsert_mapping(scope: str, form_id: Optional[str], items: List[Mappin
         if form_id:
             f["form_id"] = form_id
         existing = await mgr.fetch_all(filters=f, limit=1)
-        data = {"target": it.target, "target_kind": it.target_kind, "is_active": it.is_active}
+        data = {"target": it.target, "target_kind": it.target_kind,
+                "is_active": it.is_active, "label": it.label}
         if existing.items:
             await mgr.update(existing.items[0].uid, data)
         else:
@@ -230,10 +236,15 @@ async def _form_mapping_payload(form_id: str) -> dict:
     items = list(eff.values())
 
     form_row = await facebook_mapping._form_row(engine, form_id)
+    # Merge the form's actual questions so untranslated ones surface (pending=True),
+    # even when they have no mapping row yet.
+    questions = facebook_mapping.merge_questions(
+        form_row.questions if form_row else None,
+        {i["meta_field"]: i for i in items if i["field_kind"] == "question"})
     return {
         "form": form_row.model_dump() if form_row else {"form_id": form_id},
         "marketing": [i for i in items if i["field_kind"] == "marketing"],
-        "question": [i for i in items if i["field_kind"] == "question"],
+        "question": questions,
     }
 
 
@@ -260,3 +271,20 @@ async def test_lead(form_id: str, body: dict = Body(...), _: str = Depends(requi
     lead_json = {**body, "form_id": form_id}
     payload = await facebook_mapping.build_lead_request(engine, lead_json)
     return {"would_create": payload.model_dump(exclude_none=True)}
+
+
+# --------------------------------------------------------------------------
+# Pending translations — the ops flag/badge for untranslated questions
+# --------------------------------------------------------------------------
+
+translations_router = APIRouter(prefix="/facebook/translations", tags=["CRM - Facebook Translations"])
+
+
+@translations_router.get("/pending")
+async def pending_translations(_: str = Depends(require_roles(*ADMIN))):
+    """Questions across active forms with no English label yet.
+
+    Ops translate each by PUTting a per-form mapping with a `label`
+    (POST /facebook/forms/{form_id}/mapping).
+    """
+    return await facebook_mapping.pending_translations(engine)

@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 import sqlalchemy as db
+from sqlalchemy.exc import IntegrityError
 
 from managers import (
     LeadManager, LeadSchema,
@@ -206,7 +207,26 @@ async def create_lead(engine, payload, by_user_id: str,
         outlet_id=outlet_id,
         last_activity_at=_now(),
     )
-    lead = await lead_manager.create(lead)
+    try:
+        lead = await lead_manager.create(lead)
+    except IntegrityError:
+        # Lost a dedup race: a concurrent create (e.g. FB webhook + backfill
+        # firing the same leadgen lead, ms apart) inserted this mobile first and
+        # the uq_leads_mobile_active index rejected ours. Re-resolve the winner
+        # (now committed) and merge into it instead of erroring.
+        existing = await dedup_utils.find_duplicate(
+            engine, mobile=payload.mobile, email=payload.email
+        )
+        if existing is None:
+            raise  # not the mobile-dedup constraint — surface the real error
+        label = source_label or (
+            payload.source.value if getattr(payload, "source", None) else None
+        ) or "manual entry"
+        merged = await dedup_utils.merge_into_existing(
+            engine, existing, payload.model_dump(),
+            source_label=label, by_user_id=by_user_id,
+        )
+        return merged, False
 
     await record_activity(engine, lead.uid, LeadActivityType.CREATED, user_id=creator,
                           body=f"Lead {lead.lead_number} created")
@@ -461,6 +481,13 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
     data["outlet_name"] = outlet_name
 
     if include_activities:
+        # Lead details tab: relabel FB question keys -> English (read-time, no backfill).
+        form_id = (lead.campaign_data or {}).get("form_id")
+        if form_id and data.get("custom_fields"):
+            from services import facebook_mapping
+            labels = await facebook_mapping.question_labels(engine, form_id)
+            data["custom_fields"] = facebook_mapping.relabel_custom_fields(
+                data["custom_fields"], labels)
         activities = await fetch_activities(engine, lead.uid, user_cache=user_cache)
         resp = LeadDetailResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
         resp.activities = activities

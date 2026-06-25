@@ -91,6 +91,18 @@ class LeadSchema(BaseSchema):
         cascade="all, delete-orphan",
     )
 
+    # Dedup safety net: one live lead per mobile. Dedup in create_lead is a
+    # check-then-insert, so concurrent creates (FB webhook + backfill firing the
+    # same lead) could both miss and insert. This partial unique index makes the
+    # DB reject the loser, which create_lead catches and merges instead.
+    # Excludes soft-deleted rows (deleted_at set) and blank mobiles.
+    # ponytail: indexes the normalized-stored mobile string; the +91/0 prefix
+    # variants are still reconciled on the read side by find_duplicate.
+    __table_args__ = (
+        db.Index("uq_leads_mobile_active", "mobile", unique=True,
+                 postgresql_where=db.text("deleted_at IS NULL AND mobile <> ''")),
+    )
+
 
 class LeadManager(ERPGenericManager[LeadSchema]):
     async def count_all(self, filters: NESTED_FILTERS = None) -> int:
@@ -241,6 +253,7 @@ class FbFieldMappingSchema(BaseSchema):
     target_kind = db.Column(db.String(16), nullable=False, default="campaign_data",
                             server_default="campaign_data")    # lead | campaign_data | custom
     is_active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+    label = db.Column(db.String(255), nullable=True)  # ops English label; NULL = untranslated
 
     # Postgres treats NULLs as distinct, so a plain UNIQUE(scope, form_id, ...)
     # would NOT dedup default rows (form_id IS NULL). Two partial unique indexes

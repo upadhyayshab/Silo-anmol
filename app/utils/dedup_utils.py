@@ -194,7 +194,7 @@ async def merge_into_existing(engine, existing, incoming: Dict[str, Any], *,
     await leadService.record_activity(
         engine, existing.uid, LeadActivityType.NOTE,
         user_id=by_user_id,
-        body=f"Duplicate merged from {source_label}",
+        body=f"Deduplicated from {source_label}",
         details={
             "merged_fields": list(updates.keys()),
             "incoming_mobile": _jsonable(incoming.get("mobile")),

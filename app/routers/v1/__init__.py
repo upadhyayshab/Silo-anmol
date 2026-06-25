@@ -30,8 +30,10 @@ from .leads import router as leads_router
 from .facebook import (
     router as facebook_router, pages_router as facebook_pages_router,
     mappings_router as facebook_mappings_router, forms_router as facebook_forms_router,
+    translations_router as facebook_translations_router,
 )
 from .clusters import router as clusters_router
+from .agencies import router as agencies_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -67,7 +69,9 @@ router.include_router(facebook_router)
 router.include_router(facebook_pages_router)
 router.include_router(facebook_mappings_router)
 router.include_router(facebook_forms_router)
+router.include_router(facebook_translations_router)
 router.include_router(clusters_router)
+router.include_router(agencies_router)
 
 
 
