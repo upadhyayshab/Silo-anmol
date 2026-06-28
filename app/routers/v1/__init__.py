@@ -34,6 +34,8 @@ from .facebook import (
 )
 from .clusters import router as clusters_router
 from .agencies import router as agencies_router
+from .exotel import router as exotel_router
+from .store import router as store_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -72,6 +74,8 @@ router.include_router(facebook_forms_router)
 router.include_router(facebook_translations_router)
 router.include_router(clusters_router)
 router.include_router(agencies_router)
+router.include_router(exotel_router)
+router.include_router(store_router)
 
 
 

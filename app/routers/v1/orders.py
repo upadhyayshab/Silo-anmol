@@ -221,6 +221,8 @@ async def create_order(
             state=payload.state,
             pincode=payload.pincode,
             telecaller_id=current_user_id,
+            lead_id=payload.lead_id,
+            source=payload.source,
             assigned_outlet_id=assigned_outlet_id,
             order_status=OrderStatus.PENDING,
             collection_type=payload.collection_type,
@@ -289,7 +291,32 @@ async def create_order(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Order created but failed to create order items: {error_details}"
             )
-        
+
+        # CRM: when the order was placed from a lead, drop an entry on that lead's
+        # timeline (checkpoint 3.5). The order↔lead link itself lives on
+        # customer_orders.lead_id; this is just the human-visible timeline event.
+        # Never let a CRM-side failure break order creation.
+        if payload.lead_id:
+            try:
+                from services import leadService
+                from utils.crm_enums import LeadActivityType
+                await leadService.record_activity(
+                    engine, payload.lead_id, LeadActivityType.ORDER,
+                    user_id=current_user_id,
+                    body=f"Order {order_number} placed — ₹{final_total_amount}",
+                    details={
+                        "order_id": created_order.uid,
+                        "order_number": order_number,
+                        "total_amount": str(final_total_amount),
+                    },
+                )
+                
+                # Auto-advance FTU/RTU and update counts (checkpoint 3.3)
+                await leadService.handle_post_order(engine, payload.lead_id, final_total_amount)
+                
+            except Exception as activity_err:
+                print(f"⚠️ Failed to log CRM order activity for lead {payload.lead_id}: {activity_err}")
+
         # Auto-assign outlet based on delivery area (for telecaller orders)
         # Outlet manager orders are already assigned to their outlet
         if not assigned_outlet_id:
@@ -345,6 +372,7 @@ async def create_order(
                 telecaller_id=created_order.telecaller_id,
                 agency_id=created_order.agency_id,
                 assigned_outlet_id=assigned_outlet_id,
+                source=created_order.source,
                 order_status=created_order.order_status,
                 collection_type=created_order.collection_type,
                 payment_method=created_order.payment_method,
@@ -596,6 +624,8 @@ async def create_proxy_order(
             state=payload.state,
             pincode=payload.pincode,
             telecaller_id=payload.telecaller_id,  # Use telecaller from payload, not current_user_id
+            lead_id=payload.lead_id,
+            source=payload.source,
             assigned_outlet_id=assigned_outlet_id,
             order_status=OrderStatus.PENDING,
             collection_type=payload.collection_type,
@@ -675,6 +705,28 @@ async def create_proxy_order(
             await activity_manager.create(activity_log)
         except Exception as log_error:
             print(f"⚠️  Failed to log proxy order creation: {log_error}")
+            
+        # CRM: proxy orders placed for a lead
+        if payload.lead_id:
+            try:
+                from services import leadService
+                from utils.crm_enums import LeadActivityType
+                await leadService.record_activity(
+                    engine, payload.lead_id, LeadActivityType.ORDER,
+                    user_id=current_user_id,
+                    body=f"Order {created_order.order_number} placed (Proxy) — ₹{final_total_amount}",
+                    details={
+                        "order_id": created_order.uid,
+                        "order_number": created_order.order_number,
+                        "total_amount": str(final_total_amount),
+                    },
+                )
+                
+                # Auto-advance FTU/RTU and update counts (checkpoint 3.3)
+                await leadService.handle_post_order(engine, payload.lead_id, final_total_amount)
+                
+            except Exception as activity_err:
+                print(f"⚠️ Failed to log CRM proxy order activity for lead {payload.lead_id}: {activity_err}")
         
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.CREATE_ORDER)
 
@@ -708,6 +760,7 @@ async def create_proxy_order(
             telecaller_id=created_order.telecaller_id,  # Shows target telecaller
             agency_id=created_order.agency_id,
             assigned_outlet_id=assigned_outlet_id,
+            source=created_order.source,
             order_status=created_order.order_status,
             collection_type=created_order.collection_type,
             payment_method=created_order.payment_method,
@@ -1693,6 +1746,8 @@ async def update_order_status(
                     detail="Access denied: You can only update orders assigned to your outlet"
                 )
         
+        old_status = order.order_status
+
         # Validate status transition
         if not is_valid_status_transition(order.order_status, payload.order_status):
             raise HTTPException(
@@ -1814,10 +1869,20 @@ async def update_order_status(
             background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
         
         await order_manager.update(order_id, update_data)
-        
+
+        # Internal CRM: push the new status to Medusa (any transition) and log
+        # it on the lead timeline, attributed to the user who made the change.
+        from services import leadService
+        await store_service.update_store_order(order_id, payload.order_status.value)
+        background_tasks.add_task(
+            leadService.log_order_status_change, engine, order,
+            payload.order_status, current_user_id,
+            old_status=old_status, remarks=payload.status_remarks,
+        )
+
         return StatusResponse(
             status="ok",
-            message=f"Order status updated to {payload.order_status}"
+            message=f"Order status updated to {payload.order_status.value}"
         )
     
     except HTTPException:
@@ -2137,6 +2202,25 @@ async def update_order_payment_status(
                 "actual_delivery_date": datetime.now()
             })
         
+        # CRM Logging
+        if order.lead_id:
+            try:
+                from services import leadService
+                from utils.crm_enums import LeadActivityType
+                await leadService.record_activity(
+                    engine, order.lead_id, LeadActivityType.ORDER_UPDATE,
+                    user_id=current_user_id,
+                    body=f"Order {order.order_number} payment status updated to {payload.payment_status.value}",
+                    details={
+                        "order_id": order.uid,
+                        "order_number": order.order_number,
+                        "payment_status": payload.payment_status.value,
+                        "notes": payload.notes
+                    },
+                )
+            except Exception as activity_err:
+                print(f"⚠️ Failed to log CRM order payment activity for lead {order.lead_id}: {activity_err}")
+                
         return StatusResponse(
             status="ok",
             message=f"Order payment status updated to {payload.payment_status.value}"

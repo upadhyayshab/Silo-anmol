@@ -105,6 +105,8 @@ class Settings(BaseSettings):
 
     # Medusa webhook
     store_url:str = os.getenv("STORE_URL","https://store-backend.gausampurna.co")
+    # Shared secret Medusa must send in the X-Store-Webhook-Secret header.
+    store_webhook_secret: str = os.getenv("STORE_WEBHOOK_SECRET", "")
 
     # Driver App Configuration (from environment)
     driver_url: str = os.getenv("DRIVER_URL", "")
@@ -112,6 +114,26 @@ class Settings(BaseSettings):
 
     # Smartping Configuration (from environment)
     smartping_api_key: str = os.getenv("SMARTPING_API_KEY", "")
+
+    # Exotel Telephony Configuration (from environment) — Feature 3.
+    # All env keys use the DAILER_* prefix (ops-facing, vendor-agnostic name).
+    exotel_api_key: str = os.getenv("DAILER_API_KEY", "")        # dialer key
+    exotel_api_token: str = os.getenv("DAILER_TOKEN", "")        # dialer token
+    exotel_sid: str = os.getenv("DAILER_SID", "")               # account SID
+    exotel_caller_id: str = os.getenv("DAILER_CALLER_ID", "")    # ExoPhone / DID (optional; per-call override wins)
+    exotel_subdomain: str = os.getenv("DAILER_SUBDOMAIN", "api.exotel.com")
+    exotel_ccm_subdomain: str = os.getenv("DAILER_CCM_SUBDOMAIN", "ccm-api.exotel.com")  # Users/agent dir (Mumbai: ccm-api.in.exotel.com)
+    exotel_status_callback: str = os.getenv("DAILER_STATUS_CALLBACK", "")  # public webhook URL
+    exotel_crm_flow_id: str = os.getenv("DAILER_CRM_FLOW_ID", "")  # call-flow id of the CRM app; scopes the ExoPhone list
+    exotel_email_overrides: str = os.getenv("DAILER_EMAIL_OVERRIDES", "")  # crm_email:exotel_email pairs where they differ
+    # exotel_email:sip pairs so inbound rings the agent's WebRTC softphone (Feature 3.2)
+    # rather than their PSTN phone, e.g. "crm+1@silofortune.com:sip:naveenh37746fa6".
+    exotel_sip_map: str = os.getenv("DAILER_SIP_MAP", "")
+    # WebRTC CRM softphone SDK (IP-PSTN-intermix onboarding — app entity id+secret from Exotel)
+    exotel_app_id: str = os.getenv("DAILER_APP_ID", "")
+    exotel_app_secret: str = os.getenv("DAILER_APP_SECRET", "")
+    exotel_app_entity: str = os.getenv("DAILER_APP_ENTITY", "app")  # token scope sent to Exotel as Entity
+    exotel_integrations_host: str = os.getenv("DAILER_INTEGRATIONS_HOST", "integrationscore.mum1.exotel.com")
 
     # Facebook Lead Ads Configuration (from environment)
     fb_app_secret: str = os.getenv("FB_APP_SECRET", "")            # app secret -> webhook HMAC

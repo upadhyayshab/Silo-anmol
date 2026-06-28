@@ -13,6 +13,7 @@ from . import facebook_service  # noqa: F401  (multi-page tokens, sync, backfill
 from . import facebook_capi  # noqa: F401  (lead-stage events -> Meta CAPI)
 from . import facebook_mapping  # noqa: F401  (configurable Meta->lead field mapping)
 from . import leadImportService  # noqa: F401  (imported after leadService — depends on it)
+from .storeOrderService import process_store_order, process_store_lead
 
 __all__ = [
     "InvoiceService",
@@ -32,4 +33,6 @@ __all__ = [
     "facebook_capi",
     "facebook_mapping",
     "leadImportService",
+    "process_store_order",
+    "process_store_lead",
 ]

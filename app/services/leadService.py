@@ -7,6 +7,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from typing import Optional, Dict, Any, List, Tuple
 
 import sqlalchemy as db
@@ -23,7 +24,8 @@ from models import (
     TodayQueueBucket, TodayQueueResponse,
 )
 from utils.constants import UserRole
-from utils.crm_enums import LeadStage, LeadActivityType, AssignmentReason
+from utils.crm_enums import (LeadStage, LeadActivityType, AssignmentReason,
+                             DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS)
 from utils import dedup_utils
 from services import assignmentService
 
@@ -275,7 +277,7 @@ async def update_lead(engine, lead: LeadSchema, changes: Dict[str, Any],
 
 
 async def change_stage(engine, lead: LeadSchema, new_stage: LeadStage,
-                       by_user_id: str, note: Optional[str] = None) -> LeadSchema:
+                       by_user_id: Optional[str], note: Optional[str] = None) -> LeadSchema:
     lead_manager = LeadManager(engine)
     from_stage = lead.stage.value if hasattr(lead.stage, "value") else lead.stage
     to_stage = new_stage.value if hasattr(new_stage, "value") else new_stage
@@ -288,20 +290,146 @@ async def change_stage(engine, lead: LeadSchema, new_stage: LeadStage,
     return updated
 
 
+async def handle_post_order(engine, lead_id: str, order_value: Decimal) -> None:
+    """Handle CRM-side effects after an order is placed on a lead (checkpoint 3.3).
+    Increments order_count and order_value. Auto-advances the stage to FTU or RTU.
+    Attributed to 'system' so it doesn't pollute the telecaller's manual activity log.
+    """
+    lead_manager = LeadManager(engine)
+    lead = await lead_manager.fetch(lead_id)
+    if not lead:
+        return
+
+    new_count = lead.order_count + 1
+    new_value = (lead.order_value or Decimal('0.00')) + order_value
+
+    # Update counts
+    await lead_manager.update(lead.uid, {
+        "order_count": new_count,
+        "order_value": new_value
+    })
+
+    # Determine auto-stage
+    target_stage = None
+    if new_count == 1:
+        target_stage = LeadStage.FTU
+    elif new_count > 1:
+        target_stage = LeadStage.RTU
+
+    # Auto-advance if it implies a change (and only if the lead is not in a terminal state maybe? 
+    # For now, always push to FTU/RTU as requested).
+    if target_stage and lead.stage != target_stage:
+        await change_stage(engine, lead, target_stage, by_user_id=None, note=f"Auto-advanced to {target_stage.value} on order #{new_count}")
+
+
+async def log_order_status_change(engine, order, new_status, by_user_id,
+                                  *, old_status=None, remarks=None) -> None:
+    """Log an order's status change on its linked lead's timeline (1 row).
+
+    Attributed to the ERP user who made the change (by_user_id). No-op when the
+    order isn't linked to a lead (e.g. legacy/LSQ-only orders).
+    """
+    lead_id = getattr(order, "lead_id", None)
+    if not lead_id:
+        return
+    new_val = new_status.value if hasattr(new_status, "value") else str(new_status)
+    old_val = old_status.value if hasattr(old_status, "value") else (old_status or None)
+    await record_activity(
+        engine, lead_id, LeadActivityType.ORDER_UPDATE, user_id=by_user_id,
+        body=f"Order {order.order_number} -> {new_val}",
+        details={"order_id": order.uid, "from": old_val, "to": new_val,
+                 "remarks": remarks},
+    )
+
+
 async def add_note(engine, lead_id: str, body: str, by_user_id: str) -> LeadActivitySchema:
     return await record_activity(engine, lead_id, LeadActivityType.NOTE,
                                  user_id=by_user_id, body=body)
 
 
-async def log_call(engine, lead: LeadSchema, outcome: str, note: Optional[str],
+def _pick_inbound_autolog(items, call_sid: Optional[str]):
+    """Pure pick: among recent CALL_LOG rows (most-recent-first), the un-dispositioned
+    inbound auto-log to fold a disposition into — exact call_id match wins, else newest.
+    None means no auto-log to reuse (insert a fresh row instead)."""
+    autologs = [a for a in items
+                if (getattr(a, "details", None) or {}).get("direction") == "inbound"
+                and not (getattr(a, "details", None) or {}).get("disposition")]
+    if call_sid:
+        exact = next((a for a in autologs
+                      if (a.details or {}).get("call_id") == call_sid), None)
+        if exact:
+            return exact
+    return autologs[0] if autologs else None
+
+
+async def _recent_inbound_autolog(engine, lead_id: str, call_sid: Optional[str]):
+    """The Exotel webhook auto-logs every inbound call the moment it ends; this finds that
+    row so the agent's later disposition can be folded into it (one call = one entry, the
+    same principle as the outbound CDR fold). Returns the matching CALL_LOG, else None.
+
+    ponytail: not guarded for the reverse race (agent dispositions BEFORE the ~1-2s webhook
+    lands) — implausible (the picker's connected-prefill alone polls at 3s). If Exotel ever
+    delays StatusCallback past the disposition, dedup the webhook side on call_id too."""
+    recent = await LeadActivityManager(engine).fetch_all(
+        limit=5, filters={"lead_id": lead_id, "activity_type": LeadActivityType.CALL_LOG},
+        sorts=["created_at"])                      # "created_at" (no '-') => DESC, newest first
+    return _pick_inbound_autolog(recent.items, call_sid)
+
+
+async def log_call(engine, lead: LeadSchema, outcome: Optional[str], note: Optional[str],
                    follow_up_at: Optional[datetime], by_user_id: str,
-                   duration_seconds: Optional[int] = None) -> LeadActivitySchema:
+                   duration_seconds: Optional[int] = None,
+                   disposition: Optional[str] = None,
+                   sub_disposition: Optional[str] = None,
+                   *, direction: Optional[str] = None,
+                   call_sid: Optional[str] = None) -> LeadActivitySchema:
+    updates: Dict[str, Any] = {}
     if follow_up_at is not None:
-        await LeadManager(engine).update(lead.uid, {"follow_up_at": follow_up_at})
-    details = {"duration_seconds": duration_seconds} if duration_seconds is not None else None
+        updates["follow_up_at"] = follow_up_at
+    body = note
+    # Disposition path: derive the outcome + side effects from the picked sub-disposition.
+    if sub_disposition:
+        outcome = DISPOSITION_OUTCOME.get(sub_disposition, outcome or "answered")
+        if sub_disposition in DNC_SUB_DISPOSITIONS:
+            updates["do_not_call"] = True
+        label = f"{disposition} · {sub_disposition}" if disposition else sub_disposition
+        body = f"{label} — {note}" if note else label
+    if updates:
+        await LeadManager(engine).update(lead.uid, updates)
+    details: Dict[str, Any] = {}
+    if duration_seconds is not None:
+        details["duration_seconds"] = duration_seconds
+    if sub_disposition:
+        details.update({"disposition": disposition, "sub_disposition": sub_disposition})
+
+    # Inbound is already auto-logged by the webhook the moment it ends; fold this
+    # disposition INTO that row (one call = one timeline entry) and re-attribute it to the
+    # agent who handled it. Outbound softphone fires no webhook, so it always inserts below.
+    if direction == "inbound":
+        autolog = await _recent_inbound_autolog(engine, lead.uid, call_sid)
+        if autolog is not None:
+            merged = {**(autolog.details or {}), **details}
+            await LeadActivityManager(engine).update(autolog.uid, {
+                "body": body, "outcome": outcome,
+                "user_id": _real_user(by_user_id), "details": merged or None,
+            })
+            await LeadManager(engine).update(lead.uid, {"last_activity_at": _now()})
+            return await LeadActivityManager(engine).fetch(autolog.uid)
+
     return await record_activity(engine, lead.uid, LeadActivityType.CALL_LOG,
-                                 user_id=by_user_id, outcome=outcome, body=note,
-                                 details=details)
+                                 user_id=by_user_id, outcome=outcome, body=body,
+                                 details=details or None)
+
+
+async def attach_call_details(engine, activity_uid: str, patch: Dict[str, Any]) -> None:
+    """Merge extra fields (recording URL, real duration) into a CALL_LOG activity's
+    `details` JSON. Lets the softphone CDR — which settles a few seconds after hang-up —
+    be folded into the disposition entry, so one call is one timeline row, not two."""
+    activity_manager = LeadActivityManager(engine)
+    activity = await activity_manager.fetch(activity_uid)
+    details = dict(activity.details or {})
+    details.update({k: v for k, v in patch.items() if v is not None})
+    await activity_manager.update(activity_uid, {"details": details})
 
 
 async def reassign(engine, lead: LeadSchema, telecaller_id: str, by_user_id: str,
@@ -328,29 +456,58 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     """
     user_manager = UserManager(engine)
     lead_manager = LeadManager(engine)
+    from datetime import datetime, timezone
+    
+    now = datetime.now(timezone.utc)
+    pool_objects = []
+    current_loads = {}
 
-    # Build the validated target pool (active telecallers only).
+    async def get_active_count(uid: str) -> int:
+        open_leads = await lead_manager.fetch_all(filters={"owner_id": uid})
+        # Terminal stages that don't count towards active quota
+        terminal = ["Not Qualified", "Not Reachable", "Lapsed"]
+        return sum(1 for l in open_leads.items if (l.stage.value if hasattr(l.stage, "value") else l.stage) not in terminal)
+
+    async def add_to_pool(u):
+        if u.role != UserRole.TELECALLER or not u.is_active:
+            return
+        # Filter offline telecallers (inactive > 30m)
+        if not u.last_active_at or (now - u.last_active_at.replace(tzinfo=timezone.utc)).total_seconds() > 1800:
+            return
+        active_count = await get_active_count(u.uid)
+        if u.assignment_quota and u.assignment_quota > 0 and active_count >= u.assignment_quota:
+            return
+        pool_objects.append(u)
+        current_loads[u.uid] = active_count
+
+    # Build the validated target pool
     if telecaller_ids:
-        pool: List[str] = []
         for tid in telecaller_ids:
             try:
                 u = await user_manager.fetch(tid)
+                await add_to_pool(u)
             except Exception:
                 continue
-            if u.role == UserRole.TELECALLER and u.is_active:
-                pool.append(u.uid)
     else:
         active = await user_manager.fetch_all(
             filters={"role": UserRole.TELECALLER, "is_active": True}
         )
-        pool = [u.uid for u in active.items]
+        for u in active.items:
+            await add_to_pool(u)
 
-    if not pool:
+    if not pool_objects:
         return {"assigned": 0, "skipped": len(lead_ids or []), "by_telecaller": {},
-                "detail": "no active telecallers in the target pool"}
+                "detail": "no active/online telecallers available or all quotas full"}
 
-    assigned, skipped, by_tc, i = 0, 0, {}, 0
+    assigned, skipped, by_tc = 0, 0, {}
+    
     for lid in lead_ids or []:
+        # Re-evaluate pool to exclude those who just hit their quota
+        valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
+        if not valid_pool:
+            skipped += 1
+            continue
+
         try:
             lead = await lead_manager.fetch(lid)
         except Exception:
@@ -359,11 +516,16 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         if lead.deleted_at is not None:
             skipped += 1
             continue
-        tid = pool[i % len(pool)]   # even round-robin across the batch
-        i += 1
-        await reassign(engine, lead, tid, by_user_id, reason=AssignmentReason.ROUND_ROBIN.value)
+            
+        # Select the telecaller with the lowest current load (Load balancing round-robin)
+        valid_pool.sort(key=lambda u: current_loads[u.uid])
+        selected_tc = valid_pool[0]
+        
+        await reassign(engine, lead, selected_tc.uid, by_user_id, reason=AssignmentReason.ROUND_ROBIN.value)
+        
+        current_loads[selected_tc.uid] += 1
         assigned += 1
-        by_tc[tid] = by_tc.get(tid, 0) + 1
+        by_tc[selected_tc.uid] = by_tc.get(selected_tc.uid, 0) + 1
 
     return {"assigned": assigned, "skipped": skipped, "by_telecaller": by_tc}
 
@@ -545,3 +707,23 @@ async def _resolve_outlet_name(engine, outlet_id: Optional[str], cache: dict) ->
     except Exception:
         cache[outlet_id] = None
     return cache[outlet_id]
+
+
+if __name__ == "__main__":
+    # ponytail: pure-branch self-check for the inbound de-dup pick (DB paths need an engine).
+    class _A:                                 # stand-in CALL_LOG row
+        def __init__(self, uid, details): self.uid, self.details = uid, details
+
+    web1 = _A("w1", {"direction": "inbound", "call_id": "CS1"})         # webhook auto-log
+    web2 = _A("w2", {"direction": "inbound", "call_id": "CS2"})         # newer auto-log
+    disp = _A("d1", {"direction": "inbound", "disposition": "Connected"})  # already dispositioned
+    out  = _A("o1", {"direction": "outbound", "call_id": "CS3"})        # outbound — ignore
+
+    # newest-first input; exact call_id match wins over recency
+    assert _pick_inbound_autolog([web2, web1, out], "CS1") is web1
+    # no call_sid -> newest un-dispositioned inbound auto-log
+    assert _pick_inbound_autolog([web2, web1], None) is web2
+    # dispositioned + outbound rows are never reused
+    assert _pick_inbound_autolog([disp, out], "CS9") is None
+    assert _pick_inbound_autolog([], "CS1") is None
+    print("leadService inbound auto-log pick OK")
