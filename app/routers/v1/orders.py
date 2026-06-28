@@ -1870,10 +1870,9 @@ async def update_order_status(
         
         await order_manager.update(order_id, update_data)
 
-        # Internal CRM: push the new status to Medusa (any transition) and log
-        # it on the lead timeline, attributed to the user who made the change.
+        # Internal CRM: log the status change on the lead timeline, attributed
+        # to the user who made the change.
         from services import leadService
-        await store_service.update_store_order(order_id, payload.order_status.value)
         background_tasks.add_task(
             leadService.log_order_status_change, engine, order,
             payload.order_status, current_user_id,
