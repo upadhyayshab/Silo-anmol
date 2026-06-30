@@ -49,6 +49,12 @@ from jobs.scheduler import scheduler_app
 settings = get_settings()
 engine = get_engine(settings.name)
 
+# Install a root log handler so app loggers (logging.getLogger(__name__)) actually
+# emit at INFO. Without this, Python's lastResort handler only shows WARNING+ and
+# logger.info(...) is silently dropped (which is why diagnostics needed print()).
+import logging
+logging.basicConfig(level=getattr(logging, str(settings.log_level).upper(), logging.INFO))
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
@@ -57,10 +63,15 @@ async def lifespan(app: FastAPI):
     print(f"📊 Database: {settings.engine_str}")
     print(f"🔧 Environment: {settings.env}")
     
+    # Seed the default RBAC roles into the DB and load them into the resolver cache
+    # (DB-backed roles; code dict is the seed + fallback). Best-effort — won't block boot.
+    from services import roleStore
+    await roleStore.load_roles(engine)
+
     # Start the async scheduler
     scheduler_app.start()
     print(f"🚀 Scheduler Started with {len(scheduler_app.get_jobs())} jobs loaded.")
-    
+
     yield
     
     # Shutdown

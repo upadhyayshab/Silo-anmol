@@ -4,8 +4,8 @@ from datetime import datetime, date
 
 from config import get_settings, get_engine
 from managers import ActivityLogManager, UserManager, ActivityLogSchema
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission
 from pydantic import BaseModel
 
 settings = get_settings()
@@ -42,7 +42,7 @@ async def get_user_activity_logs(
     end_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT))
+    _: AuthContext = Depends(require_permission(Permission.AUDIT_READ))
 ):
     """Get activity logs for a specific user"""
     try:
@@ -102,7 +102,7 @@ async def get_entity_activity_logs(
     end_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT))
+    _: AuthContext = Depends(require_permission(Permission.AUDIT_READ))
 ):
     """Get activity logs for a specific entity"""
     try:
@@ -160,7 +160,7 @@ async def get_entity_activity_logs(
 async def get_activity_summary(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.AUDIT_READ))
 ):
     """Get activity summary statistics"""
     try:
@@ -228,11 +228,11 @@ async def get_activity_logs(
     end_date: Optional[date] = None,
     limit: int = 100,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT))
+    _: AuthContext = Depends(require_permission(Permission.AUDIT_READ))
 ):
     """
     Get activity logs with filters
-    Only super_admin, admin, and accountant can view audit trails
+    Requires: audit:read permission
     """
     try:
         filters = {}

@@ -16,7 +16,8 @@ from models import (
     DeliveryGuyCreateRequest, DeliveryGuyUpdateRequest, DeliveryGuyResponse,
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
-from utils.auth import require_roles, get_current_user_id, get_password_hash
+from utils.auth import require_permission, apply_scope, get_password_hash, AuthContext
+from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod
 from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
@@ -47,10 +48,22 @@ class DeliveryStatusUpdatePayload(BaseModel):
 @router.get("/{delivery_guy_id}", response_model=DeliveryGuyResponse)
 async def get_delivery_guy(
     delivery_guy_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
+    ctx: AuthContext = Depends(require_permission(Permission.DELIVERY_READ, allow_scopes=["delivery:read"]))
 ):
     try:
         delivery_guy = await delivery_guy_manager.fetch(delivery_guy_id)
+
+        # Scope fence: a non-GLOBAL caller (outlet/cluster/state mgr) may only view
+        # delivery guys in an outlet they cover. GLOBAL/microservice -> unrestricted.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+            allowed = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
+            if delivery_guy.outlet_id not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: this delivery guy is outside your scope"
+                )
+
         user = await user_manager.fetch(delivery_guy.user_id)
         outlet = await outlet_manager.fetch(delivery_guy.outlet_id)
         
@@ -87,9 +100,11 @@ async def list_delivery_guys(
     sorts: List[str] = Depends(D.sorting_dependency),
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
+    ctx: AuthContext = Depends(require_permission(Permission.DELIVERY_READ, allow_scopes=["delivery:read"]))
 ):
     try:
+        # Row scope: outlet mgr -> own outlet, cluster/state -> their outlets, global -> all.
+        filters = await apply_scope(filters, ctx)
         delivery_guys = await delivery_guy_manager.fetch_all(
             limit=limit,
             offset=offset,
@@ -108,7 +123,7 @@ async def list_delivery_guys(
 @router.post("", response_model=DeliveryGuyResponse, status_code=status.HTTP_201_CREATED)
 async def create_delivery_guy(
     payload: DeliveryGuyCreateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
+    _: AuthContext = Depends(require_permission(Permission.DELIVERY_WRITE, allow_scopes=["delivery:write"]))
 ):
     try:
         email = payload.email
@@ -181,16 +196,21 @@ async def create_delivery_guy(
 async def update_delivery_guy(
     delivery_guy_id: str,
     payload: DeliveryGuyUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
+    ctx: AuthContext = Depends(require_permission(Permission.DELIVERY_WRITE, allow_scopes=["delivery:write"]))
 ):
     try:
         updates = payload.dict(exclude_unset=True)
+        # Step 5 (finance): payout_frequency is driver-pay structure — field-lock it behind
+        # driver_pay:write. Callers without it can still edit the delivery guy; the pay field is
+        # silently stripped rather than 403-ing the whole update.
+        if not ctx.has(Permission.DRIVER_PAY_WRITE):
+            updates.pop("payout_frequency", None)
         if not updates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No fields to update"
             )
-            
+
         if "outlet_id" in updates:
             outlet = await outlet_manager.fetch(updates["outlet_id"])
             if not outlet.is_active:
@@ -228,7 +248,7 @@ async def update_delivery_guy(
 @router.delete("/{user_id}", response_model=StatusResponse)
 async def delete_delivery_guy(
     user_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, allowed_scopes=["delivery:write"]))
+    _: AuthContext = Depends(require_permission(Permission.DELIVERY_WRITE, allow_scopes=["delivery:write"]))
 ):
     try:
         delivery_guys = await delivery_guy_manager.fetch_all(filters={"user_id": user_id})

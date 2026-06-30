@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 
 from config import get_settings, get_engine
 from managers import OutletMappingManager, OutletManager, OutletSchema ,OutletMappingSchema
-from utils.auth import require_roles
-from utils.constants import UserRole
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -334,7 +334,7 @@ async def get_mapping(uid: str):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_mapping(
     payload: OutletMappingCreate,
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """
     Create a new outlet mapping.
@@ -370,7 +370,7 @@ async def create_mapping(
 async def update_mapping(
     uid: str,
     payload: OutletMappingUpdate,
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """Update an existing outlet mapping"""
     mapping = await outlet_mapping_manager.fetch(uid)
@@ -403,7 +403,7 @@ async def update_mapping(
 @router.delete("/{uid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mapping(
     uid: str,
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """Delete an outlet mapping"""
     mapping = await outlet_mapping_manager.fetch(uid)
@@ -417,7 +417,7 @@ async def delete_mapping(
 @router.post("/bulk", response_model=BulkMappingResponse)
 async def bulk_upsert_mappings(
     payload: BulkMappingRequest,
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """Bulk create or update outlet mappings. Replaces all mappings for matching criteria."""
     created = 0

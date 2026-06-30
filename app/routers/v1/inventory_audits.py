@@ -7,7 +7,6 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_engine, get_settings
-from managers import UserManager
 from managers.erpManagers import (
     InventoryAuditSchema, InventoryAuditItemSchema, OutletSchema, ProductSchema,
     InventoryAuditManager, InventoryAuditItemManager
@@ -19,13 +18,12 @@ from models.erpModels import (
     WeeklyInventoryAuditItemReportResponse, AuditOutletRef, AuditCycleRef,
     AuditStatus
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
 from services.inventory_audit_service import inventory_audit_service
 
 router = APIRouter(prefix="/inventory-audits", tags=["Inventory Audits"])
 engine = get_engine(get_settings().name)
-user_manager = UserManager(engine)
 audit_manager = InventoryAuditManager(engine)
 audit_item_manager = InventoryAuditItemManager(engine)
 
@@ -81,7 +79,7 @@ async def _outlet_name_map(outlet_ids):
 
 @router.post("/admin/generate", response_model=StatusResponse)
 async def generate_weekly_audits(
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST))
 ):
     """Manually trigger the generation of weekly audits (Admin only)."""
     try:
@@ -99,21 +97,14 @@ async def list_audits(
     limit: int = 100,
     offset: int = 0,
     sorts: str = "-created_at",
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_READ))
 ):
     """List audits, filtered by outlet, date or ISO week."""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-
-        db_filters = {}
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if not current_user.outlet_id:
-                return ListResponse(items=[], count=0)
-            db_filters["outlet_id"] = current_user.outlet_id
-        elif outlet_id:
-            db_filters["outlet_id"] = outlet_id
+        # Row scope: outlet mgr -> own outlet, cluster/state -> their outlets, global -> all.
+        # Honor an explicit outlet_id for global callers; apply_scope overrides it for scoped roles.
+        db_filters = {"outlet_id": outlet_id} if outlet_id else {}
+        db_filters = await apply_scope(db_filters, ctx)
 
         if audit_date:
             db_filters["audit_date"] = audit_date
@@ -164,7 +155,7 @@ async def list_audits(
 @router.get("/admin/summary", response_model=WeeklyInventoryAuditSummaryResponse)
 async def get_audit_summary(
     week_start: Optional[date] = None,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST))
 ):
     """Summarise audit completion for a cycle.
 
@@ -228,7 +219,7 @@ async def get_audit_summary(
 
 @router.get("/admin/cycles", response_model=ListResponse[AuditCycleRef])
 async def list_audit_cycles(
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST))
 ):
     """List the audit cycles (weeks) that have data, newest first — drives the
     admin week picker."""
@@ -255,22 +246,26 @@ async def list_audit_cycles(
 @router.get("/{audit_id}", response_model=WeeklyInventoryAuditResponse)
 async def get_audit_details(
     audit_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_READ))
 ):
     """Get details of a specific audit including all items."""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
+        # Scope fence: a non-GLOBAL caller (outlet/cluster/state mgr) may only view
+        # an audit for an outlet they cover. GLOBAL/microservice -> unrestricted.
+        is_scoped = not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value)
+        scope_outlets = None
+        if is_scoped:
+            scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+            scope_outlets = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
+
         async with AsyncSession(engine) as session:
             audit = await session.get(InventoryAuditSchema, audit_id)
             if not audit:
                 raise HTTPException(status_code=404, detail="Audit not found")
-                
-            if current_user.role == UserRole.OUTLET_MANAGER and audit.outlet_id != current_user.outlet_id:
+
+            if is_scoped and audit.outlet_id not in scope_outlets:
                 raise HTTPException(status_code=403, detail="Not authorized to view this audit")
-                
+
             items_result = await session.execute(
                 select(InventoryAuditItemSchema, ProductSchema.product_name)
                 .join(ProductSchema, InventoryAuditItemSchema.product_id == ProductSchema.uid)
@@ -278,11 +273,11 @@ async def get_audit_details(
             )
             items_rows = items_result.all()
 
-            # Blind count: never expose the system quantity to an outlet manager
+            # Blind count: never expose the system quantity to a scoped (outlet) counter
             # while the audit is still pending — otherwise they can read it from the
             # API response and type it straight back for a fake 100% match.
             mask_system_qty = (
-                current_user.role == UserRole.OUTLET_MANAGER
+                is_scoped
                 and audit.status != AuditStatus.COMPLETED
             )
 
@@ -320,17 +315,23 @@ async def get_audit_details(
 async def submit_audit(
     audit_id: str,
     payload: WeeklyInventoryAuditSubmitRequest,
-    current_user_id: str = Depends(require_roles(UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_WRITE))
 ):
     """Submit an audit with physical counts."""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
+        # Scope fence: a non-GLOBAL caller (outlet/cluster/state mgr) may only submit
+        # an audit for an outlet they cover. GLOBAL/microservice -> unrestricted.
+        is_scoped = not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value)
+        scope_outlets = None
+        if is_scoped:
+            scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+            scope_outlets = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
+
         async with AsyncSession(engine) as session:
             audit = await session.get(InventoryAuditSchema, audit_id)
             if not audit:
                 raise HTTPException(status_code=404, detail="Audit not found")
-                
+
             if audit.status == AuditStatus.COMPLETED:
                 raise HTTPException(status_code=400, detail="Audit is already completed and cannot be modified")
 
@@ -340,9 +341,9 @@ async def submit_audit(
             if audit.status == AuditStatus.CLOSED:
                 raise HTTPException(status_code=400, detail="This audit closed on its deadline and can no longer be submitted")
 
-            if current_user.role == UserRole.OUTLET_MANAGER and audit.outlet_id != current_user.outlet_id:
+            if is_scoped and audit.outlet_id not in scope_outlets:
                 raise HTTPException(status_code=403, detail="Not authorized to submit this audit")
-                
+
             # Get existing items
             items_result = await session.execute(
                 select(InventoryAuditItemSchema).where(InventoryAuditItemSchema.audit_id == audit_id)
@@ -377,7 +378,7 @@ async def submit_audit(
             # Update Audit status and match percentage
             audit.status = AuditStatus.COMPLETED
             audit.submitted_at = datetime.now(timezone.utc)
-            audit.submitted_by = current_user.uid
+            audit.submitted_by = ctx.user_id
             
             if total_items > 0:
                 audit.match_percentage = Decimal(matched_items) / Decimal(total_items) * Decimal(100)
@@ -418,7 +419,7 @@ async def get_audit_report(
     end_date: Optional[date] = None,
     limit: int = 100,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST))
 ):
     """Get a detailed flat report of audit items (Excel-like view).
 

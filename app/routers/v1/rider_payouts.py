@@ -14,8 +14,9 @@ from models import (
     RiderPayoutCreateRequest, RiderPayoutUpdateRequest, RiderPayoutResponse, 
     ListResponse, StatusResponse, RiderPayoutStatusUpdateRequest, RiderPayoutSummaryItem
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, PayoutStatus, PayoutFrequency
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import OrderStatus, PayoutStatus, PayoutFrequency
 from utils import dependencies as D
 from utils.functions import ensure_date
 
@@ -28,16 +29,39 @@ outlet_manager = OutletManager(engine)
 
 router = APIRouter(prefix="/rider-payouts", tags=["Rider Payout Management"])
 
+
+async def _payout_scope_outlet_ids(ctx: AuthContext):
+    """Outlet ids the caller may see, or None for unrestricted (GLOBAL/microservice)."""
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return None
+    sv = (await apply_scope({}, ctx)).get("outlet_id")
+    if sv is None:
+        return ["__none__"]  # scoped but no outlet dimension -> match nothing
+    return sv if isinstance(sv, list) else [sv]
+
+
+async def _assert_payout_in_scope(ctx: AuthContext, payout):
+    """Scoped (non-global) callers may only act on a payout for an outlet in their scope."""
+    scope_ids = await _payout_scope_outlet_ids(ctx)
+    if scope_ids is None or payout.outlet_id in scope_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied: this payout is outside your scope",
+    )
+
+
 @router.get("/summary", response_model=List[RiderPayoutSummaryItem])
 async def get_rider_payout_summary(
     frequency: Optional[PayoutFrequency] = None,
     outlet_id: Optional[str] = None,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """
     Get a summary of pending payouts for all riders.
     Includes pending earnings, last payout info, and frequency.
     """
+    scope_ids = await _payout_scope_outlet_ids(ctx)
     async with engine.begin() as conn:
         # 1. Base query for all delivery guys
         query = (
@@ -59,7 +83,10 @@ async def get_rider_payout_summary(
             query = query.where(DeliveryGuySchema.payout_frequency == frequency)
         if outlet_id:
             query = query.where(DeliveryGuySchema.outlet_id == outlet_id)
-            
+        # OUTLET-scoped callers see only riders at outlets in their scope
+        if scope_ids is not None:
+            query = query.where(DeliveryGuySchema.outlet_id.in_(scope_ids))
+
         result = await conn.execute(query)
         riders = result.fetchall()
         
@@ -110,9 +137,16 @@ async def get_rider_payout_summary(
 async def get_pending_payout_summary(
     rider_id: str,
     outlet_id: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """Calculate pending earnings for a rider"""
+    # OUTLET-scoped callers may only query their own outlet
+    scope_ids = await _payout_scope_outlet_ids(ctx)
+    if scope_ids is not None and outlet_id not in scope_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this outlet is outside your scope",
+        )
     # Filter for delivered, unpaid orders for this rider and outlet
     filters = {
         "delivery_person_id": rider_id,
@@ -135,10 +169,10 @@ async def get_pending_payout_summary(
 @router.post("/generate", response_model=RiderPayoutResponse)
 async def generate_payout(
     payload: RiderPayoutCreateRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_WRITE))
 ):
     """Generate a persistent payout record and lock orders to it"""
+    current_user_id = ctx.user_id
     # 1. Fetch pending orders in the date range
     # Note: Using fetch_all with custom filters might be tricky if we need range, 
     # but for simplicity we'll fetch all pending and filter in memory or use manager's fetch_all capabilities if it supports it.
@@ -195,13 +229,14 @@ async def list_payout_history(
     sorts: List[str] = Depends(D.sorting_dependency),
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """View payout history"""
+    filters = await apply_scope(filters, ctx)
     return await payout_manager.fetch_all(
-        limit=limit, 
-        offset=offset, 
-        sorts=sorts, 
+        limit=limit,
+        offset=offset,
+        sorts=sorts,
         filters=filters,
         joins=[RiderPayoutSchema.rider, RiderPayoutSchema.outlet]
     )
@@ -212,15 +247,16 @@ async def list_payout_history(
     sorts: List[str] = Depends(D.sorting_dependency),
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """View payout history for a specific rider"""
     if rider_id:
         filters["rider_id"] = rider_id
+    filters = await apply_scope(filters, ctx)
     return await payout_manager.fetch_all(
-        limit=limit, 
-        offset=offset, 
-        sorts=sorts, 
+        limit=limit,
+        offset=offset,
+        sorts=sorts,
         filters=filters,
         joins=[RiderPayoutSchema.rider, RiderPayoutSchema.outlet]
     )
@@ -228,22 +264,27 @@ async def list_payout_history(
 @router.get("/{uid}", response_model=RiderPayoutResponse)
 async def get_payout_details(
     uid: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """Get details of a specific payout"""
     try:
-        return await payout_manager.fetch(uid, joins=[RiderPayoutSchema.rider, RiderPayoutSchema.outlet])
-    except:
+        payout = await payout_manager.fetch(uid, joins=[RiderPayoutSchema.rider, RiderPayoutSchema.outlet])
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=404, detail="Payout record not found")
+    # Scoped callers may only view payouts for an outlet in their scope
+    await _assert_payout_in_scope(ctx, payout)
+    return payout
 
 @router.patch("/{uid}/status", response_model=RiderPayoutResponse)
 async def update_payout_status(
     uid: str,
     payload: RiderPayoutStatusUpdateRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_APPROVE))
 ):
     """Mark a payout as PAID or CANCELLED"""
+    current_user_id = ctx.user_id
     updates = {
         "status": payload.status,
         "remarks": payload.remarks

@@ -14,8 +14,9 @@ from models import (
     InvoiceCreateRequest, InvoiceResponse, InvoiceItemResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, InvoiceType, PaymentStatus, PaymentMethod
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import InvoiceType, PaymentStatus, PaymentMethod
 from services.invoice_service import InvoiceService
 import uuid
 
@@ -34,6 +35,29 @@ config_manager = SystemConfigurationManager(engine)
 invoice_service = InvoiceService(engine)
 
 router = APIRouter(prefix="/invoices", tags=["Invoice Management"])
+
+
+async def _invoice_scope_ids(ctx: AuthContext):
+    """Outlet-ids the caller may touch, or None for unrestricted (GLOBAL/microservice)."""
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return None
+    sv = (await apply_scope({}, ctx)).get("outlet_id")
+    if sv is None:
+        return ["__none__"]  # scoped but no outlet dimension -> match nothing
+    return sv if isinstance(sv, list) else [sv]
+
+
+async def _assert_outlet_in_scope(ctx: AuthContext, outlet_id):
+    """Scoped (non-global) callers may only act on a given outlet's invoices."""
+    scope_ids = await _invoice_scope_ids(ctx)
+    if scope_ids is None:
+        return
+    if outlet_id in scope_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied to this outlet's invoices",
+    )
 
 
 def build_invoice_response(invoice, items=None) -> InvoiceResponse:
@@ -104,23 +128,13 @@ def build_invoice_response(invoice, items=None) -> InvoiceResponse:
 @router.get("/next-number/{outlet_id}")
 async def get_next_invoice_number(
     outlet_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_READ)),
 ):
     """Get next invoice number for outlet"""
     try:
-        # Get current user to check permissions
-        current_user = await user_manager.fetch(current_user_id)
-        
-        # Role-based access control
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only access invoice numbers for your outlet"
-                )
-        
+        # Scoped callers may only access their own outlet's invoice numbers
+        await _assert_outlet_in_scope(ctx, outlet_id)
+
         # Verify outlet exists
         try:
             outlet = await outlet_manager.fetch(outlet_id)
@@ -149,21 +163,15 @@ async def get_customer_invoices(
     phone: str,
     limit: int = 20,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_READ)),
 ):
     """Get invoices for a specific customer by phone number"""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
         filters = {"customer_phone": phone}
-        
-        # Role-based filtering
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id:
-                filters["outlet_id"] = current_user.outlet_id
-        
+
+        # Row scope: scoped callers limited to their outlet(s), global sees all.
+        filters = await apply_scope(filters, ctx)
+
         invoices = await invoice_manager.fetch_all(
             filters=filters,
             limit=limit,
@@ -188,20 +196,14 @@ async def get_gst_summary(
     outlet_id: Optional[str] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """Get GST summary report"""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
         filters = {}
         if outlet_id:
             filters["outlet_id"] = outlet_id
-        elif current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id:
-            filters["outlet_id"] = current_user.outlet_id
-        
+
         invoices = await invoice_manager.fetch_all(filters=filters)
         
         # Calculate GST summary
@@ -249,20 +251,17 @@ async def get_sales_summary(
     outlet_id: Optional[str] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_READ)),
 ):
     """Get sales summary report"""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
         filters = {}
         if outlet_id:
             filters["outlet_id"] = outlet_id
-        elif current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id:
-            filters["outlet_id"] = current_user.outlet_id
-        
+
+        # Row scope: scoped callers limited to their outlet(s), global sees all.
+        filters = await apply_scope(filters, ctx)
+
         invoices = await invoice_manager.fetch_all(filters=filters)
         
         # Calculate sales summary
@@ -306,112 +305,6 @@ async def get_sales_summary(
         )
 
 
-# Duplicate /{invoice_id} route removed - moved to top of file
-    """Get specific invoice details"""
-    try:
-        invoice = await invoice_manager.fetch(invoice_id)
-        
-        # Check access permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != invoice.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this invoice"
-                )
-        
-        # Get invoice items
-        invoice_items = await invoice_item_manager.fetch_all(
-            filters={"invoice_id": invoice_id}
-        )
-        
-        items = []
-        for item in invoice_items.items:
-            try:
-                product = await product_manager.fetch(item.product_id)
-                items.append(InvoiceItemResponse(
-                    product_id=item.product_id,
-                    product_name=product.product_name,
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    total_price=item.total_price,
-                    gst_rate=item.gst_rate
-                ))
-            except:
-                items.append(InvoiceItemResponse(
-                    product_id=item.product_id,
-                    product_name="Unknown Product",
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    total_price=item.total_price,
-                    gst_rate=item.gst_rate
-                ))
-        
-        return InvoiceResponse(
-            uid=invoice.uid,
-            invoice_number=invoice.invoice_number,
-            invoice_date=invoice.invoice_date,
-            customer_name=invoice.customer_name,
-            customer_phone=invoice.customer_phone,
-            customer_address=invoice.customer_address,
-            outlet_id=invoice.outlet_id,
-            total_amount=invoice.total_amount,
-            tax_amount=invoice.tax_amount,
-            discount_amount=invoice.discount_amount,
-            payment_method=invoice.payment_method,
-            payment_status=invoice.payment_status,
-            notes=invoice.notes,
-            items=items,
-            created_at=invoice.created_at,
-            created_by=invoice.created_by,
-            is_cancelled=invoice.is_cancelled
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        if "not found" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Invoice not found"
-            )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch invoice: {str(e)}"
-        )
-
-
-# Duplicate /{invoice_id}/pdf route removed - moved to top of file
-    """Generate PDF for invoice"""
-    try:
-        # Generate PDF using service
-        pdf_bytes = await invoice_service.generate_invoice_pdf(invoice_id, current_user_id)
-        
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f"attachment; filename=invoice_{invoice_id}.pdf"}
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate PDF: {str(e)}"
-        )
-
-
-# Duplicate /{invoice_id}/print route removed - moved to top of file
-    """Get invoice print view (redirect to PDF)"""
-    return {
-        "status": "success",
-        "message": "Use PDF endpoint for printing",
-        "pdf_url": f"/api/v1/invoices/{invoice_id}/pdf",
-        "note": "Download PDF and print from your device"
-    }
-
-
 # GENERIC ROUTES LAST (after all specific routes)
 
 @router.get("", response_model=ListResponse[InvoiceResponse])
@@ -423,25 +316,13 @@ async def list_invoices(
     is_cancelled: Optional[bool] = None,
     limit: int = 50,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_READ)),
 ):
     """
     List invoices with filters
     Outlet managers can only see their outlet's invoices
     """
     try:
-        # Check outlet access for outlet managers
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if outlet_id and outlet_id != current_user.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this outlet's invoices"
-                )
-            outlet_id = current_user.outlet_id
-        
         filters = {}
         if outlet_id:
             filters["outlet_id"] = outlet_id
@@ -449,7 +330,11 @@ async def list_invoices(
             filters["customer_phone"] = customer_phone
         if is_cancelled is not None:
             filters["is_cancelled"] = is_cancelled
-        
+
+        # Row scope: scoped callers limited to their outlet(s); the outlet_id query
+        # param can't widen scope (apply_scope overrides it). Global sees all.
+        filters = await apply_scope(filters, ctx)
+
         invoices = await invoice_manager.fetch_all(
             limit=limit,
             offset=offset,
@@ -484,29 +369,19 @@ async def list_invoices(
         )
 
 
-# Duplicate next-number route removed - moved to top of file
-
-
 @router.post("", response_model=InvoiceResponse)
 async def create_invoice(
     payload: InvoiceCreateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_WRITE)),
 ):
     """
     Create new invoice with GST calculations
     Note: Inventory deduction now handled during order creation
     """
     try:
-        # Check outlet access
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != payload.outlet_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this outlet"
-            )
-        
+        # Scoped callers may only create invoices for an outlet in their scope
+        await _assert_outlet_in_scope(ctx, payload.outlet_id)
+
         # Prepare customer details
         customer_details = None
         if any([payload.customer_name, payload.customer_phone, payload.customer_email]):
@@ -538,7 +413,7 @@ async def create_invoice(
             discount_amount=payload.discount_amount,  # Ignored in new logic
             prepaid_amount=payload.prepaid_amount,  # New field
             notes=payload.notes,
-            created_by=current_user_id
+            created_by=ctx.user_id
         )
         
         invoice = result['invoice']
@@ -556,173 +431,11 @@ async def create_invoice(
         )
 
 
-# Duplicate customer route removed - moved to top of file
-
-
-# Duplicate /{invoice_id} route removed - moved to top of file
-    """
-    Get invoice details with items
-    """
-    try:
-        invoice = await invoice_manager.fetch(invoice_id)
-        
-        # Check outlet access
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != invoice.outlet_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this invoice"
-            )
-        
-        # Get invoice items
-        items = await invoice_item_manager.fetch_all(
-            filters={"invoice_id": invoice_id}
-        )
-        
-        item_responses = [
-            InvoiceItemResponse(
-                uid=item.uid,
-                product_id=item.product_id,
-                product_name=item.product_name,
-                hsn_code=item.hsn_code,
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                total_price=item.total_price,  # Add missing total_price field
-                discount_percentage=item.discount_percentage,
-                discount_amount=item.discount_amount,
-                taxable_amount=item.taxable_amount,
-                tax_rate=item.tax_rate,
-                cgst_rate=item.cgst_rate,
-                cgst_amount=item.cgst_amount,
-                sgst_rate=item.sgst_rate,
-                sgst_amount=item.sgst_amount,
-                igst_rate=item.igst_rate,
-                igst_amount=item.igst_amount,
-                total_tax=item.total_tax,
-                total_amount=item.total_amount
-            )
-            for item in items.items
-        ]
-        
-        return InvoiceResponse(
-            uid=invoice.uid,
-            invoice_number=invoice.invoice_number,
-            outlet_id=invoice.outlet_id,
-            customer_name=invoice.customer_name,
-            customer_phone=invoice.customer_phone,
-            customer_email=invoice.customer_email,
-            customer_address=invoice.customer_address,
-            customer_gstin=invoice.customer_gstin,
-            customer_state_code=invoice.customer_state_code,
-            invoice_date=invoice.invoice_date,
-            invoice_type=invoice.invoice_type,
-            payment_method=invoice.payment_method,
-            payment_status=invoice.payment_status,
-            subtotal=invoice.subtotal,
-            discount_amount=invoice.discount_amount,
-            taxable_amount=invoice.taxable_amount,
-            cgst_amount=invoice.cgst_amount,
-            sgst_amount=invoice.sgst_amount,
-            igst_amount=invoice.igst_amount,
-            total_tax=invoice.total_tax,
-            total_amount=invoice.total_amount,
-            amount_paid=invoice.amount_paid,
-            balance_amount=invoice.balance_amount,
-            notes=invoice.notes,
-            is_cancelled=invoice.is_cancelled,
-            cancelled_reason=invoice.cancelled_reason,
-            created_by=invoice.created_by,
-            items=item_responses,
-            created_at=invoice.created_at
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Invoice not found: {str(e)}"
-        )
-
-
-# Duplicate /{invoice_id}/pdf route removed - moved to top of file
-    """
-    Generate and download invoice PDF
-    """
-    try:
-        # Check access permissions
-        invoice = await invoice_manager.fetch(invoice_id)
-        current_user = await user_manager.fetch(current_user_id)
-        
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != invoice.outlet_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this invoice"
-            )
-        
-        # Generate PDF
-        pdf_buffer = await invoice_service.generate_invoice_pdf(invoice_id)
-        
-        # Return PDF as downloadable file
-        from fastapi.responses import StreamingResponse
-        
-        return StreamingResponse(
-            BytesIO(pdf_buffer.read()),
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename=invoice_{invoice.invoice_number}.pdf"
-            }
-        )
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate PDF: {str(e)}"
-        )
-
-
-# Duplicate /{invoice_id}/print route removed - moved to top of file
-    """
-    Get invoice in print-ready format (HTML or redirect to PDF)
-    """
-    try:
-        # Check access permissions
-        invoice = await invoice_manager.fetch(invoice_id)
-        current_user = await user_manager.fetch(current_user_id)
-        
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != invoice.outlet_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this invoice"
-            )
-        
-        # For now, redirect to PDF generation
-        # In future, this could return HTML template for browser printing
-        return {
-            "status": "success",
-            "message": "Use PDF endpoint for printing",
-            "pdf_url": f"/api/v1/invoices/{invoice_id}/pdf",
-            "note": "Download PDF and print from your device"
-        }
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get print view: {str(e)}"
-        )
-
-
 @router.post("/{invoice_id}/email")
 async def email_invoice(
     invoice_id: str,
     email_address: Optional[str] = None,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_WRITE)),
 ):
     """
     Email invoice to customer
@@ -730,7 +443,10 @@ async def email_invoice(
     """
     try:
         invoice = await invoice_manager.fetch(invoice_id)
-        
+
+        # Scoped callers may only email invoices for an outlet in their scope
+        await _assert_outlet_in_scope(ctx, invoice.outlet_id)
+
         # Use provided email or customer email from invoice
         target_email = email_address or invoice.customer_email
         
@@ -758,26 +474,29 @@ async def email_invoice(
         )
 
 
-
-
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
 async def get_invoice(
     invoice_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_READ)),
 ):
     """Get invoice by ID with items"""
     try:
         # Get invoice
         invoice = await invoice_manager.fetch(invoice_id)
-        
+
+        # Scoped callers may only read invoices for an outlet in their scope
+        await _assert_outlet_in_scope(ctx, invoice.outlet_id)
+
         # Get invoice items
         items = await invoice_item_manager.fetch_all(filters={"invoice_id": invoice_id})
-        
+
         # Convert to response format
         invoice_dict = invoice.__dict__.copy()
         invoice_dict['items'] = [item.__dict__ for item in items.items]
-        
+
         return InvoiceResponse(**invoice_dict)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -789,13 +508,16 @@ async def get_invoice(
 async def update_invoice(
     invoice_id: str,
     payload: InvoiceCreateRequest,  # Reuse create request for updates
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_WRITE)),
 ):
     """Update invoice (only if not finalized)"""
     try:
         # Check if invoice exists and is not cancelled
         existing_invoice = await invoice_manager.fetch(invoice_id)
-        
+
+        # Scoped callers may only update invoices for an outlet in their scope
+        await _assert_outlet_in_scope(ctx, existing_invoice.outlet_id)
+
         if existing_invoice.is_cancelled:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -830,12 +552,16 @@ async def update_invoice(
 @router.get("/{invoice_id}/pdf")
 async def download_invoice_pdf(
     invoice_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_READ)),
 ):
     """Download invoice as PDF"""
     try:
+        # Scoped callers may only download invoices for an outlet in their scope
+        invoice = await invoice_manager.fetch(invoice_id)
+        await _assert_outlet_in_scope(ctx, invoice.outlet_id)
+
         from services.invoice_service import InvoiceService
-        
+
         invoice_service = InvoiceService(engine)
         pdf_buffer = await invoice_service.generate_invoice_pdf(invoice_id)
         
@@ -858,9 +584,7 @@ async def download_invoice_pdf(
 async def cancel_invoice(
     invoice_id: str,
     reason: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVOICES_WRITE)),
 ):
     """
     Cancel invoice and restore inventory
@@ -868,16 +592,12 @@ async def cancel_invoice(
     try:
         # Check access permissions
         invoice = await invoice_manager.fetch(invoice_id)
-        current_user = await user_manager.fetch(current_user_id)
-        
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != invoice.outlet_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this invoice"
-            )
-        
+
+        # Scoped callers may only cancel invoices for an outlet in their scope
+        await _assert_outlet_in_scope(ctx, invoice.outlet_id)
+
         # Cancel invoice using service
-        success = await invoice_service.cancel_invoice(invoice_id, reason, current_user_id)
+        success = await invoice_service.cancel_invoice(invoice_id, reason, ctx.user_id)
         
         if success:
             return StatusResponse(

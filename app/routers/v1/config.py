@@ -7,8 +7,8 @@ from pathlib import Path
 from config import get_settings, get_engine
 from managers import SystemConfigurationManager, SystemConfigurationSchema
 from models import SystemConfigurationUpdateRequest, SystemConfigurationResponse, StatusResponse
-from utils.auth import require_roles
-from utils.constants import UserRole
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -23,9 +23,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.get("", response_model=SystemConfigurationResponse)
 async def get_system_configuration(
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
-    ))
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_READ))
 ):
     """
     Get current system configuration
@@ -83,7 +81,7 @@ async def get_system_configuration(
 @router.put("", response_model=SystemConfigurationResponse)
 async def update_system_configuration(
     payload: SystemConfigurationUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_WRITE))
 ):
     """
     Update system configuration
@@ -141,7 +139,7 @@ async def update_system_configuration(
 @router.post("/logo", response_model=StatusResponse)
 async def upload_company_logo(
     file: UploadFile = File(...),
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_WRITE))
 ):
     """
     Upload company logo for invoices
@@ -197,7 +195,7 @@ async def upload_company_logo(
 
 @router.delete("/logo", response_model=StatusResponse)
 async def remove_company_logo(
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_WRITE))
 ):
     """
     Remove company logo

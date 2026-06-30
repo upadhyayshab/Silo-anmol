@@ -12,7 +12,8 @@ from models import (
     InventoryResponse, InventoryAuditResponse, StockAdjustmentRequest,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission
 from utils.constants import UserRole, TransferStatus, OrderStatus, OutletType
 from utils.warehouse_utils import get_default_warehouse_id
 
@@ -40,21 +41,14 @@ router = APIRouter(prefix="/inventory", tags=["Inventory Management"])
 @router.get("/product/{product_id}", response_model=ListResponse[InventoryResponse])
 async def get_product_inventory(
     product_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_READ)),
 ):
     """Get inventory for a specific product across all outlets"""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
-        filters = {"product_id": product_id}
-        
-        # Role-based filtering
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id:
-                filters["outlet_id"] = current_user.outlet_id
-        
+        # Row scope: outlet mgr -> own outlet; cluster/state -> their outlets; global
+        # (admin/warehouse/accountant) -> all. Replaces the old role check + manual filter.
+        filters = await apply_scope({"product_id": product_id}, ctx)
+
         inventory_items = await inventory_manager.fetch_all(filters=filters)
         
         inventory_responses = []
@@ -90,23 +84,15 @@ async def get_product_inventory(
 @router.get("/low-stock", response_model=ListResponse[InventoryResponse])
 async def get_low_stock_alerts(
     outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_READ)),
 ):
     """Get items with low stock levels"""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
-        filters = {}
-        
-        # Role-based filtering
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id:
-                filters["outlet_id"] = current_user.outlet_id
-        elif outlet_id:
-            filters["outlet_id"] = outlet_id
-        
+        # Honor an explicit outlet_id for global callers; apply_scope then overrides it
+        # for scoped roles (so they can't query outside their scope).
+        filters = {"outlet_id": outlet_id} if outlet_id else {}
+        filters = await apply_scope(filters, ctx)
+
         inventory_items = await inventory_manager.fetch_all(filters=filters)
         
         low_stock_items = []
@@ -146,23 +132,10 @@ async def get_low_stock_alerts(
 @router.get("/reserved", response_model=ListResponse[InventoryResponse])
 async def get_reserved_stock(
     outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_READ)),
 ):
     """Get items with reserved stock"""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
-        filters = {}
-        
-        # Role-based filtering
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id:
-                filters["outlet_id"] = current_user.outlet_id
-        elif outlet_id:
-            filters["outlet_id"] = outlet_id
-        
         # Reserved quantity logic removed. Always returning empty list.
         return ListResponse(items=[], count=0)
     
@@ -182,10 +155,7 @@ async def get_inventory(
     low_stock_only: bool = False,
     limit: int = 100,
     offset: int = 0,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.INVENTORY_READ)),
 ):
     """
     Get inventory across locations with filters
@@ -196,6 +166,11 @@ async def get_inventory(
     try:
         # Resolve the warehouse ID at runtime (supports multiple warehouses)
         warehouse_id = await get_default_warehouse_id(engine)
+
+        # Row scope: None=global (admin/warehouse/accountant), a scalar (outlet mgr) or a
+        # list (cluster/state) of outlet ids. ANDed onto the query so a scoped caller
+        # can't see — or query for — out-of-scope outlets.
+        scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
 
         # Define coalesced expressions for consistent grouping
         # NULL outlet_id rows are legacy records that belong to the warehouse
@@ -310,7 +285,12 @@ async def get_inventory(
                 stmt = stmt.where(InventorySchema.outlet_id == warehouse_id)
             else:
                 stmt = stmt.where(InventorySchema.outlet_id == outlet_id)
-                
+
+        if scope_outlet is not None:
+            stmt = stmt.where(InventorySchema.outlet_id.in_(scope_outlet)
+                              if isinstance(scope_outlet, list)
+                              else InventorySchema.outlet_id == scope_outlet)
+
         if product_id:
             stmt = stmt.where(InventorySchema.product_id == product_id)
 
@@ -323,6 +303,10 @@ async def get_inventory(
                     count_stmt = count_stmt.where(InventorySchema.outlet_id == warehouse_id)
                 else:
                     count_stmt = count_stmt.where(InventorySchema.outlet_id == outlet_id)
+            if scope_outlet is not None:
+                count_stmt = count_stmt.where(InventorySchema.outlet_id.in_(scope_outlet)
+                                              if isinstance(scope_outlet, list)
+                                              else InventorySchema.outlet_id == scope_outlet)
             if product_id:
                 count_stmt = count_stmt.where(InventorySchema.product_id == product_id)
                 
@@ -396,10 +380,7 @@ async def get_inventory(
 @router.post("/adjust", response_model=StatusResponse)
 async def adjust_stock(
     payload: StockAdjustmentRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER
-    ))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST)),
 ):
     """
     Manual stock adjustment with reason tracking
@@ -486,10 +467,7 @@ async def reserve_stock(
     product_id: str,
     outlet_id: Optional[str],
     quantity: int,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_WRITE)),
 ):
     """
     Reserve stock for pending orders
@@ -545,10 +523,7 @@ async def release_reserved_stock(
     product_id: str,
     outlet_id: Optional[str],
     quantity: int,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER
-    ))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_WRITE)),
 ):
     """
     Release reserved stock (e.g., when order is cancelled)
@@ -603,10 +578,7 @@ async def consume_reserved_stock(
     product_id: str,
     outlet_id: Optional[str],
     quantity: int,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER
-    ))
+    _: AuthContext = Depends(require_permission(Permission.INVENTORY_WRITE)),
 ):
     """
     Consume reserved stock (e.g., when order is delivered or invoice is created)

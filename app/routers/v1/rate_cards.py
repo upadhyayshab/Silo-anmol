@@ -3,8 +3,8 @@ from typing import List, Optional, Any, Dict
 from config import get_settings, get_engine
 from managers import RateCardManager, RateCardSchema, OutletManager
 from models import RateCardCreateRequest, RateCardUpdateRequest, RateCardResponse, ListResponse, StatusResponse
-from utils.auth import require_roles
-from utils.constants import UserRole
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission
 from utils import dependencies as D
 
 settings = get_settings()
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/rate-cards", tags=["Rider Rate Cards"])
 @router.post("", response_model=RateCardResponse, status_code=status.HTTP_201_CREATED)
 async def create_rate_card(
     payload: RateCardCreateRequest,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _ctx: AuthContext = Depends(require_permission(Permission.DRIVER_PAY_WRITE))
 ):
     """Create a new rate card for an outlet"""
     # Check if outlet exists
@@ -40,7 +40,7 @@ async def list_rate_cards(
     sorts: List[str] = Depends(D.sorting_dependency),
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+    _ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """List all rate cards"""
     return await rate_card_manager.fetch_all(
@@ -54,7 +54,7 @@ async def list_rate_cards(
 @router.get("/{uid}", response_model=RateCardResponse)
 async def get_rate_card(
     uid: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.OUTLET_MANAGER))
+    _ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """Get a specific rate card"""
     try:
@@ -66,7 +66,7 @@ async def get_rate_card(
 async def update_rate_card(
     uid: str,
     payload: RateCardUpdateRequest,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _ctx: AuthContext = Depends(require_permission(Permission.DRIVER_PAY_WRITE))
 ):
     """Update a rate card"""
     updates = payload.dict(exclude_unset=True)
@@ -78,7 +78,7 @@ async def update_rate_card(
 @router.delete("/{uid}", response_model=StatusResponse)
 async def delete_rate_card(
     uid: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    _ctx: AuthContext = Depends(require_permission(Permission.DRIVER_PAY_WRITE))
 ):
     """Delete a rate card"""
     try:

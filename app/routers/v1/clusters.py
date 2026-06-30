@@ -28,8 +28,9 @@ from managers import (
     ClusterManager, ClusterDistrictManager, ClusterSchema, ClusterDistrictSchema,
     OutletManager, OutletSchema, UserManager,
 )
-from utils.auth import require_roles
-from utils.constants import UserRole, OutletType
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission
+from utils.constants import OutletType
 from utils.cluster_utils import canonical_district
 
 settings = get_settings()
@@ -159,6 +160,7 @@ async def list_clusters(
     is_active: Optional[bool] = Query(None),
     limit: int = Query(200, ge=0, le=1000),
     offset: int = Query(0, ge=0),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_READ)),
 ):
     filters: Dict[str, Any] = {}
     if state:
@@ -177,7 +179,10 @@ async def list_clusters(
 
 
 @router.get("/hierarchy")
-async def cluster_hierarchy(state: Optional[str] = Query(None)):
+async def cluster_hierarchy(
+    state: Optional[str] = Query(None),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_READ)),
+):
     """state -> clusters -> districts (+ outlet count per cluster)."""
     filters: Dict[str, Any] = {}
     if state:
@@ -207,7 +212,10 @@ async def cluster_hierarchy(state: Optional[str] = Query(None)):
 
 
 @router.get("/{uid}")
-async def get_cluster(uid: str):
+async def get_cluster(
+    uid: str,
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_READ)),
+):
     cluster = await cluster_manager.fetch(uid, joins=[ClusterSchema.districts, ClusterSchema.outlets])
     if not cluster:
         raise HTTPException(404, "Cluster not found")
@@ -242,7 +250,7 @@ async def get_cluster(uid: str):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_cluster(
     payload: ClusterCreate,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     err = _validate_state(payload.state)
     if err:
@@ -272,7 +280,7 @@ async def create_cluster(
 async def update_cluster(
     uid: str,
     payload: ClusterUpdate,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     cluster = await cluster_manager.fetch(uid)
     if not cluster:
@@ -288,7 +296,7 @@ async def update_cluster(
 @router.delete("/{uid}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_cluster(
     uid: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     cluster = await cluster_manager.fetch(uid)
     if not cluster:
@@ -308,7 +316,7 @@ async def delete_cluster(
 async def add_districts(
     uid: str,
     payload: DistrictsPayload,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     cluster = await cluster_manager.fetch(uid)
     if not cluster:
@@ -321,7 +329,7 @@ async def add_districts(
 async def remove_district(
     uid: str,
     district: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     canon = canonical_district(district)
     memberships = await cluster_district_manager.fetch_all(
@@ -338,7 +346,7 @@ async def remove_district(
 async def assign_outlets(
     uid: str,
     payload: OutletsPayload,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     cluster = await cluster_manager.fetch(uid)
     if not cluster:
@@ -365,7 +373,7 @@ async def assign_outlets(
 async def unassign_outlet(
     uid: str,
     outlet_id: str,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     outlet = await outlet_manager.fetch(outlet_id)
     if not outlet or outlet.cluster_id != uid:
@@ -377,7 +385,7 @@ async def unassign_outlet(
 @router.post("/bulk")
 async def bulk_import(
     payload: BulkImportRequest,
-    _: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+    _: AuthContext = Depends(require_permission(Permission.CLUSTERS_WRITE)),
 ):
     """Replace-per-state bulk import from State/Cluster/District rows."""
     from collections import defaultdict

@@ -13,9 +13,9 @@ from models import (
     OutletCollectionResponse, OutletCollectionSummaryResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id, require_permission, apply_scope, AuthContext
-from utils.permissions import Permission
-from utils.constants import UserRole, OutletCollectionStatus, OrderStatus
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import OutletCollectionStatus, OrderStatus
 from utils.functions import ensure_date
 
 settings = get_settings()
@@ -29,19 +29,50 @@ order_manager = CustomerOrderManager(engine)
 router = APIRouter(prefix="/outlet-collections", tags=["Outlet Collections"])
 
 
+async def _collection_scope_ids(ctx: AuthContext):
+    """Outlet-ids the caller may touch, or None for unrestricted (GLOBAL/microservice)."""
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return None
+    sv = (await apply_scope({}, ctx)).get("outlet_id")
+    if sv is None:
+        return ["__none__"]  # scoped but no outlet dimension -> match nothing
+    return sv if isinstance(sv, list) else [sv]
+
+
+async def _assert_collection_in_scope(ctx: AuthContext, collection):
+    """Scoped (non-global) callers may only act on collections for their outlet(s)."""
+    scope_ids = await _collection_scope_ids(ctx)
+    if scope_ids is None:
+        return
+    if collection.outlet_id in scope_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied: this collection is outside your scope",
+    )
+
+
 @router.post("", response_model=OutletCollectionResponse)
 async def create_collection(
     payload: OutletCollectionCreateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_WRITE)),
 ):
     """
     Create a new outlet daily collection record
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: holders of collections:write. Outlet managers record only their own
+    outlet's collection (outlet_id forced to their assigned outlet).
     """
     try:
+        # Non-GLOBAL callers may only record for their own outlet
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            if not ctx.outlet_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You are not assigned to any outlet",
+                )
+            payload.outlet_id = ctx.outlet_id
+
         # Validate outlet exists
         try:
             await outlet_manager.fetch(payload.outlet_id)
@@ -94,12 +125,10 @@ async def create_collection(
 
 @router.get("/summary", response_model=OutletCollectionSummaryResponse)
 async def get_collection_summary(
-    outlet_id: Optional[str] = Query(None, description="Filter by outlet (ignored for OUTLET_MANAGER)"),
+    outlet_id: Optional[str] = Query(None, description="Filter by outlet (scoped callers see only their outlet)"),
     date_from: Optional[date] = Query(None, description="Filter delivered orders from this date (actual_delivery_date)"),
     date_to: Optional[date] = Query(None, description="Filter delivered orders up to this date (actual_delivery_date)"),
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_READ)),
 ):
     """
     Collection summary for an outlet.
@@ -118,21 +147,22 @@ async def get_collection_summary(
       all-time `confirmed_collections`.  This is always the true current
       balance regardless of any date filter supplied.
 
-    Access: SUPER_ADMIN, ADMIN, OUTLET_MANAGER
+    Access: holders of collections:read. Scoped callers (e.g. OUTLET_MANAGER) see
+    their own outlet; finance/admin (global) see all (or a chosen outlet).
     """
     try:
-        current_user = await user_manager.fetch(current_user_id)
-
-        # OUTLET_MANAGER is always scoped to their own outlet
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if not current_user.outlet_id:
+        # Scoped callers are pinned to their outlet; global callers may pick one.
+        scope_ids = await _collection_scope_ids(ctx)
+        if scope_ids is None:
+            resolved_outlet_id = outlet_id  # all outlets (or chosen one)
+        else:
+            scoped_outlet = scope_ids[0] if scope_ids else None
+            if not scoped_outlet or scoped_outlet == "__none__":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Outlet manager is not assigned to any outlet"
+                    detail="You are not assigned to any outlet"
                 )
-            resolved_outlet_id = current_user.outlet_id
-        else:
-            resolved_outlet_id = outlet_id  # all outlets
+            resolved_outlet_id = scoped_outlet
 
         # ------------------------------------------------------------------ #
         # Fetch ALL delivered orders for this outlet (once)                   #
@@ -297,18 +327,18 @@ async def list_collections(
 @router.get("/{collection_id}", response_model=OutletCollectionResponse)
 async def get_collection(
     collection_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_READ)),
 ):
     """
     Get a single collection record
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: holders of collections:read; scoped callers limited to their outlet.
     """
     try:
         collection = await collection_manager.fetch(collection_id)
-        
+
+        await _assert_collection_in_scope(ctx, collection)
+
         return OutletCollectionResponse(
             uid=collection.uid,
             collection_date=collection.date,
@@ -324,7 +354,9 @@ async def get_collection(
             created_at=collection.created_at,
             updated_at=collection.updated_at
         )
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -336,21 +368,27 @@ async def get_collection(
 async def update_collection_status(
     collection_id: str,
     payload: OutletCollectionStatusUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_WRITE)),
 ):
     """
     Update collection confirmation status
-    
+
     Status transitions:
     - PENDING -> CONFIRMED
     - PENDING -> NOT_RECEIVED
     - NOT_RECEIVED -> CONFIRMED
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: collections:write at GLOBAL scope (finance/admin checker tier).
+    OUTLET_MANAGER (records collections) cannot confirm/reject.
     """
     try:
+        # Confirming/rejecting is a checker action — finance/admin (global) only.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Confirming/deleting collections requires finance/admin (global) scope"
+            )
+
         # Fetch current collection
         collection = await collection_manager.fetch(collection_id)
         
@@ -382,7 +420,7 @@ async def update_collection_status(
         
         # Set confirmed_by and confirmed_at when status becomes CONFIRMED
         if new_status == OutletCollectionStatus.CONFIRMED:
-            updates["confirmed_by"] = current_user_id
+            updates["confirmed_by"] = ctx.user_id
             updates["confirmed_at"] = datetime.utcnow()
         
         # Update collection
@@ -422,18 +460,24 @@ async def update_collection_status(
 @router.delete("/{collection_id}", response_model=StatusResponse)
 async def delete_collection(
     collection_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_WRITE)),
 ):
     """
     Delete a collection record
-    
+
     Use this if a collection was created by mistake.
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: collections:write at GLOBAL scope (finance/admin checker tier).
+    OUTLET_MANAGER cannot delete.
     """
     try:
+        # Deleting is a checker action — finance/admin (global) only.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Confirming/deleting collections requires finance/admin (global) scope"
+            )
+
         # Fetch collection to get details for response
         collection = await collection_manager.fetch(collection_id)
         

@@ -8,9 +8,8 @@ from models import (
     ProductCategoryCreateRequest, ProductCategoryResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, require_permission, apply_field_mask, AuthContext
+from utils.auth import require_permission, apply_field_mask, AuthContext
 from utils.permissions import Permission
-from utils.constants import UserRole
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -29,10 +28,7 @@ async def list_categories(
     is_active: bool = None,
     limit: int = 100,
     offset: int = 0,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    _: AuthContext = Depends(require_permission(Permission.PRODUCTS_READ)),
 ):
     """
     List all product categories
@@ -71,11 +67,11 @@ async def list_categories(
 @router.post("/categories", response_model=ProductCategoryResponse, status_code=status.HTTP_201_CREATED)
 async def create_category(
     payload: ProductCategoryCreateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+    _: AuthContext = Depends(require_permission(Permission.PRODUCTS_WRITE)),
 ):
     """
     Create new product category
-    Requires: super_admin, admin, or warehouse_manager role
+    Requires: products:write
     """
     try:
         # Check if category name already exists
@@ -276,11 +272,11 @@ async def get_product(
 @router.post("/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
     payload: ProductCreateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+    _: AuthContext = Depends(require_permission(Permission.PRODUCTS_COST_WRITE)),
 ):
     """
     Create new product
-    Requires: super_admin, admin, or warehouse_manager role
+    Requires: products:cost:write (endpoint-level cost lock — finance only)
     """
     try:
         # Check if SKU already exists
@@ -358,11 +354,11 @@ async def create_product(
 async def update_product(
     product_id: str,
     payload: ProductUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+    _: AuthContext = Depends(require_permission(Permission.PRODUCTS_COST_WRITE)),
 ):
     """
     Update product details
-    Requires: super_admin, admin, or warehouse_manager role
+    Requires: products:cost:write (endpoint-level cost lock — finance only)
     """
     try:
         updates = payload.dict(exclude_unset=True)
@@ -409,11 +405,11 @@ async def update_product(
 @router.delete("/products/{product_id}", response_model=StatusResponse)
 async def deactivate_product(
     product_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+    _: AuthContext = Depends(require_permission(Permission.PRODUCTS_WRITE)),
 ):
     """
     Deactivate product (soft delete)
-    Requires: super_admin, admin, or warehouse_manager role
+    Requires: products:write
     """
     try:
         await product_manager.update(product_id, {"is_active": False})

@@ -2,25 +2,47 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
 import asyncio
 
+import sqlalchemy as sa
+from pydantic import BaseModel
+
 from config import get_settings, get_engine
-from managers import UserManager, LSQTelecallerMappingManager, UserSchema, LSQTelecallerMappingSchema
+from managers import (UserManager, LSQTelecallerMappingManager, UserSchema,
+                      LSQTelecallerMappingSchema, UserScopeAssignmentManager,
+                      UserScopeAssignmentSchema)
 from services import CRMService
 from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
 )
-from utils.auth import (get_password_hash, verify_password, require_roles,
-                        get_current_user_id, require_permission, AuthContext,
+from utils.auth import (get_password_hash, verify_password,
+                        require_permission, AuthContext,
                         enforce_agency_roster_fence, enforce_agency_update_fence,
                         get_auth_context)
-from utils.permissions import Permission
+from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole
 
 settings = get_settings()
 engine = get_engine(settings.name)
 user_manager = UserManager(engine)
 lsq_mapping_manager = LSQTelecallerMappingManager(engine)
+scope_assignment_manager = UserScopeAssignmentManager(engine)
 crm_service = CRMService()
+
+# Multi-valued row-scope levels a user can be granted. GLOBAL roles need no row;
+# OUTLET scope comes from the user's own `outlet_id` field (not an assignment row).
+_ASSIGNABLE_LEVELS = {ScopeLevel.STATE.value, ScopeLevel.CLUSTER.value, ScopeLevel.AGENCY.value}
+
+
+class ScopeAssignmentRequest(BaseModel):
+    scope_level: str   # STATE | CLUSTER | AGENCY
+    scope_value: str   # state name / cluster_id / agency_id
+
+
+class ScopeAssignmentResponse(BaseModel):
+    uid: str
+    user_id: str
+    scope_level: str
+    scope_value: str
 
 router = APIRouter(prefix="/users", tags=["User Management"])
 
@@ -29,7 +51,7 @@ router = APIRouter(prefix="/users", tags=["User Management"])
 
 @router.post("/sync/telecallers", response_model=StatusResponse)
 async def sync_lsq_telecallers(
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.USERS_MANAGE))
 ):
     """
     Sync telecallers from LeadSquared to ERP.
@@ -188,22 +210,13 @@ async def sync_lsq_telecallers(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT, UserRole.AGENCY_ADMIN)),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_READ)),
 ):
     """Get specific user details"""
     try:
-        # Users can view their own profile, admins and warehouse managers can view any user
-        current_user = await user_manager.fetch(current_user_id)
-
-        if current_user_id != user_id and current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: You can only view your own profile"
-            )
-
         user = await user_manager.fetch(user_id)
 
+        # Agency-roster fence: an AGENCY_ADMIN only sees users inside their own agency.
         if ctx.role == "AGENCY_ADMIN" and getattr(user, "agency_id", None) not in ctx.agency_ids:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Out of agency scope")
 
@@ -243,20 +256,17 @@ async def get_user(
 async def change_user_password(
     user_id: str,
     payload: UserPasswordChangeRequest,
-    current_user_id: str = Depends(get_current_user_id)
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """Change user password"""
     try:
-        # Users can only change their own password unless admin
-        if user_id != current_user_id:
-            # Check if current user is admin
-            current_user = await user_manager.fetch(current_user_id)
-            if current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Can only change your own password"
-                )
-        
+        # Self-service (own password) OR an admin with USERS_MANAGE may change any user's.
+        if not (ctx.user_id == user_id or ctx.has(Permission.USERS_MANAGE)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Can only change your own password"
+            )
+
         # Verify old password
         user = await user_manager.fetch(user_id)
         if not verify_password(payload.old_password, user.password_hash):
@@ -279,6 +289,78 @@ async def change_user_password(
         )
 
 
+# --------------------------------------------------------------------------
+# Row-scope assignments (RBAC Step 3) — grant a user the clusters/states/agencies
+# they cover. Multi-valued; consumed by login → JWT → apply_scope. Changes take
+# effect on the user's next login / token refresh.
+# --------------------------------------------------------------------------
+
+@router.get("/{user_id}/scopes", response_model=List[ScopeAssignmentResponse])
+async def list_user_scopes(
+    user_id: str,
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_MANAGE)),
+):
+    """List the row-scope grants for a user (which clusters/states/agencies they cover)."""
+    target = await user_manager.fetch(user_id)
+    enforce_agency_roster_fence(ctx, target.role, getattr(target, "agency_id", None))
+    rows = await scope_assignment_manager.fetch_all(filters={"user_id": user_id}, limit=0)
+    return [ScopeAssignmentResponse(uid=r.uid, user_id=r.user_id,
+                                    scope_level=r.scope_level, scope_value=r.scope_value)
+            for r in rows.items]
+
+
+@router.post("/{user_id}/scopes", response_model=ScopeAssignmentResponse,
+             status_code=status.HTTP_201_CREATED)
+async def grant_user_scope(
+    user_id: str,
+    payload: ScopeAssignmentRequest,
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_MANAGE)),
+):
+    """Grant a row-scope (STATE / CLUSTER / AGENCY) to a user. Idempotent. A bad
+    scope_value fails closed at query time (apply_scope expands to nothing → denied),
+    so this only light-validates the level. Effective on the user's next login."""
+    level = payload.scope_level.upper().strip()
+    if level not in _ASSIGNABLE_LEVELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"scope_level must be one of {sorted(_ASSIGNABLE_LEVELS)} "
+                   "(GLOBAL roles need no grant; OUTLET scope is the user's outlet_id)")
+    value = payload.scope_value.strip()
+    if not value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="scope_value is required")
+
+    target = await user_manager.fetch(user_id)
+    enforce_agency_roster_fence(ctx, target.role, getattr(target, "agency_id", None))
+
+    existing = await scope_assignment_manager.fetch_all(
+        filters={"user_id": user_id, "scope_level": level, "scope_value": value}, limit=1)
+    row = existing.items[0] if existing.items else await scope_assignment_manager.create(
+        UserScopeAssignmentSchema(user_id=user_id, scope_level=level, scope_value=value))
+    return ScopeAssignmentResponse(uid=row.uid, user_id=row.user_id,
+                                   scope_level=row.scope_level, scope_value=row.scope_value)
+
+
+@router.delete("/{user_id}/scopes/{assignment_id}", response_model=StatusResponse)
+async def revoke_user_scope(
+    user_id: str,
+    assignment_id: str,
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_MANAGE)),
+):
+    """Revoke a row-scope grant. Effective on the user's next login / token refresh."""
+    target = await user_manager.fetch(user_id)
+    enforce_agency_roster_fence(ctx, target.role, getattr(target, "agency_id", None))
+    # Direct session delete — the base manager's delete(uid) does a fetch_one that
+    # raises on this table; a plain select+delete is robust.
+    async with scope_assignment_manager.session_factory() as s:
+        row = (await s.execute(sa.select(UserScopeAssignmentSchema).where(
+            UserScopeAssignmentSchema.uid == assignment_id))).scalars().first()
+        if not row or row.user_id != user_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scope assignment not found")
+        await s.delete(row)
+        await s.commit()
+    return StatusResponse(status="ok", message="Scope revoked")
+
+
 # GENERIC ROUTE LAST (after all specific routes)
 
 @router.get("", response_model=ListResponse[UserResponse])
@@ -288,12 +370,11 @@ async def list_users(
     is_active: bool = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT, UserRole.AGENCY_ADMIN)),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_permission(Permission.USERS_READ)),
 ):
     """
     List all users with optional filters
-    Requires: super_admin, admin, accountant, or outlet_manager role
+    Requires: users:read permission
     """
     try:
         filters = {}

@@ -16,7 +16,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20260625_01_transfer_source_not_null"
+revision = "20260625_01_transfer_src"  # <=32 chars: alembic_version is VARCHAR(32)
 down_revision = "20260625_01_merge_heads"
 branch_labels = None
 depends_on = None

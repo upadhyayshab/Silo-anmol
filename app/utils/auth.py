@@ -112,56 +112,9 @@ async def get_current_user_id(request: Request, credentials: Optional[HTTPAuthor
     return user_id
 
 
-def require_roles(*allowed_roles: UserRole, allowed_scopes: list[str] = None):
-    """Dependency to check if user has required role or API key has required scope"""
-    async def role_checker(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> str:
-        # Check API Key first
-        if allowed_scopes and getattr(request.state, "scopes", None) is not None:
-            if set(allowed_scopes).intersection(request.state.scopes):
-                return "microservice"
-                
-        # If no API key or invalid scope, fallback to JWT
-        if not credentials:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Not authenticated",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            
-        token = credentials.credentials
-        payload = decode_token(token)
-        
-        user_id: str = payload.get("sub")
-        user_role: str = payload.get("role")
-        
-        if user_id is None or user_role is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Could not validate credentials",
-            )
-        
-        # Handle both enum and string role values
-        allowed_role_values = []
-        for role in allowed_roles:
-            if hasattr(role, 'value'):
-                allowed_role_values.append(role.value)
-            else:
-                allowed_role_values.append(str(role))
-        
-        if user_role not in allowed_role_values:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. Required roles: {allowed_role_values}",
-            )
-        
-        return user_id
-    
-    return role_checker
-
-
 # ============================================================================
-# PERMISSION + SCOPE ENFORCEMENT (RBAC blueprint — additive, sits next to
-# require_roles. See utils/permissions.py and RBAC_ACCESS_BLUEPRINT.md.)
+# PERMISSION + SCOPE ENFORCEMENT (RBAC blueprint). require_roles was retired
+# 2026-06-29 once every router moved to require_permission. See utils/permissions.py and RBAC_ACCESS_BLUEPRINT.md.
 # ============================================================================
 from dataclasses import dataclass, field
 from utils.permissions import (
@@ -413,7 +366,6 @@ __all__ = [
     "create_refresh_token",
     "decode_token",
     "get_current_user_id",
-    "require_roles",
     # RBAC blueprint
     "AuthContext",
     "get_auth_context",

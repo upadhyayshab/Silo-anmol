@@ -14,8 +14,9 @@ from managers import (
     ProductManager, OutletManager, UserManager, StockTransferOrderManager,
     TransferItemManager, CustomerOrderSchema, OutletSchema, ProductSchema, InventorySchema
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, OutletType
+from utils.auth import require_permission, get_auth_context, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import OrderStatus, TransferStatus, PaymentStatus, OutletType
 from utils.warehouse_utils import get_default_warehouse_id
 
 settings = get_settings()
@@ -36,12 +37,14 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 @router.get("/super-admin")
 async def get_super_admin_dashboard(
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
     Super Admin Dashboard - Complete system overview
     """
     try:
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            raise HTTPException(403, "Org-wide dashboard requires global scope")
         today = date.today()
         month_start = today.replace(day=1)
         
@@ -112,7 +115,9 @@ async def get_super_admin_dashboard(
                 for outlet in all_outlets.items
             ]
         }
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -127,7 +132,7 @@ async def get_orders_geography_overview(
     taluk: str = None,
     from_date: str = None,
     to_date: str = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
     Super Admin - Orders geography overview
@@ -135,10 +140,12 @@ async def get_orders_geography_overview(
     Optimized via SQL aggregation.
     """
     try:
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            raise HTTPException(403, "Org-wide dashboard requires global scope")
         # Parse date filters
         filter_from_date = None
         filter_to_date = None
-        
+
         if from_date:
             try:
                 filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
@@ -263,17 +270,19 @@ async def get_inventory_overview(
     outlet_id: str = None,
     from_date: str = None,
     to_date: str = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
     Super Admin - Consolidated Inventory Overview
     Optimized SQL query to fetch inventory across outlets with product, outlet, and date filters.
     """
     try:
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            raise HTTPException(403, "Org-wide dashboard requires global scope")
         # Parse date filters
         filter_from_date = None
         filter_to_date = None
-        
+
         if from_date:
             try:
                 filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
@@ -396,17 +405,19 @@ async def get_inventory_overview(
 async def get_district_outlets_overview(
     from_date: str = None,
     to_date: str = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
     Super Admin - Optimized District-wise Outlet Overview
     Total order counts and revenue executed directly via SQL Aggregation.
     """
     try:
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            raise HTTPException(403, "Org-wide dashboard requires global scope")
         # Parse date filters
         filter_from_date = None
         filter_to_date = None
-        
+
         if from_date:
             try:
                 filter_from_date = datetime.strptime(from_date, "%Y-%m-%d").date()
@@ -538,21 +549,19 @@ async def get_district_outlets_overview(
 @router.get("/warehouse-manager/{user_id}")
 async def get_warehouse_manager_dashboard(
     user_id: str,
-    current_user_id: str = Depends(require_roles(UserRole.WAREHOUSE_MANAGER, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """
     Warehouse Manager Dashboard - Inventory and transfer focus
     """
     try:
-        # Verify user access (warehouse managers can only see their own dashboard)
-        if current_user_id != user_id:
-            current_user = await user_manager.fetch(current_user_id)
-            if current_user.role != UserRole.SUPER_ADMIN:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied"
-                )
-        
+        # Self-scope: a user may only see their own dashboard; GLOBAL scope sees any.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value or ctx.user_id == user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+
         # Get warehouse inventory — includes NULL (legacy) + warehouse-type outlet rows
         warehouse_id = await get_default_warehouse_id(engine)
         all_inventory = await inventory_manager.fetch_all()
@@ -669,20 +678,19 @@ async def get_warehouse_manager_dashboard(
 @router.get("/outlet-manager/{outlet_id}")
 async def get_outlet_manager_dashboard(
     outlet_id: str,
-    current_user_id: str = Depends(require_roles(UserRole.OUTLET_MANAGER, UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """
     Outlet Manager Dashboard - Outlet-specific operations
     """
     try:
-        # Verify outlet access
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id != outlet_id:
+        # Self-scope: a caller may only view their own outlet; GLOBAL scope sees any.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value or ctx.outlet_id == outlet_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied to this outlet"
             )
-        
+
         today = date.today()
         
         # Get outlet-specific data
@@ -759,25 +767,23 @@ async def get_telecaller_dashboard(
     user_id: str,
     from_date: str = None,
     to_date: str = None,
-    current_user_id: str = Depends(require_roles(UserRole.TELECALLER, UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """
     Telecaller Dashboard - Personal performance and orders with date filters
-    
+
     Query Parameters:
     - from_date: Filter orders from this date (format: YYYY-MM-DD)
     - to_date: Filter orders until this date (format: YYYY-MM-DD)
     """
     try:
-        # Verify user access
-        if current_user_id != user_id:
-            current_user = await user_manager.fetch(current_user_id)
-            if current_user.role not in [UserRole.SUPER_ADMIN, UserRole.ADMIN]:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied"
-                )
-        
+        # Self-scope: a telecaller may only see their own dashboard; GLOBAL scope sees any.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value or ctx.user_id == user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+
         # Parse date filters
         filter_from_date = None
         filter_to_date = None
@@ -985,7 +991,7 @@ async def get_telecaller_dashboard(
 
 @router.get("/accountant")
 async def get_accountant_dashboard(
-    _: str = Depends(require_roles(UserRole.ACCOUNTANT, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.FINANCE_READ))
 ):
     """
     Accountant Dashboard - Financial overview and reports

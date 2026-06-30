@@ -28,6 +28,9 @@ class Permission(str, Enum):
     # Orders
     ORDERS_READ = "orders:read"
     ORDERS_WRITE = "orders:write"
+    ORDERS_STATUS = "orders:status"     # fulfillment state machine + bulk rider-assign
+    ORDERS_MANAGE = "orders:manage"     # admin order ops (proxy/full-edit/reassign/txn-edit/delete)
+    ORDERS_REVOKE = "orders:revoke"     # destructive un-deliver; SUPER-only (no explicit holder)
     # Products / catalogue
     PRODUCTS_READ = "products:read"
     PRODUCTS_WRITE = "products:write"
@@ -35,7 +38,8 @@ class Permission(str, Enum):
     PRODUCTS_COST_WRITE = "products:cost:write"    # editing cost/margin = finance only
     # Inventory / transfers
     INVENTORY_READ = "inventory:read"
-    INVENTORY_WRITE = "inventory:write"
+    INVENTORY_WRITE = "inventory:write"          # routine order-flow stock moves (reserve/release/consume)
+    INVENTORY_ADJUST = "inventory:adjust"        # privileged manual stock override — admin-tier only
     TRANSFERS_READ = "transfers:read"
     TRANSFERS_WRITE = "transfers:write"
     # Invoices / money
@@ -54,14 +58,23 @@ class Permission(str, Enum):
     # Finance overview / reports
     FINANCE_READ = "finance:read"          # company financials / margin zone
     REPORTS_READ = "reports:read"
+    # Delivery (driver roster) / cash handovers / notifications
+    DELIVERY_READ = "delivery:read"
+    DELIVERY_WRITE = "delivery:write"
+    HANDOVERS_READ = "handovers:read"
+    HANDOVERS_WRITE = "handovers:write"
+    NOTIFICATIONS_WRITE = "notifications:write"
     # Marketing / CRM
     CAMPAIGNS_READ = "campaigns:read"
     CAMPAIGNS_WRITE = "campaigns:write"
     LEADS_READ = "leads:read"
     LEADS_WRITE = "leads:write"
+    LEADS_MANAGE = "leads:manage"       # admin lead ops: import / distribute / delete
+    FACEBOOK_ADMIN = "facebook:admin"   # FB pages/forms/mappings/translations admin
     # Outlets / org
     OUTLETS_READ = "outlets:read"
     OUTLETS_TAXID_READ = "outlets:taxid:read"  # gates masked gstin/pan
+    OUTLETS_WRITE = "outlets:write"
     CLUSTERS_READ = "clusters:read"
     CLUSTERS_WRITE = "clusters:write"
     # Admin / governance
@@ -88,10 +101,15 @@ class ScopeLevel(str, Enum):
 # ---------------------------------------------------------------------------
 MASKED_COLUMNS = {
     "products": {
-        Permission.PRODUCTS_COST_READ: ["cost_price", "margin", "commission"],
+        # cost_price is the customer-facing selling price (MRP the order charges), so
+        # order-takers (telecallers) must see it; only margin & commission stay finance-only.
+        Permission.PRODUCTS_COST_READ: ["margin", "commission"],
     },
     "outlets": {
         Permission.OUTLETS_TAXID_READ: ["gstin", "pan"],
+    },
+    "orders": {
+        Permission.PRODUCTS_COST_READ: ["total_commission"],
     },
 }
 
@@ -124,6 +142,8 @@ ROLE_DEFINITIONS = {
     UserRole.TELECALLER: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
         P.ORDERS_READ, P.ORDERS_WRITE, P.PRODUCTS_READ, P.INVENTORY_READ,
         P.LEADS_READ, P.LEADS_WRITE, P.PAYOUTS_READ_OWN,
+        # Step 5 (finance): legacy let telecaller record/read order payments for own orders (ownership enforced inline).
+        P.TRANSACTIONS_READ, P.TRANSACTIONS_WRITE,
     }),
     UserRole.MARKETING_EXECUTIVE: dict(scope=ScopeLevel.CLUSTER, location_type=None, perms={
         P.CAMPAIGNS_READ, P.CAMPAIGNS_WRITE, P.REPORTS_READ, P.LEADS_READ,
@@ -131,27 +151,52 @@ ROLE_DEFINITIONS = {
 
     # ----- L3: manage (ops write, NO finance) -----
     UserRole.OUTLET_MANAGER: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
-        P.ORDERS_READ, P.ORDERS_WRITE, P.PRODUCTS_READ, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
+        P.ORDERS_READ, P.ORDERS_WRITE, P.ORDERS_STATUS, P.PRODUCTS_READ, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
         P.INVENTORY_READ, P.INVENTORY_WRITE, P.TRANSFERS_READ, P.TRANSFERS_WRITE,
         P.INVOICES_READ, P.INVOICES_WRITE, P.COLLECTIONS_READ, P.COLLECTIONS_WRITE,
-        P.TRANSACTIONS_READ, P.REPORTS_READ, P.USERS_READ, P.PAYOUTS_READ_OWN,
+        P.TRANSACTIONS_READ, P.REPORTS_READ, P.USERS_READ, P.PAYOUTS_READ_OWN, P.CONFIG_READ,
+        # Batch 4d-2: outlet mgr sees its delivery roster + manages its cash handovers.
+        P.DELIVERY_READ, P.HANDOVERS_READ, P.HANDOVERS_WRITE,
+        # Step 5 (finance): legacy let OM record/update order payments + read outlet/rider payouts (own outlet via apply_scope).
+        P.TRANSACTIONS_WRITE, P.PAYOUTS_READ,
     }),
-    UserRole.WAREHOUSE_MANAGER: dict(scope=ScopeLevel.OUTLET, location_type="warehouse", perms={
+    # GLOBAL scope (not OUTLET): warehouse managers operate across the network — they
+    # fulfil transfers between locations and need all-outlet stock visibility (user
+    # decision 2026-06-29). Their perms are limited to inventory/products/transfers/
+    # outlets/reports (no orders, finance, or users), so GLOBAL here = "all outlets",
+    # not broad sensitive access. location_type kept as metadata (apply_scope ignores it).
+    UserRole.WAREHOUSE_MANAGER: dict(scope=ScopeLevel.GLOBAL, location_type="warehouse", perms={
         P.PRODUCTS_READ, P.PRODUCTS_WRITE, P.INVENTORY_READ, P.INVENTORY_WRITE,
         P.TRANSFERS_READ, P.TRANSFERS_WRITE, P.OUTLETS_READ, P.OUTLETS_TAXID_READ, P.REPORTS_READ,
+        P.ORDERS_STATUS,    # bulk rider-assign (it was in that legacy list)
+        P.DELIVERY_READ,    # Batch 4d-2: view delivery-guy roster (was in legacy delivery:read list)
     }),
     UserRole.CLUSTER_MANAGER: dict(scope=ScopeLevel.CLUSTER, location_type=None, perms={
-        P.ORDERS_READ, P.ORDERS_WRITE, P.PRODUCTS_READ, P.INVENTORY_READ,
+        P.ORDERS_READ, P.ORDERS_WRITE, P.ORDERS_STATUS, P.PRODUCTS_READ, P.INVENTORY_READ,
         P.TRANSFERS_READ, P.TRANSFERS_WRITE, P.INVOICES_READ, P.COLLECTIONS_READ,
         P.REPORTS_READ, P.OUTLETS_READ, P.OUTLETS_TAXID_READ, P.CLUSTERS_READ, P.USERS_READ,
     }),
     # ADMIN umbrella — today's thin ops admin (transfers + inventory + catalogue).
     # Function-specific admin flavours are the *_ADMIN roles below.
     UserRole.ADMIN: dict(scope=ScopeLevel.GLOBAL, location_type=None, perms={
-        P.PRODUCTS_READ, P.PRODUCTS_WRITE, P.INVENTORY_READ, P.INVENTORY_WRITE,
-        P.TRANSFERS_READ, P.TRANSFERS_WRITE, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
-        P.CLUSTERS_READ, P.REPORTS_READ, P.ORDERS_READ, P.COLLECTIONS_READ,
-        P.USERS_MANAGE,
+        P.PRODUCTS_READ, P.PRODUCTS_WRITE, P.INVENTORY_READ, P.INVENTORY_WRITE, P.INVENTORY_ADJUST,
+        P.TRANSFERS_READ, P.TRANSFERS_WRITE, P.OUTLETS_READ, P.OUTLETS_TAXID_READ, P.OUTLETS_WRITE,
+        P.CLUSTERS_READ, P.CLUSTERS_WRITE, P.REPORTS_READ, P.ORDERS_READ, P.ORDERS_WRITE, P.ORDERS_STATUS, P.ORDERS_MANAGE,
+        P.COLLECTIONS_READ,
+        P.CONFIG_READ, P.CONFIG_WRITE, P.AUDIT_READ,
+        P.USERS_READ, P.USERS_MANAGE,   # 4d-2: USERS_READ so gating user list/get on users:read keeps ADMIN
+        # Batch 4d-2: driver roster + cash handovers + admin notifications; FINANCE_READ
+        # so ADMIN keeps the cost/profit reports now gated behind the finance veil.
+        P.DELIVERY_READ, P.DELIVERY_WRITE, P.HANDOVERS_READ, P.HANDOVERS_WRITE,
+        P.NOTIFICATIONS_WRITE, P.FINANCE_READ,
+        # Batch 4d-4 (CRM dev-only): ADMIN gains full CRM lead access + FB config admin.
+        # SUPER_ADMIN already covers these via WILDCARD.
+        P.LEADS_READ, P.LEADS_WRITE, P.LEADS_MANAGE, P.FACEBOOK_ADMIN,
+        # Step 5 (finance): legacy require_roles put ADMIN on every finance endpoint; restore ADMIN as
+        # operational super-user + satisfy the cost-write/driver-pay/approve gates chosen by the user.
+        P.INVOICES_READ, P.INVOICES_WRITE, P.TRANSACTIONS_READ, P.TRANSACTIONS_WRITE,
+        P.COLLECTIONS_WRITE, P.PAYOUTS_READ, P.PAYOUTS_WRITE, P.PAYOUTS_APPROVE,
+        P.PRODUCTS_COST_WRITE, P.DRIVER_PAY_WRITE,
     }),
 
     # ----- L4: oversee (read-heavy; accountant/finance write) -----
@@ -160,8 +205,12 @@ ROLE_DEFINITIONS = {
         P.INVOICES_READ, P.COLLECTIONS_READ, P.COLLECTIONS_WRITE,
         P.TRANSACTIONS_READ, P.TRANSACTIONS_WRITE,
         P.PAYOUTS_READ, P.PAYOUTS_WRITE, P.DRIVER_PAY_WRITE,
+        P.PAYOUTS_APPROVE,   # Step 5 (finance): user decision — keep ACCOUNTANT approving payouts (no maker-checker split).
         P.PRODUCTS_READ, P.PRODUCTS_COST_READ, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
-        P.PAYOUTS_READ_OWN,
+        P.INVENTORY_READ,   # L4 oversight: accountant views inventory (blueprint §5)
+        P.PAYOUTS_READ_OWN, P.CONFIG_READ, P.AUDIT_READ,
+        # Batch 4d-2: accountant confirms/rejects delivery-guy cash handovers.
+        P.HANDOVERS_READ, P.HANDOVERS_WRITE,
     }),
     UserRole.FINANCE_LEAD: dict(scope=ScopeLevel.GLOBAL, location_type=None, perms={
         P.FINANCE_READ, P.REPORTS_READ, P.INVOICES_READ, P.COLLECTIONS_READ,
@@ -217,8 +266,9 @@ ROLE_DEFINITIONS = {
         P.CONFIG_READ, P.CONFIG_WRITE, P.OUTLETS_READ, P.OUTLETS_TAXID_READ,
     }),
     UserRole.OPS_ADMIN: dict(scope=ScopeLevel.GLOBAL, location_type=None, perms={
-        P.INVENTORY_READ, P.INVENTORY_WRITE, P.TRANSFERS_READ, P.TRANSFERS_WRITE,
+        P.INVENTORY_READ, P.INVENTORY_WRITE, P.INVENTORY_ADJUST, P.TRANSFERS_READ, P.TRANSFERS_WRITE,
         P.CLUSTERS_READ, P.CLUSTERS_WRITE, P.OUTLETS_READ,
+        P.ORDERS_READ, P.ORDERS_STATUS,    # ops oversight + fulfillment
     }),
     UserRole.FINANCE_ADMIN: dict(scope=ScopeLevel.GLOBAL, location_type=None, perms={
         P.FINANCE_READ, P.REPORTS_READ, P.INVOICES_READ, P.INVOICES_WRITE,
@@ -243,6 +293,27 @@ ALL_PERMISSIONS = [p.value for p in Permission]
 
 
 # ---------------------------------------------------------------------------
+# Runtime role store (DB-backed). `services.roleStore` seeds the default roles into
+# the roles/role_permissions tables and loads them back here at startup. Until that
+# load runs, the cache is empty and resolvers fall back to ROLE_DEFINITIONS (the code
+# seed) — so sync scripts, tests, and pre-load requests still resolve the defaults.
+# The DB is the runtime source of truth (lets admins add custom roles without a deploy);
+# code remains the seed + fallback. Same shape as ROLE_DEFINITIONS, keyed by role name.
+# ---------------------------------------------------------------------------
+_ROLE_CACHE: dict = {}   # name(str) -> {"scope": ScopeLevel, "location_type": str|None, "perms": set[str]}
+
+
+def set_role_cache(roles: dict) -> None:
+    """Replace the in-process role cache (called by roleStore.refresh_role_cache)."""
+    global _ROLE_CACHE
+    _ROLE_CACHE = roles or {}
+
+
+def _role_name(role) -> str:
+    return role.value if isinstance(role, UserRole) else str(role)
+
+
+# ---------------------------------------------------------------------------
 # Resolver helpers (string-friendly: role may be a UserRole or its JWT string)
 # ---------------------------------------------------------------------------
 def _perm_value(perm) -> str:
@@ -250,6 +321,12 @@ def _perm_value(perm) -> str:
 
 
 def get_role_def(role) -> Optional[dict]:
+    """Role's {scope, location_type, perms}. DB cache first (runtime source of truth),
+    then the in-code ROLE_DEFINITIONS seed (before the cache loads, or for a role the
+    DB doesn't carry)."""
+    cached = _ROLE_CACHE.get(_role_name(role))
+    if cached:
+        return cached
     if isinstance(role, UserRole):
         return ROLE_DEFINITIONS.get(role)
     try:
@@ -293,5 +370,5 @@ def masked_columns_for(resource: str, role) -> list:
 __all__ = [
     "Permission", "ScopeLevel", "WILDCARD", "MASKED_COLUMNS", "ROLE_DEFINITIONS",
     "ALL_PERMISSIONS", "get_role_def", "role_perms", "role_scope_level",
-    "has_permission", "masked_columns_for",
+    "has_permission", "masked_columns_for", "set_role_cache",
 ]

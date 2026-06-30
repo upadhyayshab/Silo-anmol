@@ -17,8 +17,9 @@ from models import (
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult
 )
-from utils.auth import require_roles, get_current_user_id, get_auth_context, AuthContext, apply_scope
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType
+from utils.auth import require_permission, apply_scope, apply_field_mask, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, payment_status_for
 from utils.crm_constants import ActivityType
 from utils.warehouse_utils import get_default_warehouse_id
 from services import CRMService, storeService, deliveryService
@@ -56,6 +57,58 @@ def generate_order_number() -> str:
     return f"ORD-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
 
 
+# --- order row-scope helpers (Step 4c) -------------------------------------
+# Order visibility is FUNCTION-specific (telecaller=own-created, delivery=assigned-to-
+# deliver, managers=by outlet, agency=by agency), so unlike transfers it can't key on a
+# single column. These mirror the bespoke per-role filtering the endpoints used before.
+_ORDER_OWN_CREATED_ROLES = {"TELECALLER", "AGENCY_TELECALLER"}  # see only orders they created
+_ORDER_DELIVERY_ROLES = {"DELIVERY_GUY"}                        # see only orders to deliver
+
+
+async def _apply_order_scope(filters, ctx):
+    """Narrow an orders query to the caller's row scope. GLOBAL/microservice = no narrowing."""
+    out = dict(filters or {})
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return out
+    if ctx.role in _ORDER_DELIVERY_ROLES:
+        out["delivery_person_id"] = ctx.user_id
+        return out
+    if ctx.role in _ORDER_OWN_CREATED_ROLES:
+        out["telecaller_id"] = ctx.user_id
+        return out
+    if ctx.scope_level == ScopeLevel.AGENCY.value:
+        return await apply_scope(out, ctx)        # telecaller_id IN agency's telecallers
+    # geographic managers (OUTLET/CLUSTER/STATE): scope by the order's assigned outlet
+    return await apply_scope(out, ctx, outlet_column="assigned_outlet_id")
+
+
+async def _order_scope_outlet_ids(ctx):
+    sv = (await apply_scope({}, ctx, outlet_column="assigned_outlet_id")).get("assigned_outlet_id")
+    if sv is None:
+        return None
+    return sv if isinstance(sv, list) else [sv]
+
+
+async def _assert_order_in_scope(ctx, order):
+    """403 if a scoped caller acts on an order outside their scope. No-op for GLOBAL."""
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return
+    if ctx.role in _ORDER_DELIVERY_ROLES:
+        ok = order.delivery_person_id == ctx.user_id
+    elif ctx.role in _ORDER_OWN_CREATED_ROLES:
+        ok = order.telecaller_id == ctx.user_id
+    elif ctx.scope_level == ScopeLevel.AGENCY.value:
+        ok = getattr(order, "agency_id", None) in (ctx.agency_ids or [])
+    else:
+        ids = await _order_scope_outlet_ids(ctx)
+        ok = ids is None or order.assigned_outlet_id in ids
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: this order is outside your scope",
+        )
+
+
 
 @router.post("/test/test")
 async def test(order_id: str):
@@ -66,10 +119,7 @@ async def test(order_id: str):
 async def create_order(
     payload: OrderCreateRequest,
     background_tasks: BackgroundTasks,
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
-        UserRole.AGENCY_TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_WRITE)),
 ):
     """
     Create new customer order
@@ -77,6 +127,7 @@ async def create_order(
     - Outlet Managers: Create orders for walk-in customers at their outlet
     Automatically reserves stock at assigned outlet
     """
+    current_user_id = ctx.user_id
     try:
         # DEBUG: Log the received prepaid amount with type information
         print(f"🔍 DEBUG: Received prepaid_amount = {payload.prepaid_amount} (type: {type(payload.prepaid_amount)})")
@@ -180,13 +231,14 @@ async def create_order(
         # Create order
         order_number = generate_order_number()
         
-        # Get current user to determine order assignment
-        current_user = await user_manager.fetch(current_user_id)
-        
-        # For outlet managers, auto-assign to their outlet
+        # Auto-assign to the caller's outlet for outlet-scoped managers (not telecaller/
+        # delivery/agency, who create unassigned orders that are auto-routed later).
         assigned_outlet_id = None
-        if current_user.role == UserRole.OUTLET_MANAGER and current_user.outlet_id:
-            assigned_outlet_id = current_user.outlet_id
+        if (ctx.scope_level == ScopeLevel.OUTLET.value
+                and ctx.role not in _ORDER_OWN_CREATED_ROLES
+                and ctx.role not in _ORDER_DELIVERY_ROLES
+                and ctx.outlet_id):
+            assigned_outlet_id = ctx.outlet_id
         
         # DEBUG: Log values before creating order with detailed type information
         print(f"🔍 DEBUG: Before creating order:")
@@ -245,8 +297,29 @@ async def create_order(
         print(f"   • new_order.manual_discount = {new_order.manual_discount}")
         print(f"   • new_order.total_amount = {new_order.total_amount}")
         
-        created_order = await order_manager.create(new_order)
-        
+        # Create the order and (when a prepaid payment was provided) its transaction in ONE
+        # DB commit. Payment used to be a second HTTP call the frontend made after the order —
+        # if it failed, the order was left with no payment record. It now lives here, atomic.
+        # ponytail: order+payment share one session; lead-effects/outlet-assignment below stay
+        # best-effort as they already were (not part of the order↔payment integrity concern).
+        async with order_manager.session_factory() as session:
+            created_order = await order_manager.create(new_order, session=session)
+            if payload.payment:
+                paid = payload.payment.amount_paid
+                txn = OrderTransactionSchema(
+                    order_id=created_order.uid,
+                    # server-computed: fully paid only if it covers the post-discount order value
+                    payment_status=payment_status_for(paid, amount_after_discount),
+                    payment_method=payload.payment.payment_method,
+                    amount_paid=paid,
+                    transaction_reference=payload.payment.transaction_reference,
+                    payment_date=datetime.utcnow(),
+                    received_by=current_user_id,
+                    notes=payload.payment.notes,
+                )
+                await transaction_manager.create(txn, session=session)
+            await session.commit()
+
         # DEBUG: Log the created order from database
         print(f"🔍 DEBUG: After database insert:")
         print(f"   • created_order.prepaid_amount = {created_order.prepaid_amount}")
@@ -408,9 +481,10 @@ async def create_order(
 @router.get("/orders-count")
 async def get_orders_count(
     filters: Dict[str, Any] = Depends(D.filtering_dependency),
-    # _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ)),
 ):
     try:
+        filters = await _apply_order_scope(filters, ctx)
         order_count = await order_manager.get_orders_count(filters=filters)
         return {"count": order_count}
     except Exception as e:
@@ -423,6 +497,7 @@ async def get_orders_count(
 async def get_orders_count_grouped(
     group_by: List[str] = Query(["assigned_outlet_id", "order_status"], description="Columns to group by (comma-separated or multiple params)"),
     filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ)),
 ):
     """
     Get order counts grouped by specified columns.
@@ -430,6 +505,7 @@ async def get_orders_count_grouped(
     If multiple columns are provided, returns [{"col1": val1, "col2": val2, "count": N}].
     """
     try:
+        filters = await _apply_order_scope(filters, ctx)
         # Handle comma-separated strings if any (e.g., ?group_by=a,b)
         resolved_groups = []
         for g in group_by:
@@ -457,8 +533,10 @@ async def get_orders_with_lsq(
     filters: Dict[str, Any] = Depends(D.filtering_dependency),
     limit: int = 50,
     offset: int = 0,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ)),
 ):
     try:
+        filters = await _apply_order_scope(filters, ctx)
         orders = await order_manager.fetch_all(
             filters=filters,
             joins = [CustomerOrderSchema.lsq_order_ad , (CustomerOrderSchema.items , OrderItemSchema.product)],
@@ -476,7 +554,7 @@ async def get_orders_with_lsq(
 async def create_proxy_order(
     payload: ProxyOrderCreateRequest,
     background_tasks: BackgroundTasks,
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_MANAGE)),
 ):
     """
     Create order on behalf of a telecaller (Admin/SuperAdmin only)
@@ -494,6 +572,7 @@ async def create_proxy_order(
     Access: ADMIN, SUPER_ADMIN only
     """
     try:
+        current_user_id = ctx.user_id
         # Step 1: Validate telecaller exists and is valid
         try:
             target_telecaller = await user_manager.fetch(payload.telecaller_id)
@@ -817,11 +896,11 @@ async def release_order_stock(order_id: str):
 async def bulk_assign_delivery_guy_to_orders(
     payload: BulkOrderDeliveryAssignmentRequest,
     background_tasks: BackgroundTasks,
-    current_user_id: str = Depends(get_current_user_id),
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:work"]))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS, allow_scopes=["delivery:work"])),
 ):
     """Bulk assign a delivery guy to multiple orders"""
     try:
+        current_user_id = ctx.user_id
         # 1. Validate delivery guy once
         try:
             dg_response = await delivery_guy_manager.fetch_all(filters = {"user_id": payload.delivery_guy_id})
@@ -871,7 +950,16 @@ async def bulk_assign_delivery_guy_to_orders(
                     "delivery_person_id": user.uid,
                     "order_status": OrderStatus.DELIVERY_ALLOTTED
                 })
-                
+
+                # Internal CRM: record the allotment on the linked lead's timeline.
+                from services import leadService
+                background_tasks.add_task(
+                    leadService.log_order_status_change, engine, order,
+                    OrderStatus.DELIVERY_ALLOTTED, current_user_id,
+                    old_status=order.order_status,
+                    remarks=f"Allotted to {user.full_name} for delivery",
+                )
+
                 results.append(BulkAssignmentResult(order_id=order_id, status="success"))
                 successful_count += 1
                 
@@ -968,33 +1056,14 @@ async def bulk_assign_delivery_guy_to_orders(
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,
-        allowed_scopes=["delivery:read"]
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ, allow_scopes=["delivery:read"])),
 ):
     """Get specific order details"""
     try:
         order = await order_manager.fetch(order_id, joins = [CustomerOrderSchema.items, CustomerOrderSchema.telecaller])
-        
-        if current_user_id != "microservice":
-            # Check access permissions
-            current_user = await user_manager.fetch(current_user_id)
-            
-            # Role-based access control
-            if current_user.role == UserRole.TELECALLER:
-                if order.telecaller_id != current_user_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Access denied: You can only view your own orders"
-                    )
-            elif current_user.role == UserRole.OUTLET_MANAGER:
-                if current_user.outlet_id and order.assigned_outlet_id != current_user.outlet_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Access denied: You can only view orders for your outlet"
-                    )
-        return order.model_dump()
+
+        await _assert_order_in_scope(ctx, order)
+        return apply_field_mask("orders", ctx, order.model_dump())
     
     except Exception as e:
         if "not found" in str(e).lower():
@@ -1051,11 +1120,12 @@ openapi_examples={
             }
         }
     ),
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_MANAGE)),
 ):
     try:
+        current_user_id = ctx.user_id
         order = await order_manager.fetch(order_id)
-        
+
         if order.order_status == OrderStatus.CANCELLED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1307,46 +1377,31 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
     offset: int = 0,
     dynamic_filters: Dict[str, Any] = Depends(D.filtering_dependency),
     sorts: List[str] = Depends(D.sorting_dependency),
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.DELIVERY_GUY, UserRole.AGENCY_ADMIN,
-        allowed_scopes=["delivery:read"]
-    )),
-    ctx: AuthContext = Depends(get_auth_context),
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ, allow_scopes=["delivery:read"])),
 ):
     """
     Get orders with filters
     Telecallers see only their orders, managers see outlet orders
     """
     try:
-        filters = {}
         # Nested join [items, items.product] ensures products are included for each item
         joins = [
-            [CustomerOrderSchema.items, OrderItemSchema.product], 
+            [CustomerOrderSchema.items, OrderItemSchema.product],
             CustomerOrderSchema.delivery_person,
             CustomerOrderSchema.telecaller,
             CustomerOrderSchema.assigned_outlet
         ]
-        
-        # 1. Role-based isolation (skip for microservice)
-        if current_user_id != "microservice":
-            current_user = await user_manager.fetch(current_user_id)
-            if current_user.role == UserRole.TELECALLER:
-                filters["telecaller_id"] = current_user_id
-            elif current_user.role == UserRole.OUTLET_MANAGER:
-                if current_user.outlet_id:
-                    filters["assigned_outlet_id"] = current_user.outlet_id
-            elif current_user.role == UserRole.DELIVERY_GUY:
-                filters["delivery_person_id"] = current_user_id
-            elif current_user.role == UserRole.AGENCY_ADMIN:
-                filters = await apply_scope(filters, ctx)
-        
+
+        # 1. Row scope (telecaller=own / delivery=assigned / managers=outlet / agency / global=all)
+        filters = await _apply_order_scope({}, ctx)
+
         # 2. Manual filters
         if transfer_status:
             filters["order_status"] = transfer_status
-        
-        # Apply optional filters (restricted for non-admins)
-        is_admin = current_user_id == "microservice" or current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN]
-        
+
+        # Cross-cutting filters by arbitrary telecaller/outlet only for unrestricted callers.
+        is_admin = ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value
+
         if telecaller_id and is_admin:
             filters["telecaller_id"] = telecaller_id
         if outlet_id and is_admin:
@@ -1386,8 +1441,10 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
             offset=offset,
             sorts=sorts or ["-created_at"],
         )
-        
-        return orders.model_dump()
+
+        result = orders.model_dump()
+        result["items"] = apply_field_mask("orders", ctx, result.get("items", []))
+        return result
     
     except Exception as e:
         raise HTTPException(
@@ -1401,11 +1458,7 @@ async def get_orders_by_phone(
     phone: str,
     limit: int = 50,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER,
-        UserRole.OUTLET_MANAGER, UserRole.TELECALLER, UserRole.ACCOUNTANT,
-        allowed_scopes=["delivery:read"]
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ, allow_scopes=["delivery:read"])),
 ):
     """
     Get all orders for a customer by phone number
@@ -1432,22 +1485,24 @@ async def get_orders_by_phone(
                 detail="Invalid phone number format. Expected 10 digits."
             )
         
-        # Query orders by phone number (no role-based filtering)
+        # Scope: telecaller -> own orders, managers -> their outlet(s); global -> all.
+        phone_filters = await _apply_order_scope({"customer_phone": sanitized_phone}, ctx)
         orders = await order_manager.fetch_all(
-            filters={"customer_phone": sanitized_phone},
+            filters=phone_filters,
             limit=limit,
             offset=offset
         )
-        
+
         # Build complete order responses with items
         order_responses = []
         for order in orders.items:
             order_response = await get_order_response(order.uid)
             order_responses.append(order_response)
-        
+
         # Sort by order_date descending (newest first)
         order_responses.sort(key=lambda x: x.order_date, reverse=True)
-        
+
+        order_responses = apply_field_mask("orders", ctx, order_responses)
         return ListResponse(items=order_responses, count=len(order_responses))
     
     except HTTPException:
@@ -1660,21 +1715,13 @@ async def get_order_response_with_joins(order_id: str, joins: list) -> OrderResp
 async def update_order(
     order_id: str,
     payload: OrderUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_WRITE)),
 ):
     """Update order details (only for pending orders)"""
     try:
         order = await order_manager.fetch(order_id)
-        
-        # Check permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.TELECALLER and order.telecaller_id != current_user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: You can only update your own orders"
-            )
+
+        await _assert_order_in_scope(ctx, order)
         
         # Only allow updates for pending orders
         if order.order_status != OrderStatus.PENDING:
@@ -1727,9 +1774,7 @@ async def update_order_status(
     order_id: str,
     payload: OrderStatusUpdateRequest,
     background_tasks: BackgroundTasks,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
 ):
     """Update order status (Outlet Manager function)"""
     try:
@@ -1737,15 +1782,9 @@ async def update_order_status(
             (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
             (CustomerOrderSchema.items, OrderItemSchema.product)
         ])
-        # Check permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != order.assigned_outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only update orders assigned to your outlet"
-                )
-        
+        await _assert_order_in_scope(ctx, order)
+        current_user_id = ctx.user_id
+
         old_status = order.order_status
 
         # Validate status transition
@@ -1949,7 +1988,7 @@ async def consume_order_stock(order_id: str):
 async def assign_order_to_outlet(
     order_id: str,
     payload: OrderAssignRequest,
-    current_user_id: str = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_MANAGE)),
 ):
     """Manually assign or re-assign an order to an outlet (Admin function).
 
@@ -1961,6 +2000,7 @@ async def assign_order_to_outlet(
     """
     # Orders in a terminal state can never be re-assigned.
     NON_REASSIGNABLE = {OrderStatus.DELIVERED, OrderStatus.CANCELLED}
+    current_user_id = ctx.user_id
     try:
         order = await order_manager.fetch(order_id)
 
@@ -2005,6 +2045,18 @@ async def assign_order_to_outlet(
 
         # Update assignment (no stock reservation/release — reservation removed)
         await order_manager.update(order_id, update_data)
+
+        # Internal CRM: record the reset-to-pending on the linked lead's timeline.
+        if was_in_flight:
+            try:
+                from services import leadService
+                await leadService.log_order_status_change(
+                    engine, order, OrderStatus.PENDING, current_user_id,
+                    old_status=previous_status,
+                    remarks=f"Re-assigned to outlet {outlet.outlet_name}; reset to pending",
+                )
+            except Exception as activity_err:
+                print(f"⚠️ Failed to log CRM reassign activity for lead {order.lead_id}: {activity_err}")
 
         # Record the re-assignment in delivery tracking so history is auditable.
         # Best-effort only: the order has already been re-assigned and committed
@@ -2058,22 +2110,14 @@ async def assign_order_to_outlet(
 async def add_order_transaction(
     order_id: str,
     payload: OrderTransactionCreateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_WRITE)),
 ):
     """Add payment transaction to order"""
     try:
+        current_user_id = ctx.user_id
         order = await order_manager.fetch(order_id)
-        
-        # Check permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != order.assigned_outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only add transactions for orders assigned to your outlet"
-                )
+
+        await _assert_order_in_scope(ctx, order)
         
         # Create transaction
         transaction = OrderTransactionSchema(
@@ -2114,9 +2158,7 @@ async def update_order_transaction(
     order_id: str,
     transaction_uid: str,
     payload: OrderTransactionUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_MANAGE)),
 ):
     """Update an existing payment transaction"""
     try:
@@ -2154,31 +2196,18 @@ async def update_order_transaction(
 async def update_order_payment_status(
     order_id: str,
     payload: PaymentStatusUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_WRITE)),
 ):
     """
     Update payment status of an order
     Used to mark orders as paid, partially paid, etc.
     """
     try:
+        current_user_id = ctx.user_id
         # Verify order exists and check access
         order = await order_manager.fetch(order_id)
-        
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if order.assigned_outlet_id != current_user.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this order"
-                )
-        elif current_user.role == UserRole.TELECALLER:
-            if order.telecaller_id != current_user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only record payments for your own orders"
-                )
+
+        await _assert_order_in_scope(ctx, order)
         
         # Create a status update transaction record
         transaction = OrderTransactionSchema(
@@ -2200,6 +2229,17 @@ async def update_order_payment_status(
                 "order_status": OrderStatus.DELIVERED,
                 "actual_delivery_date": datetime.now()
             })
+            # Internal CRM: record the delivered transition on the lead timeline.
+            if order.lead_id:
+                try:
+                    from services import leadService
+                    await leadService.log_order_status_change(
+                        engine, order, OrderStatus.DELIVERED, current_user_id,
+                        old_status=order.order_status,
+                        remarks="Marked delivered (payment received)",
+                    )
+                except Exception as activity_err:
+                    print(f"⚠️ Failed to log CRM delivered activity for lead {order.lead_id}: {activity_err}")
         
         # CRM Logging
         if order.lead_id:
@@ -2256,9 +2296,10 @@ async def update_order_payment_status(
 async def delete_order(
     order_id: str = Path(..., description="Unique ID of the order to delete"),
     reason: str = Query(..., min_length=10, description="Reason for deletion (minimum 10 characters)"),
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_MANAGE)),
 ):
     try:
+        current_user_id = ctx.user_id
         # Fetch the order
         try:
             order = await order_manager.fetch(order_id)
@@ -2372,7 +2413,7 @@ async def delete_order(
 async def revoke_order(
     order_id: str,
     payload: OrderRevokeRequest,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_REVOKE)),
 ):
     """
     Revoke a DELIVERED or CANCELLED order back to PENDING status
@@ -2399,6 +2440,7 @@ async def revoke_order(
     - Logs reactivation to activity_logs
     """
     try:
+        current_user_id = ctx.user_id
         # Fetch the order
         try:
             order = await order_manager.fetch(order_id)
@@ -2499,7 +2541,19 @@ async def revoke_order(
         except Exception as log_error:
             # Log but don't fail revocation if activity logging fails
             print(f"Warning: Failed to log revocation activity: {log_error}")
-        
+
+        # Internal CRM: also record the revocation on the linked lead's timeline.
+        if order.lead_id:
+            try:
+                from services import leadService
+                await leadService.log_order_status_change(
+                    engine, order, OrderStatus.PENDING, current_user_id,
+                    old_status=order.order_status,  # still DELIVERED/CANCELLED in-memory
+                    remarks=f"Revoked: {payload.reason}",
+                )
+            except Exception as activity_err:
+                print(f"⚠️ Failed to log CRM revoke activity for lead {order.lead_id}: {activity_err}")
+
         # Different message based on previous status
         if order.order_status == OrderStatus.DELIVERED:
             message = f"Order {order.order_number} revoked from DELIVERED to PENDING. Inventory restored. Reason: {payload.reason}"

@@ -4,8 +4,8 @@ from datetime import datetime
 
 from config import get_settings, get_engine
 from managers import NotificationManager, NotificationSchema
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole
+from utils.auth import get_current_user_id, require_permission, AuthContext
+from utils.permissions import Permission
 from pydantic import BaseModel
 
 settings = get_settings()
@@ -182,7 +182,7 @@ async def mark_all_notifications_read(
 @router.post("", response_model=NotificationResponse)
 async def create_notification(
     payload: NotificationCreateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.NOTIFICATIONS_WRITE))
 ):
     """
     Create notification for a user (Admin function)

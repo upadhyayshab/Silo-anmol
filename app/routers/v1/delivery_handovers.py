@@ -15,8 +15,9 @@ from models import (
     DeliveryHandoverResponse, DeliveryGuyCashBalanceResponse,
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OutletCollectionStatus, PaymentStatus, PaymentMethod, OrderStatus
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import OutletCollectionStatus, PaymentStatus, PaymentMethod, OrderStatus
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -34,13 +35,26 @@ router = APIRouter(prefix="/delivery-handovers", tags=["Delivery Guy Cash Handov
 @router.get("/delivery-guys/{delivery_guy_id}/cash-balance", response_model=DeliveryGuyCashBalanceResponse)
 async def get_cash_balance(
     delivery_guy_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT , allowed_scopes=["delivery:read"]))
+    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_READ))
 ):
     """
     Calculate the current cash balance for a delivery guy.
     Balance = (Total Collected from CASH orders) - (Total CONFIRMED handovers)
     """
     try:
+        # Scope fence: a non-GLOBAL caller (outlet mgr) may only inspect a delivery
+        # guy whose outlet they cover. GLOBAL/microservice -> unrestricted.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+            allowed = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
+            dg_profiles = await delivery_guy_profile_manager.fetch_all(filters={"user_id": delivery_guy_id})
+            dg_outlet = dg_profiles.items[0].outlet_id if dg_profiles.items else None
+            if dg_outlet not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: this delivery guy is outside your scope"
+                )
+
         # 1. Get all DELIVERED orders by this delivery guy in CASH
         orders = await order_manager.fetch_all(
             filters={
@@ -67,6 +81,8 @@ async def get_cash_balance(
             total_collected=total_collected,
             total_handed_over=total_handed_over
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -77,12 +93,23 @@ async def get_cash_balance(
 @router.post("", response_model=DeliveryHandoverResponse)
 async def create_handover(
     payload: DeliveryHandoverCreateRequest,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, allowed_scopes=["delivery:write"]))
+    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_WRITE))
 ):
     """
     Create a new cash handover record
     """
     try:
+        # Scope fence: a non-GLOBAL caller (outlet mgr) may only record a handover
+        # for an outlet they cover. GLOBAL/microservice -> unrestricted.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+            allowed = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
+            if payload.outlet_id not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: this outlet is outside your scope"
+                )
+
         # Validate delivery guy exists
         try:
             await user_manager.fetch(payload.delivery_guy_id)
@@ -130,12 +157,16 @@ async def list_handovers(
     date_to: Optional[date] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT , allowed_scopes=["delivery:read"]))
+    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_READ))
 ):
     """
     List handovers with filters using direct SQL query
     """
     try:
+        # Row scope: outlet mgr -> own outlet, cluster/state -> their outlets, global -> all.
+        # apply_scope overrides any user-supplied outlet_id for scoped callers.
+        scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+
         async with AsyncSession(engine) as session:
             # 1. Base query for fetching records with JOIN to get delivery guy and outlet details
             query = select(DeliveryGuyHandoverSchema, UserSchema, OutletSchema).join(
@@ -156,6 +187,14 @@ async def list_handovers(
                 conditions.append(DeliveryGuyHandoverSchema.handover_date >= date_from)
             if date_to:
                 conditions.append(DeliveryGuyHandoverSchema.handover_date <= date_to)
+
+            # Row scope: scoped callers are confined to their outlet(s) regardless of params.
+            if scope_outlet is not None:
+                conditions.append(
+                    DeliveryGuyHandoverSchema.outlet_id.in_(scope_outlet)
+                    if isinstance(scope_outlet, list)
+                    else DeliveryGuyHandoverSchema.outlet_id == scope_outlet
+                )
 
             if conditions:
                 query = query.where(and_(*conditions))
@@ -197,14 +236,26 @@ async def list_handovers(
 async def update_handover_status(
     handover_id: str,
     payload: DeliveryHandoverStatusUpdateRequest,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT))
+    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_WRITE))
 ):
     """
     Update handover status (Confirm/Reject)
     """
     try:
+        current_user_id = ctx.user_id
         handover = await handover_manager.fetch(handover_id)
-        
+
+        # Scope fence: a non-GLOBAL caller (outlet mgr) may only act on a handover
+        # for an outlet they cover. GLOBAL/microservice -> unrestricted.
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
+            allowed = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
+            if handover.outlet_id not in allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: this handover is outside your scope"
+                )
+
         if handover.status == OutletCollectionStatus.CONFIRMED:
              raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Handover already confirmed")
 

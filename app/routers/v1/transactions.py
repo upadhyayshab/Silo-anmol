@@ -13,8 +13,9 @@ from models import (
     PaymentStatusUpdateRequest,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, PaymentStatus, PaymentMethod, OrderStatus
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import PaymentStatus, PaymentMethod, OrderStatus
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -26,12 +27,30 @@ user_manager = UserManager(engine)
 router = APIRouter(prefix="/transactions", tags=["Payment Transactions"])
 
 
+def _is_global(ctx: AuthContext) -> bool:
+    """GLOBAL-tier or microservice callers see/act on all transactions (no narrowing)."""
+    return ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value
+
+
+def _order_in_scope(ctx: AuthContext, order) -> bool:
+    """Order-linked scope check (transactions carry no direct outlet_id).
+
+    Mirrors the legacy per-role fences, driven off ctx:
+    - GLOBAL/microservice (admin/super/accountant) -> always allowed.
+    - OUTLET-scoped (e.g. OUTLET_MANAGER) -> order's assigned outlet must be theirs.
+    - any other scoped caller (telecaller-style ownership) -> must own the order.
+    """
+    if _is_global(ctx):
+        return True
+    if ctx.scope_level == ScopeLevel.OUTLET.value:
+        return order.assigned_outlet_id == ctx.outlet_id
+    return order.telecaller_id == ctx.user_id
+
+
 @router.post("", response_model=OrderTransactionResponse)
 async def record_order_payment(
     payload: OrderTransactionCreateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSACTIONS_WRITE)),
 ):
     """
     Record payment transaction for an order
@@ -40,21 +59,15 @@ async def record_order_payment(
     try:
         # Verify order exists and check access
         order = await order_manager.fetch(payload.order_id)
-        
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if order.assigned_outlet_id != current_user.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied to this order"
-                )
-        elif current_user.role == UserRole.TELECALLER:
-            if order.telecaller_id != current_user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only record payments for your own orders"
-                )
-        
+
+        # Scoped callers may only record payments for orders in their scope:
+        # OUTLET_MANAGER -> their outlet's orders; telecaller-style -> own orders.
+        if not _order_in_scope(ctx, order):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this order"
+            )
+
         # Check if order can receive payment
         if order.order_status not in [OrderStatus.DELIVERY_ALLOTTED, OrderStatus.DELIVERED]:
             raise HTTPException(
@@ -70,7 +83,7 @@ async def record_order_payment(
             amount_paid=payload.amount_paid,
             transaction_reference=payload.transaction_reference,
             payment_date=datetime.now(),
-            received_by=current_user_id,
+            received_by=ctx.user_id,
             notes=payload.notes
         )
         
@@ -110,7 +123,7 @@ async def record_order_payment(
 async def get_daily_collection(
     date: Optional[str] = None,  # Format: YYYY-MM-DD
     outlet_id: Optional[str] = None,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSACTIONS_READ)),
 ):
     """Get daily payment collections"""
     try:
@@ -165,12 +178,23 @@ async def get_daily_collection(
 @router.get("/{order_id}", response_model=List[OrderTransactionResponse])
 async def get_order_transactions(
     order_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSACTIONS_READ)),
 ):
     """Get all transactions for an order"""
     try:
+        # Scoped callers may only read transactions for orders in their scope.
+        if not _is_global(ctx):
+            order = await order_manager.fetch(order_id)
+            if not _order_in_scope(ctx, order):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied to this order"
+                )
+
         transactions = await transaction_manager.fetch_all(filters={"order_id": order_id})
         return transactions.items
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -182,7 +206,7 @@ async def get_order_transactions(
 async def update_transaction(
     transaction_id: str,
     payload: PaymentStatusUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.TELECALLER))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSACTIONS_WRITE)),
 ):
     """Update transaction payment status"""
     try:
@@ -212,9 +236,7 @@ async def get_payment_transactions(
     to_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSACTIONS_READ)),
 ):
     """
     Get payment transaction history with filters
@@ -240,29 +262,24 @@ async def get_payment_transactions(
             filters=filters if filters else None
         )
         
-        # Filter by date and outlet access
-        current_user = await user_manager.fetch(current_user_id)
+        # Filter by date and outlet access (scope driven off ctx; transactions are
+        # order-linked so outlet/ownership is resolved via the order join the code uses)
         filtered_transactions = []
-        
+
         for transaction in transactions.items:
             # Date filtering
             if from_date and transaction.payment_date and transaction.payment_date.date() < from_date:
                 continue
             if to_date and transaction.payment_date and transaction.payment_date.date() > to_date:
                 continue
-            
-            # Outlet manager access control
-            if current_user.role == UserRole.OUTLET_MANAGER:
-                # Get the order to check outlet
+
+            # Scope-based access control: GLOBAL/microservice -> all; OUTLET -> own
+            # outlet's orders; telecaller-style -> own orders.
+            if not _is_global(ctx):
                 order = await order_manager.fetch(transaction.order_id)
-                if order.assigned_outlet_id != current_user.outlet_id:
+                if not _order_in_scope(ctx, order):
                     continue
-            elif current_user.role == UserRole.TELECALLER:
-                # Get the order to check telecaller
-                order = await order_manager.fetch(transaction.order_id)
-                if order.telecaller_id != current_user_id:
-                    continue
-            
+
             filtered_transactions.append(OrderTransactionResponse(
                 uid=transaction.uid,
                 order_id=transaction.order_id,

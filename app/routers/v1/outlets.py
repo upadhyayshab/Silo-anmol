@@ -9,8 +9,9 @@ from models import (
     OutletCreateRequest, OutletUpdateRequest, OutletResponse,
     ListResponse, StatusResponse
 )
-from utils.auth import require_roles
-from utils.constants import UserRole, OutletType
+from utils.auth import require_permission, apply_scope, apply_field_mask, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import OutletType
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -27,14 +28,18 @@ async def get_outlet_collections_summary(
     outlet_id: str,
     from_date: Optional[date] = Query(None, description="Filter start date YYYY-MM-DD"),
     to_date: Optional[date] = Query(None, description="Filter end date YYYY-MM-DD"),
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.COLLECTIONS_READ))
 ):
     """
     Aggregate collection totals for one outlet by status.
     Replaces fetching up to 500 rows client-side to compute a single sum.
     """
+    # Scope fence: a non-GLOBAL caller may only read an outlet within their scope.
+    if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+        sv = (await apply_scope({}, ctx, outlet_column="outlet_id")).get("outlet_id")
+        allowed = sv if isinstance(sv, list) else [sv]
+        if outlet_id not in allowed:
+            raise HTTPException(403, "Access denied: outlet outside your scope")
     SUMMARY_QUERY = text("""
     SELECT
         COALESCE(SUM(amount) FILTER (WHERE confirmation_status = 'CONFIRMED'), 0) AS confirmed_total,
@@ -77,13 +82,13 @@ async def get_outlet_collections_summary(
 @router.get("/{outlet_id}", response_model=OutletResponse)
 async def get_outlet(
     outlet_id: str,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, allowed_scopes=["delivery:read"]))
+    ctx: AuthContext = Depends(require_permission(Permission.OUTLETS_READ, allow_scopes=["delivery:read"]))
 ):
     """Get specific outlet details"""
     try:
         outlet = await outlet_manager.fetch(outlet_id)
-        
-        return OutletResponse(
+
+        return apply_field_mask("outlets", ctx, OutletResponse(
             uid=outlet.uid,
             outlet_name=outlet.outlet_name,
             outlet_code=outlet.outlet_code,
@@ -100,7 +105,7 @@ async def get_outlet(
             is_active=outlet.is_active,
             outlet_type=outlet.outlet_type,
             created_at=outlet.created_at
-        )
+        ))
 
     except Exception as e:
         if "not found" in str(e).lower():
@@ -124,15 +129,11 @@ async def list_outlets(
     outlet_type: Optional[OutletType] = None,
     limit: int = 50,
     offset: int = 0,
-    _: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.OUTLET_MANAGER,
-        UserRole.WAREHOUSE_MANAGER, UserRole.ACCOUNTANT, UserRole.TELECALLER,
-        allowed_scopes=["delivery:read"]
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.OUTLETS_READ, allow_scopes=["delivery:read"]))
 ):
     """
     List all outlets with optional filters
-    Requires: super_admin, admin, warehouse_manager, accountant, or telecaller role
+    Requires: outlets:read permission (or delivery:read microservice scope)
     """
     try:
         filters = {}
@@ -172,7 +173,8 @@ async def list_outlets(
             )
             for outlet in outlets.items
         ]
-        
+
+        outlet_responses = apply_field_mask("outlets", ctx, outlet_responses)
         return ListResponse(items=outlet_responses, count=len(outlet_responses))
     
     except Exception as e:
@@ -188,11 +190,11 @@ async def list_outlets(
 @router.post("", response_model=OutletResponse, status_code=status.HTTP_201_CREATED)
 async def create_outlet(
     payload: OutletCreateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """
     Create new outlet
-    Requires: super_admin or admin role
+    Requires: outlets:write permission
     """
     try:
         # Check if outlet_code already exists
@@ -256,11 +258,11 @@ async def create_outlet(
 async def update_outlet(
     outlet_id: str,
     payload: OutletUpdateRequest,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """
     Update outlet details
-    Requires: super_admin or admin role
+    Requires: outlets:write permission
     """
     try:
         updates = payload.dict(exclude_unset=True)
@@ -303,11 +305,11 @@ async def update_outlet(
 @router.delete("/{outlet_id}", response_model=StatusResponse)
 async def deactivate_outlet(
     outlet_id: str,
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.OUTLETS_WRITE))
 ):
     """
     Deactivate outlet (soft delete)
-    Requires: super_admin role only
+    Requires: outlets:write permission
     """
     try:
         await outlet_manager.update(outlet_id, {"is_active": False})

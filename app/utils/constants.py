@@ -68,6 +68,12 @@ class PaymentStatus(str, Enum):
     REFUNDED = "refunded"
 
 
+def payment_status_for(amount_paid, order_value) -> "PaymentStatus":
+    """Status for a payment recorded at order-creation: PAID only when it covers the order's
+    (post-discount) value, else PARTIALLY_PAID. Money path — pinned by test_order_payment_status."""
+    return PaymentStatus.PAID if amount_paid >= order_value else PaymentStatus.PARTIALLY_PAID
+
+
 class InvoiceType(str, Enum):
     REGULAR = "regular"
     RETURN = "return"

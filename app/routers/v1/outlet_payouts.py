@@ -12,7 +12,8 @@ from models import (
     PayoutCreateRequest, PayoutUpdateRequest, PayoutStatusUpdateRequest,
     PayoutResponse, MarkPayoutPaidRequest, ListResponse, StatusResponse
 )
-from utils.auth import require_roles, get_current_user_id
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole, PayoutStatus
 
 settings = get_settings()
@@ -25,18 +26,31 @@ user_manager = UserManager(engine)
 router = APIRouter(prefix="/outlet-payouts", tags=["Outlet Manager Payouts"])
 
 
+async def _assert_payout_in_scope(ctx: AuthContext, payout):
+    """Scoped (non-global) callers may only act on a payout for an outlet in their scope."""
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return
+    sv = (await apply_scope({}, ctx)).get("outlet_id")
+    scope_ids = sv if isinstance(sv, list) else ([sv] if sv is not None else None)
+    if scope_ids is None or payout.outlet_id in scope_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied: this payout is outside your scope",
+    )
+
+
 @router.post("", response_model=PayoutResponse)
 async def create_payout(
     payload: PayoutCreateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_WRITE))
 ):
     """
     Create a new outlet manager payout record
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: requires payouts:write
     """
+    current_user_id = ctx.user_id
     try:
         # Validate outlet exists
         try:
@@ -155,35 +169,28 @@ async def list_payouts(
     payment_date_to: Optional[date] = Query(None, description="Filter by payment date to"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """
     List outlet manager payouts with filters
-    
-    Access: 
-    - SUPER_ADMIN, ADMIN, ACCOUNTANT: Can view all payouts
-    - OUTLET_MANAGER: Can only view their own payouts
+
+    Access:
+    - GLOBAL scope (finance/admin): can view all payouts
+    - OUTLET scope (outlet manager): scoped to their own outlet
     """
     try:
-        # Get current user to check role
-        current_user = await user_manager.fetch(current_user_id)
-        
         # Build filters
         filters = {}
-        
-        # Outlet managers can only see their own payouts
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            filters["outlet_manager_id"] = current_user_id
-        else:
-            # Admins can filter by outlet_manager_id if provided
-            if outlet_manager_id:
-                filters["outlet_manager_id"] = outlet_manager_id
-        
+
+        if outlet_manager_id:
+            filters["outlet_manager_id"] = outlet_manager_id
+
         if outlet_id:
             filters["outlet_id"] = outlet_id
-        
+
+        # Narrow to the caller's outlet scope (GLOBAL = no narrowing)
+        filters = await apply_scope(filters, ctx)
+
         # Handle status filter - convert string to enum
         if status_filter:
             try:
@@ -271,16 +278,17 @@ async def list_payouts(
 async def mark_payout_paid(
     payout_id: str,
     payload: MarkPayoutPaidRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_APPROVE))
 ):
     """
     Atomically transition a payout to PAID in a single request.
     - PENDING → APPROVED → PAID
     - APPROVED → PAID
     - Already PAID → 400
+
+    Access: requires payouts:approve
     """
+    current_user_id = ctx.user_id
     try:
         payout = await payout_manager.fetch(payout_id)
 
@@ -346,31 +354,21 @@ async def mark_payout_paid(
 @router.get("/{payout_id}", response_model=PayoutResponse)
 async def get_payout(
     payout_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_READ))
 ):
     """
     Get a single payout record
-    
+
     Access:
-    - SUPER_ADMIN, ADMIN, ACCOUNTANT: Can view any payout
-    - OUTLET_MANAGER: Can only view their own payouts
+    - GLOBAL scope: can view any payout
+    - OUTLET scope: only payouts for an outlet in their scope
     """
     try:
         payout = await payout_manager.fetch(payout_id)
-        
-        # Get current user to check role
-        current_user = await user_manager.fetch(current_user_id)
-        
-        # Outlet managers can only view their own payouts
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if payout.outlet_manager_id != current_user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view your own payouts"
-                )
-        
+
+        # Scoped callers may only view payouts for an outlet in their scope
+        await _assert_payout_in_scope(ctx, payout)
+
         return PayoutResponse(
             uid=payout.uid,
             outlet_id=payout.outlet_id,
@@ -405,16 +403,14 @@ async def get_payout(
 async def update_payout(
     payout_id: str,
     payload: PayoutUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_WRITE))
 ):
     """
     Update payout details
-    
+
     Can only update if status is PENDING
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: requires payouts:write
     """
     try:
         # Fetch current payout
@@ -476,22 +472,21 @@ async def update_payout(
 async def update_payout_status(
     payout_id: str,
     payload: PayoutStatusUpdateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_APPROVE))
 ):
     """
     Update payout status
-    
+
     Valid status transitions:
     - PENDING → APPROVED (sets approved_by, approved_at)
     - PENDING → REJECTED
     - APPROVED → PAID (sets paid_by, paid_at)
     - REJECTED → PENDING (reset for reprocessing)
     - PAID → (no transitions allowed)
-    
-    Access: SUPER_ADMIN, ADMIN, ACCOUNTANT
+
+    Access: requires payouts:approve
     """
+    current_user_id = ctx.user_id
     try:
         # Fetch current payout
         payout = await payout_manager.fetch(payout_id)
@@ -580,17 +575,15 @@ async def update_payout_status(
 @router.delete("/{payout_id}", response_model=StatusResponse)
 async def delete_payout(
     payout_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.PAYOUTS_APPROVE))
 ):
     """
     Delete a payout record
-    
+
     Can only delete if status is PENDING or REJECTED
     Cannot delete APPROVED or PAID payouts
-    
-    Access: SUPER_ADMIN, ADMIN only
+
+    Access: requires payouts:approve
     """
     try:
         # Fetch payout

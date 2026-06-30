@@ -12,8 +12,9 @@ from managers import (
     DeliveryGuyManager, DeliveryGuyHandoverManager, OrderTransactionManager,
     DeliveryGuySchema, DeliveryGuyHandoverSchema, OrderTransactionSchema
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, OrderStatus, TransferStatus, PaymentStatus, PaymentMethod, OutletCollectionStatus
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission
+from utils.constants import OrderStatus, TransferStatus, PaymentStatus, PaymentMethod, OutletCollectionStatus
 from utils.functions import ensure_date
 import calendar
 from utils import dependencies as D
@@ -40,9 +41,7 @@ router = APIRouter(prefix="/reports", tags=["Reports & Analytics"])
 @router.get("/order-products-quantity-count")
 async def order_products_quantity_count(
     filters: Dict[str, Any] = Depends(D.filtering_dependency),
-    # _: str = Depends(require_roles(
-    #     UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    # ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     try:
         # Fetch the flat aggregation data from manager
@@ -66,27 +65,28 @@ async def get_outlet_orders(
     to_date: Optional[date] = None,
     limit: int = 100,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
     Get all orders for a specific outlet (assigned OR walk-in)
     Returns order_id, total_amount, and status for each order
-    role : should be either "TELECALLER" or "OUTLET_MANAGER" for the filter 
+    role : should be either "TELECALLER" or "OUTLET_MANAGER" for the filter
     """
     try:
-        # Get current user for access control
-        current_user = await user_manager.fetch(current_user_id)
-        
-        # Access control: outlet managers can only view their own outlet
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view orders for your outlet"
-                )
-        
+        # Access control: scoped callers (e.g. outlet managers) may only view
+        # outlets inside their scope. apply_scope OVERRIDES assigned_outlet_id for
+        # scoped roles, so a request for an out-of-scope outlet returns nothing.
+        scoped = await apply_scope({"assigned_outlet_id": outlet_id}, ctx, outlet_column="assigned_outlet_id")
+        scope_outlet = scoped.get("assigned_outlet_id")
+        if scope_outlet is not None and (
+            (isinstance(scope_outlet, list) and outlet_id not in scope_outlet)
+            or (not isinstance(scope_outlet, list) and scope_outlet != outlet_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You can only view orders for your outlet"
+            )
+
         # Verify outlet exists
         try:
             outlet = await outlet_manager.fetch(outlet_id)
@@ -95,7 +95,7 @@ async def get_outlet_orders(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Outlet not found"
             )
-        
+
         # Build filters
         filters = {"assigned_outlet_id": outlet_id}
         if order_status:
@@ -190,7 +190,14 @@ async def get_outlet_orders(
         
         # Sort by order_date (newest first)
         order_list.sort(key=lambda x: x["order_date"], reverse=True)
-        
+
+        # Finance veil: strip commission for callers lacking products:cost:read.
+        # The payload is a plain dict, so delete the keys directly.
+        if not ctx.has(Permission.PRODUCTS_COST_READ):
+            commission_summary = None
+            for order_data in order_list:
+                order_data.pop("total_commission", None)
+
         return {
             "outlet_id": outlet_id,
             "outlet_name": outlet.outlet_name,
@@ -220,23 +227,24 @@ async def get_outlet_orders(
 @router.get("/dashboard/outlet/{outlet_id}")
 async def get_outlet_dashboard(
     outlet_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
     Get outlet-specific dashboard metrics
     """
     try:
-        # Check permissions
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id != outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view your outlet's dashboard"
-                )
-        
+        # Scope fence: a scoped caller may only view an outlet inside their scope.
+        scoped = await apply_scope({}, ctx)
+        scope_outlet = scoped.get("outlet_id")
+        if scope_outlet is not None and (
+            (isinstance(scope_outlet, list) and outlet_id not in scope_outlet)
+            or (not isinstance(scope_outlet, list) and scope_outlet != outlet_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You can only view your outlet's dashboard"
+            )
+
         today = date.today()
         month_start = today.replace(day=1)
         
@@ -309,9 +317,7 @@ async def get_sales_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
     Get comprehensive sales summary report
@@ -322,16 +328,14 @@ async def get_sales_summary(
             from_date = date.today().replace(day=1)
         if not to_date:
             to_date = date.today()
-        
-        # Role-based filtering
-        current_user = await user_manager.fetch(current_user_id)
+
+        # Honor an explicit outlet_id for global callers; apply_scope then OVERRIDES
+        # it for scoped roles (invoices key on outlet_id) so they can't query outside scope.
         filters = {"is_cancelled": False}
-        
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            filters["outlet_id"] = current_user.outlet_id
-        elif outlet_id and current_user.role in [UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
+        if outlet_id:
             filters["outlet_id"] = outlet_id
-        
+        filters = await apply_scope(filters, ctx, outlet_column="outlet_id")
+
         invoices = await invoice_manager.fetch_all(filters=filters)
         
         # Filter by date range
@@ -385,24 +389,18 @@ async def get_sales_summary(
 @router.get("/inventory/analysis")
 async def get_inventory_analysis(
     outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """
     Get comprehensive inventory analysis
     """
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
+        # SENSITIVE (stock_value = cost): gated behind FINANCE_READ. Holders are
+        # GLOBAL-scoped, so honor an explicit outlet_id filter if provided.
         filters = {}
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            filters["outlet_id"] = current_user.outlet_id
-        elif current_user.role == UserRole.WAREHOUSE_MANAGER:
-            filters["outlet_id"] = None  # Warehouse only
-        elif outlet_id is not None:
+        if outlet_id is not None:
             filters["outlet_id"] = outlet_id
-        
+
         inventory_items = await inventory_manager.fetch_all(filters=filters)
         
         total_items = len(inventory_items.items)
@@ -465,9 +463,7 @@ async def get_inventory_analysis(
 async def get_order_performance(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
     Get order performance metrics
@@ -477,15 +473,10 @@ async def get_order_performance(
             from_date = date.today().replace(day=1)
         if not to_date:
             to_date = date.today()
-        
-        current_user = await user_manager.fetch(current_user_id)
-        
-        filters = {}
-        if current_user.role == UserRole.TELECALLER:
-            filters["telecaller_id"] = current_user_id
-        elif current_user.role == UserRole.OUTLET_MANAGER:
-            filters["assigned_outlet_id"] = current_user.outlet_id
-        
+
+        # Scope by the order's assigned outlet (global callers see all).
+        filters = await apply_scope({}, ctx, outlet_column="assigned_outlet_id")
+
         orders = await order_manager.fetch_all(filters=filters)
         
         # Filter by date range
@@ -545,9 +536,7 @@ async def get_financial_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    _: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """
     Get financial summary including P&L basics
@@ -628,13 +617,11 @@ async def get_product_performance(
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
     limit: int = 20,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.ACCOUNTANT, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    _: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """
     Get product performance analytics based on DELIVERED orders only
-    
+
     This endpoint counts only products that have been delivered to customers,
     using actual_delivery_date for date filtering.
     """
@@ -643,14 +630,12 @@ async def get_product_performance(
             from_date = date.today().replace(day=1)
         if not to_date:
             to_date = date.today()
-        
-        current_user = await user_manager.fetch(current_user_id)
-        
+
+        # SENSITIVE (cost/profit/margin): gated behind FINANCE_READ. Holders are
+        # GLOBAL-scoped, so honor an explicit outlet_id filter if provided.
         # Build filters for DELIVERED orders only
         filters = {"order_status": OrderStatus.DELIVERED}
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            filters["assigned_outlet_id"] = current_user.outlet_id
-        elif outlet_id:
+        if outlet_id:
             filters["assigned_outlet_id"] = outlet_id
         
         # Fetch all delivered orders
@@ -758,9 +743,7 @@ async def get_activity_logs(
     entity_type: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    _: AuthContext = Depends(require_permission(Permission.AUDIT_READ)),
 ):
     """
     Get system activity logs for audit purposes
@@ -864,9 +847,7 @@ async def get_activity_logs(
 async def get_transfer_efficiency(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    _: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
     Get stock transfer efficiency metrics
@@ -964,7 +945,7 @@ async def get_transfer_efficiency(
 
 @router.get("/delivery-overview")
 async def get_delivery_overview(
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN))
+    _: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
     Get comprehensive delivery operations overview for Super Admin
@@ -1405,17 +1386,17 @@ async def get_daily_order_summary(
     main_filter: Optional[str] = None,
     sub_filter: Optional[str] = None,
     view_type: str = "logistics",
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """ Get daily order summary including volume, revenue, and quantity by status. """
     try:
-        # Role-based outlet filtering
-        current_user = await user_manager.fetch(current_user_id)
+        # Outlet scope: a scoped (outlet) caller is pinned to their own outlet via
+        # apply_scope on assigned_outlet_id; global callers honor the explicit outlet_id.
         target_outlet_id = outlet_id
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            target_outlet_id = current_user.outlet_id
+        scoped = await apply_scope({}, ctx, outlet_column="assigned_outlet_id")
+        scope_outlet = scoped.get("assigned_outlet_id")
+        if scope_outlet is not None:
+            target_outlet_id = scope_outlet[0] if isinstance(scope_outlet, list) else scope_outlet
 
         async with engine.connect() as conn:
             if view_type == "marketing":
@@ -1451,9 +1432,7 @@ async def get_daily_order_summary(
 async def get_outlet_financial_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    _: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """
     Per-outlet financial aggregation for the SuperAdmin dashboard.
@@ -1585,9 +1564,7 @@ async def get_outlet_financial_summary(
 async def get_daily_collection_tracker(
     from_date: date,
     to_date: date,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.FINANCE_READ))
 ):
     """
     Date-wise delivery-vs-collection breakdown per outlet.
@@ -1772,9 +1749,7 @@ async def get_daily_collection_tracker(
 
 @router.get("/inventory-pivot")
 async def get_inventory_pivot(
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
     Inventory pivot: all active outlets × all active products with quantities.
@@ -1852,9 +1827,7 @@ async def get_outlet_product_summary(
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
     order_status: Optional[OrderStatus] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.ACCOUNTANT, UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
     Get product quantity and amount summary grouped by outlet, status, product and variant (SKU).
@@ -1862,36 +1835,37 @@ async def get_outlet_product_summary(
     try:
         # Build filters
         filters = {}
-        
+
         # Date range filtering (nested under 'order' relationship)
         date_filter = {}
         if from_date:
             date_filter["$gte"] = datetime.combine(from_date, datetime.min.time())
         if to_date:
             date_filter["$lte"] = datetime.combine(to_date, datetime.max.time())
-        
+
         if date_filter:
             filters["order.order_date"] = date_filter
-            
-        # Role-based outlet filtering
-        current_user = await user_manager.fetch(current_user_id)
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            filters["order.assigned_outlet_id"] = current_user.outlet_id
-        elif outlet_id:
-            filters["order.assigned_outlet_id"] = outlet_id
-            
+
+        # Scope-based outlet filtering: GLOBAL honors the outlet_id query param;
+        # OUTLET-scoped callers are pinned to their own outlet (FK is order.assigned_outlet_id).
+        effective_outlet_id = outlet_id
+        if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            effective_outlet_id = ctx.outlet_id
+        if effective_outlet_id:
+            filters["order.assigned_outlet_id"] = effective_outlet_id
+
         if order_status:
             filters["order.order_status"] = order_status
-            
+
         # Fetch summary from manager
         summary = await order_item_manager.get_outlet_product_summary(filters=filters)
-        
+
         return {
             "items": summary,
             "filters_applied": {
                 "from_date": from_date,
                 "to_date": to_date,
-                "outlet_id": outlet_id if current_user.role != UserRole.OUTLET_MANAGER else current_user.outlet_id,
+                "outlet_id": effective_outlet_id,
                 "order_status": order_status
             }
         }
@@ -1906,7 +1880,7 @@ async def get_outlet_product_summary(
 async def get_product_quantity_report(
     from_date: date,
     to_date: date,
-    current_user_id: str = Depends(require_roles(UserRole.SUPER_ADMIN))
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """Product quantity report grouped by date, outlet, status, and product."""
     try:

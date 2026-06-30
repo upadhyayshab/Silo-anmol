@@ -40,6 +40,16 @@ def test_cost_columns_masked_below_finance():
         assert masked_columns_for("products", role) == []
 
 
+def test_orders_commission_masked_below_finance():
+    # total_commission on orders is gated by products:cost:read (same finance veil).
+    # Roles WITHOUT it get total_commission nulled.
+    for role in (UserRole.TELECALLER, UserRole.OUTLET_MANAGER):
+        assert masked_columns_for("orders", role) == ["total_commission"]
+    # Finance (products:cost:read) and SUPER_ADMIN (wildcard) see it.
+    for role in (UserRole.ACCOUNTANT, UserRole.SUPER_ADMIN):
+        assert masked_columns_for("orders", role) == []
+
+
 def test_cgo_sees_topline_not_margin_or_pay():
     # Growth head: catalogue + orders + campaigns, but NOT cost/margin or payouts.
     assert has_permission(UserRole.CGO, Permission.PRODUCTS_READ)
@@ -81,11 +91,15 @@ def test_cost_edit_is_finance_only():
     assert has_permission(UserRole.SUPER_ADMIN, Permission.PRODUCTS_COST_WRITE)
 
 
-def test_payouts_approval_separated_from_write():
-    # Accountant proposes/records but does not approve (maker != checker).
+def test_payouts_approve_is_finance_admin_tier():
+    # Step 5 (user decision 2026-06-29): NO maker-checker separation — ACCOUNTANT keeps
+    # both write AND approve (pure permission gating, not segregation of duties).
+    # payouts:approve is the finance/admin tier; ops roles never hold it.
+    for r in (UserRole.ACCOUNTANT, UserRole.FINANCE_ADMIN, UserRole.ADMIN, UserRole.SUPER_ADMIN):
+        assert has_permission(r, Permission.PAYOUTS_APPROVE), r
     assert has_permission(UserRole.ACCOUNTANT, Permission.PAYOUTS_WRITE)
-    assert not has_permission(UserRole.ACCOUNTANT, Permission.PAYOUTS_APPROVE)
-    assert has_permission(UserRole.FINANCE_ADMIN, Permission.PAYOUTS_APPROVE)
+    for r in (UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.TELECALLER):
+        assert not has_permission(r, Permission.PAYOUTS_APPROVE), r
 
 
 def test_scope_levels():

@@ -14,8 +14,9 @@ from models import (
     StockTransferResponse, TransferItemResponse, ProductBrief, OutletBrief, UserBrief,
     ListResponse, StatusResponse , BulkTransferResponse , StockTransferCreateRequestBulk
 )
-from utils.auth import require_roles, get_current_user_id
-from utils.constants import UserRole, TransferStatus, OutletType
+from utils.auth import require_permission, apply_scope, AuthContext
+from utils.permissions import Permission, ScopeLevel
+from utils.constants import TransferStatus, OutletType
 from utils.warehouse_utils import get_default_warehouse_id
 import uuid
 
@@ -38,22 +39,88 @@ def generate_transfer_number() -> str:
     return f"TRF-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
 
 
+async def _transfer_scope_ids(ctx: AuthContext):
+    """Outlet-ids the caller may touch, or None for unrestricted (GLOBAL/microservice).
+
+    Transfers carry two outlet FKs (from/to), so a scoped caller is matched by an OR
+    over both. GLOBAL roles (admin, warehouse, ops admin, super) get None = no narrowing
+    (warehouse fulfils network-wide — decision 2026-06-29). OUTLET -> [own]; CLUSTER/STATE
+    -> their covered outlets; anything scoped without an outlet dimension -> deny.
+    """
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return None
+    sv = (await apply_scope({}, ctx)).get("outlet_id")
+    if sv is None:
+        return ["__none__"]  # scoped but no outlet scope (e.g. agency) -> match nothing
+    return sv if isinstance(sv, list) else [sv]
+
+
+async def _assert_transfer_in_scope(ctx: AuthContext, transfer):
+    """Scoped (non-global) writers may only act on transfers touching their outlet(s)."""
+    scope_ids = await _transfer_scope_ids(ctx)
+    if scope_ids is None:
+        return
+    if transfer.from_outlet_id in scope_ids or transfer.to_outlet_id in scope_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Access denied: this transfer does not involve an outlet in your scope",
+    )
+
+
+async def _fetch_transfers_scoped(ctx: AuthContext, base_filters: dict, *,
+                                  from_outlet_id=None, to_outlet_id=None, limit=50, offset=0):
+    """Fetch transfers within the caller's scope, returning (items, total).
+
+    GLOBAL -> straight filtered query. Scoped -> two queries (incoming `to ∈ scope`,
+    outgoing `from ∈ scope`), deduped/sorted in memory then paginated — mirrors the old
+    outlet-manager path, generalised from a single outlet id to the caller's outlet set.
+    ponytail: the scoped `count` reflects the capped pre-fetch, same as the prior code.
+    """
+    scope_ids = await _transfer_scope_ids(ctx)
+    if scope_ids is None:
+        filters = dict(base_filters)
+        if from_outlet_id is not None:
+            filters["from_outlet_id"] = from_outlet_id
+        if to_outlet_id is not None:
+            filters["to_outlet_id"] = to_outlet_id
+        res = await transfer_manager.fetch_all(filters=filters, limit=limit, offset=offset, sorts=["-created_at"])
+        return res.items, res.count
+
+    prefetch = max(limit + offset, 100)
+    items = []
+    # Incoming: transfers landing in one of the caller's outlets
+    if to_outlet_id is None or to_outlet_id in scope_ids:
+        f = dict(base_filters)
+        f["to_outlet_id"] = scope_ids
+        if from_outlet_id is not None:
+            f["from_outlet_id"] = from_outlet_id
+        items += (await transfer_manager.fetch_all(filters=f, limit=prefetch, sorts=["-created_at"])).items
+    # Outgoing: transfers leaving one of the caller's outlets
+    if from_outlet_id is None or from_outlet_id in scope_ids:
+        f = dict(base_filters)
+        f["from_outlet_id"] = scope_ids
+        if to_outlet_id is not None:
+            f["to_outlet_id"] = to_outlet_id
+        items += (await transfer_manager.fetch_all(filters=f, limit=prefetch, sorts=["-created_at"])).items
+
+    unique = {t.uid: t for t in items}
+    ordered = sorted(unique.values(), key=lambda x: x.created_at, reverse=True)
+    return ordered[offset:offset + limit], len(ordered)
+
+
 @router.post("", response_model=StockTransferResponse)
 async def create_transfer_request(
     payload: StockTransferCreateRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_WRITE)),
 ):
     """
     Create stock transfer request
-    - Outlet managers can request from warehouse to their outlet
-    - Warehouse managers can initiate transfers to any outlet
-    - Admins can create any transfer
+    - Scoped managers (outlet/cluster/state) can only create transfers touching their outlets
+    - Warehouse/ops managers and admins (GLOBAL) can create any transfer
     """
     try:
-        # Get current user to determine permissions
-        current_user = await user_manager.fetch(current_user_id)
+        current_user_id = ctx.user_id
 
         # Source and destination are both mandatory and must differ
         if not payload.from_outlet_id or not payload.to_outlet_id:
@@ -96,14 +163,14 @@ async def create_transfer_request(
                 detail="Destination outlet not found"
             )
         
-        # Role-based validation
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            # Outlet managers must be involved in the transfer (either as source or destination)
-            if current_user.outlet_id != payload.to_outlet_id and current_user.outlet_id != payload.from_outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only create transfers where your outlet is either the source or destination"
-                )
+        # Scope fence: a scoped caller's outlet(s) must be the source or destination.
+        scope_ids = await _transfer_scope_ids(ctx)
+        if scope_ids is not None and \
+                payload.from_outlet_id not in scope_ids and payload.to_outlet_id not in scope_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only create transfers where one of your outlets is the source or destination"
+            )
         
         # Validate products and check availability
         validated_items = []
@@ -196,18 +263,22 @@ async def create_transfer_request(
 @router.post("/mass-upload", response_model=BulkTransferResponse)
 async def mass_upload_transfer_requests(
     payload: List[StockTransferCreateRequestBulk],
-    current_user_id: str = Depends(require_roles(
-        UserRole.ADMIN, UserRole.SUPER_ADMIN,UserRole.WAREHOUSE_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_WRITE)),
 ):
     """
     Mass upload stock transfer requests.
-    - Restricted to Admins, Super Admins, Warehouse Managers.
+    - Bulk admin tooling: restricted to GLOBAL-scope writers (admin/warehouse/ops/super).
     - Processes the batch and returns a summary of successes and failures.
     """
-    # Fetch current user once for the whole batch
-    current_user = await user_manager.fetch(current_user_id)
-    
+    # Bulk create by outlet *name* can't be safely scope-fenced per row; keep it global-only
+    # (matches the prior admin/warehouse audience) so scoped writers can't bulk-escape scope.
+    if await _transfer_scope_ids(ctx) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Mass upload is restricted to organisation-wide (global) roles"
+        )
+    current_user_id = ctx.user_id
+
     successful_transfers = []
     errors = []
 
@@ -484,26 +555,16 @@ async def get_transfer_responses_batch(transfers: List[StockTransferOrderSchema]
 async def get_pending_approvals(
     limit: int = 50,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN , UserRole.OUTLET_MANAGER
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_READ)),
 ):
-    """Get all transfers pending approval"""
+    """Get transfers pending approval (scoped to the caller's outlets; GLOBAL = all)."""
     try:
-        current_user = await user_manager.fetch(current_user_id)
-        
-        filters = {"status": TransferStatus.PENDING}
-        
-        # Warehouse managers see all transfers (since warehouse is now Hassan outlet)
-        
-        # Fetch transfers without problematic joins
-        transfers = await transfer_manager.fetch_all(filters=filters, limit=limit, offset=offset)
-        
-        # Build responses in batch to avoid slow N+1 queries
-        transfer_responses = await get_transfer_responses_batch(transfers.items)
-        
-        return ListResponse(items=transfer_responses, count=transfers.count)
-    
+        items, total = await _fetch_transfers_scoped(
+            ctx, {"status": TransferStatus.PENDING}, limit=limit, offset=offset
+        )
+        transfer_responses = await get_transfer_responses_batch(items)
+        return ListResponse(items=transfer_responses, count=total)
+
     except Exception as e:
         error_msg = str(e)
         if "record not found" in error_msg.lower():
@@ -518,28 +579,15 @@ async def get_pending_approvals(
 @router.get("/{transfer_id}", response_model=StockTransferResponse)
 async def get_transfer(
     transfer_id: str,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_READ)),
 ):
     """Get specific transfer details"""
     try:
         transfer = await transfer_manager.fetch(transfer_id)
-        
-        # Check access permissions
-        current_user = await user_manager.fetch(current_user_id)
-        
-        # Role-based access control
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            if current_user.outlet_id and (
-                transfer.from_outlet_id != current_user.outlet_id and 
-                transfer.to_outlet_id != current_user.outlet_id
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: You can only view transfers involving your outlet"
-                )
-        
+
+        # Scope: a scoped caller may only view transfers touching their outlet(s).
+        await _assert_transfer_in_scope(ctx, transfer)
+
         # Get transfer items
         transfer_items = await transfer_item_manager.fetch_all(
             filters={"transfer_id": transfer_id}
@@ -601,11 +649,17 @@ async def get_transfer_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
-    current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_READ)),
 ):
-    """Get transfer summary report"""
+    """Get transfer summary report (network-wide; global roles only for now)."""
+    # This aggregate spans all outlets; a per-scope summary is a follow-up, so keep it to
+    # GLOBAL readers (the prior warehouse/admin audience) rather than leak totals. Raised
+    # before the try below since that try re-wraps everything as a 500.
+    if await _transfer_scope_ids(ctx) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Transfer summary is available to organisation-wide (global) roles only"
+        )
     try:
         # Build filters
         filters = {}
@@ -666,14 +720,17 @@ async def get_transfer_summary(
 @router.put("/{transfer_id}/approve", response_model=StockTransferResponse)
 async def approve_transfer(
     transfer_id: str,
-    current_user_id: str = Depends(get_current_user_id),
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_WRITE)),
 ):
     """Approve stock transfer request"""
     try:
+        current_user_id = ctx.user_id
         # Get transfer
         transfer = await transfer_manager.fetch(transfer_id)
-        
+
+        # Scope fence: scoped writers may only approve transfers touching their outlet(s).
+        await _assert_transfer_in_scope(ctx, transfer)
+
         if transfer.status != TransferStatus.PENDING:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -701,65 +758,45 @@ async def approve_transfer(
 async def update_transfer_status(
     transfer_id: str,
     payload: StockTransferStatusUpdateRequest,
-    current_user_id: str = Depends(get_current_user_id),
-    _: str = Depends(require_roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_WRITE)),
 ):
     """Update transfer status"""
     try:
-        # Get current user
-        current_user = await user_manager.fetch(current_user_id)
-        
+        current_user_id = ctx.user_id
+
         # Get current transfer to validate transition
         transfer = await transfer_manager.fetch(transfer_id)
-        
+
+        # Scope fence: scoped writers may only touch transfers involving their outlet(s).
+        await _assert_transfer_in_scope(ctx, transfer)
+
         # Validate status transition
         if not is_valid_transfer_status_transition(transfer.status, payload.status):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status transition from {transfer.status} to {payload.status}"
             )
-        
-        # Role-based status update validation
-        if current_user.role == UserRole.WAREHOUSE_MANAGER:
-            # Warehouse managers can only handle transfers from their assigned warehouse
-            if transfer.from_outlet_id is not None and current_user.outlet_id is not None and transfer.from_outlet_id != current_user.outlet_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="You can only manage transfers from warehouse"
-                )
-            
-            # Can approve, ship, but not deliver
-            if payload.status == TransferStatus.DELIVERED:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only delivery personnel or admins can mark transfers as delivered"
-                )
-        
+
         updates = {
             "status": payload.status,
             "notes": payload.notes
         }
-        
+
         # Handle status-specific logic (no reservation)
         if payload.status == TransferStatus.APPROVED:
             updates["approved_by"] = current_user_id
-        
+
         elif payload.status == TransferStatus.IN_TRANSIT:
             # Deduct stock from source when moving to IN_TRANSIT
             await deduct_stock_from_source(transfer_id)
-        
+
         elif payload.status == TransferStatus.DELIVERED:
             from datetime import datetime
             updates["delivered_date"] = datetime.utcnow()
             # Complete the stock transfer by adding stock to destination
             await add_stock_to_destination(transfer_id)
-        
+
         elif payload.status == TransferStatus.CANCELLED:
-            if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WAREHOUSE_MANAGER, UserRole.OUTLET_MANAGER]:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only authorized roles can cancel transfers"
-                )
             # Revert stock deduction if transfer is cancelled after being in transit
             if transfer.status == TransferStatus.IN_TRANSIT:
                 await revert_stock_to_source(transfer_id)
@@ -792,125 +829,41 @@ async def get_transfers(
     to_date: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
-    current_user_id: str = Depends(require_roles(
-        UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN, UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_READ)),
 ):
     """
-    Get transfer requests with filters
-    Role-based filtering applied automatically
+    Get transfer requests with filters.
+
+    Scope is applied as an OR over the transfer's two outlet FKs: a scoped caller
+    (outlet/cluster/state) sees only transfers where one of their outlets is the source
+    or destination; GLOBAL roles (admin/warehouse/ops/super) see everything.
     """
     try:
-        # Get current user to determine access level
-        current_user = await user_manager.fetch(current_user_id)
-        
-        filters = {}
-        
-        # Role-based filtering
-        if current_user.role == UserRole.OUTLET_MANAGER:
-            # Outlet managers see transfers involving their outlet
-            if not current_user.outlet_id:
-                return ListResponse(items=[], count=0)
-            
-            my_id = current_user.outlet_id
-            
-            # Base filters common to both queries
-            base_filters = {}
-            if transfer_status:
-                base_filters["status"] = transfer_status
-            if requested_by:
-                base_filters["requested_by"] = requested_by
-                
-            if from_date or to_date:
-                from datetime import datetime, time
-                base_filters["created_at"] = {}
-                if from_date:
-                    base_filters["created_at"][">="] = datetime.combine(from_date, time.min)
-                if to_date:
-                    base_filters["created_at"]["<="] = datetime.combine(to_date, time.max)
-                
-            all_transfers_items = []
-            
-            # Scenario 1: Incoming 
-            if to_outlet_id is None or to_outlet_id == my_id:
-                in_filters = base_filters.copy()
-                in_filters["to_outlet_id"] = my_id
-                if from_outlet_id is not None:
-                    in_filters["from_outlet_id"] = from_outlet_id
-                
-                # Fetch more than limit to allow for combined filtering/sorting
-                incoming_res = await transfer_manager.fetch_all(
-                    filters=in_filters, 
-                    limit=max(limit + offset, 100),
-                    sorts=["-created_at"]
-                )
-                all_transfers_items.extend(incoming_res.items)
-            
-            # Scenario 2: Outgoing 
-            if from_outlet_id is None or from_outlet_id == my_id:
-                out_filters = base_filters.copy()
-                out_filters["from_outlet_id"] = my_id
-                if to_outlet_id is not None:
-                    out_filters["to_outlet_id"] = to_outlet_id
-                
-                outgoing_res = await transfer_manager.fetch_all(
-                    filters=out_filters,
-                    limit=max(limit + offset, 100),
-                    sorts=["-created_at"]
-                )
-                all_transfers_items.extend(outgoing_res.items)
-                
-            # Deduplicate and sort
-            unique_transfers = {t.uid: t for t in all_transfers_items}
-            sorted_transfers = sorted(
-                unique_transfers.values(), 
-                key=lambda x: x.created_at, 
-                reverse=True
-            )
-            # Apply limit and offset
-            final_selection = sorted_transfers[offset : offset + limit]
-            
-            # Build responses in batch to avoid slow N+1 queries
-            transfer_responses = await get_transfer_responses_batch(final_selection)
-            
-            return ListResponse(items=transfer_responses, count=len(sorted_transfers))
-        
-        # Apply filters for admins or if user has broader access
-        if current_user.role in [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.WAREHOUSE_MANAGER]:
-            if transfer_status:
-                filters["status"] = transfer_status
-            if from_outlet_id is not None:
-                filters["from_outlet_id"] = from_outlet_id
-            if to_outlet_id:
-                filters["to_outlet_id"] = to_outlet_id
-            if requested_by:
-                filters["requested_by"] = requested_by
-        elif transfer_status:
-            filters["status"] = transfer_status
-            
+        # Filters common to both the global and scoped paths.
+        base_filters = {}
+        if transfer_status:
+            base_filters["status"] = transfer_status
+        if requested_by:
+            base_filters["requested_by"] = requested_by
         if from_date or to_date:
             from datetime import datetime, time
-            if "created_at" not in filters:
-                filters["created_at"] = {}
+            base_filters["created_at"] = {}
             if from_date:
-                filters["created_at"][">="] = datetime.combine(from_date, time.min)
+                base_filters["created_at"][">="] = datetime.combine(from_date, time.min)
             if to_date:
-                filters["created_at"]["<="] = datetime.combine(to_date, time.max)
-        
-        # For non-outlet managers, use normal filtering
-        # Fetch transfers without joins to prevent SQLAlchemy loader options error
-        transfers = await transfer_manager.fetch_all(
-            filters=filters,
-            limit=limit,
-            offset=offset,
-            sorts=["-created_at"]
+                base_filters["created_at"]["<="] = datetime.combine(to_date, time.max)
+
+        items, total = await _fetch_transfers_scoped(
+            ctx, base_filters,
+            from_outlet_id=from_outlet_id, to_outlet_id=to_outlet_id,
+            limit=limit, offset=offset,
         )
-        
+
         # Build responses in batch to avoid slow N+1 queries
-        transfer_responses = await get_transfer_responses_batch(transfers.items)
-        
-        return ListResponse(items=transfer_responses, count=transfers.count)
-    
+        transfer_responses = await get_transfer_responses_batch(items)
+
+        return ListResponse(items=transfer_responses, count=total)
+
     except Exception as e:
         # Handle "record not found" errors gracefully
         error_msg = str(e)
@@ -927,31 +880,26 @@ async def get_transfers(
 async def approve_transfer_with_quantities(
     transfer_id: str,
     payload: StockTransferApproveQuantitiesRequest,
-    current_user_id: str = Depends(require_roles(
-        UserRole.WAREHOUSE_MANAGER, UserRole.ADMIN,UserRole.OUTLET_MANAGER ,UserRole.SUPER_ADMIN
-    ))
+    ctx: AuthContext = Depends(require_permission(Permission.TRANSFERS_WRITE)),
 ):
     """
     Approve transfer request and potentially modify requested quantities.
-    Available to warehouse managers and admins.
+    Scoped writers may only approve transfers touching their outlet(s); GLOBAL roles any.
     """
     try:
-        current_user = await user_manager.fetch(current_user_id)
+        current_user_id = ctx.user_id
         transfer = await transfer_manager.fetch(transfer_id)
-        
+
+        # Scope fence: scoped writers limited to transfers involving their outlet(s).
+        await _assert_transfer_in_scope(ctx, transfer)
+
         # Validations
         if transfer.status != TransferStatus.PENDING:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Only PENDING transfers can be approved. Current status: {transfer.status}"
             )
-            
-        if current_user.role == UserRole.WAREHOUSE_MANAGER and transfer.from_outlet_id is not None and transfer.from_outlet_id != current_user.outlet_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Warehouse managers can only approve transfers from warehouse"
-            )
-            
+
         # Map item modifications
         items_dict = {item.product_id: item.approved_quantity for item in payload.items}
         
