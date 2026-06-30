@@ -413,8 +413,10 @@ class InvoiceService:
                     'total_amount': float(item.total_amount)
                 })
             
-            # Generate PDF
-            return self.pdf_generator.generate_invoice_pdf(pdf_data)
+            # Generate PDF. pisa.CreatePDF is sync + CPU-bound — offload to a thread
+            # so it doesn't block the single-process event loop.
+            from starlette.concurrency import run_in_threadpool
+            return await run_in_threadpool(self.pdf_generator.generate_invoice_pdf, pdf_data)
         
         except Exception as e:
             raise Exception(f"Failed to generate invoice PDF: {str(e)}")

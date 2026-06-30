@@ -43,9 +43,19 @@ def _same_state(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a) and bool(b) and a.strip().lower() == b.strip().lower()
 
 
+def _restrict(pool: List[UserSchema], only_ids: Optional[set]) -> List[UserSchema]:
+    """Keep only telecallers in `only_ids` (e.g. the currently-available set for
+    inbound routing). `only_ids=None` means no restriction (the default lead-create
+    path). Applied per tier so a tier with no *eligible* member falls through to the
+    next region tier rather than dead-ending."""
+    return pool if only_ids is None else [u for u in pool if u.uid in only_ids]
+
+
 async def _active_telecallers(engine, outlet_id: Optional[str],
-                              state: Optional[str]) -> List[UserSchema]:
-    """Tiered pool: telecallers in the outlet -> same state -> global.
+                              state: Optional[str],
+                              only_ids: Optional[set] = None) -> List[UserSchema]:
+    """Tiered pool: telecallers in the outlet -> same state -> global, optionally
+    restricted to `only_ids` (available agents for inbound routing).
 
     Region separation: a lead is only assigned across states as a last resort
     (when no telecaller exists in its state at all).
@@ -57,25 +67,29 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
         scoped = await user_manager.fetch_all(
             filters={"role": UserRole.TELECALLER, "is_active": True, "outlet_id": outlet_id}
         )
-        if scoped.items:
-            return list(scoped.items)
+        eligible = _restrict(list(scoped.items), only_ids)
+        if eligible:
+            return eligible
 
     # Tier 2: telecallers in the same state (region-scoped fallback).
     if state:
         all_active = await user_manager.fetch_all(
             filters={"role": UserRole.TELECALLER, "is_active": True}
         )
-        in_state = [u for u in all_active.items if _same_state(getattr(u, "state", None), state)]
+        in_state = _restrict(
+            [u for u in all_active.items if _same_state(getattr(u, "state", None), state)],
+            only_ids,
+        )
         if in_state:
             return in_state
-        # Tier 3 only triggers when the whole state is unstaffed.
-        return list(all_active.items)
+        # Tier 3 only triggers when the whole state is unstaffed (of eligible agents).
+        return _restrict(list(all_active.items), only_ids)
 
     # No region info at all: global pool.
     everyone = await user_manager.fetch_all(
         filters={"role": UserRole.TELECALLER, "is_active": True}
     )
-    return list(everyone.items)
+    return _restrict(list(everyone.items), only_ids)
 
 
 async def _active_assignment_counts(engine, telecaller_ids: List[str]) -> dict:
@@ -97,14 +111,61 @@ async def _active_assignment_counts(engine, telecaller_ids: List[str]) -> dict:
 
 
 async def pick_telecaller(engine, outlet_id: Optional[str],
-                          state: Optional[str] = None) -> Optional[UserSchema]:
-    """Pick the least-loaded active telecaller for an outlet/state (None if none exist)."""
-    pool = await _active_telecallers(engine, outlet_id, state)
+                          state: Optional[str] = None,
+                          only_ids: Optional[set] = None) -> Optional[UserSchema]:
+    """Pick the least-loaded active telecaller for an outlet/state (None if none exist).
+
+    `only_ids` constrains the pool to a given set of telecallers — used by inbound
+    routing to pick only among *available* (fresh-heartbeat) agents. Default None
+    keeps the original lead-create behaviour (any active telecaller).
+    """
+    pool = await _active_telecallers(engine, outlet_id, state, only_ids)
     if not pool:
         return None
     counts = await _active_assignment_counts(engine, [u.uid for u in pool])
     # Least active assignments, tie-break deterministically by uid for stable rotation.
     return min(pool, key=lambda u: (counts.get(u.uid, 0), u.uid))
+
+
+async def grant_call_access(engine, lead_id: str, telecaller_id: str) -> None:
+    """Let a telecaller who handled a routed inbound call act on a lead they don't own
+    (disposition, notes, orders, ...) WITHOUT changing ownership. Idempotent.
+
+    ponytail: reuses lead_assignments instead of a new table — is_active=False marks it a
+    non-owning grant, so _active_assignment_counts (filters is_active=True) ignores it and
+    round-robin load is unaffected. Promote to a dedicated table only if call-access ever
+    needs its own lifecycle (expiry/revoke)."""
+    mgr = LeadAssignmentManager(engine)
+    existing = await mgr.fetch_all(filters={
+        "lead_id": lead_id, "telecaller_id": telecaller_id,
+        "reason": AssignmentReason.INBOUND_CALL_ACCESS.value})
+    if existing.items:
+        return
+    await mgr.create(LeadAssignmentSchema(
+        lead_id=lead_id, telecaller_id=telecaller_id,
+        reason=AssignmentReason.INBOUND_CALL_ACCESS.value,
+        assigned_by="system", is_active=False))
+
+
+async def has_call_access(engine, lead_id: str, telecaller_id: str) -> bool:
+    """True if this telecaller was granted call-access on the lead (see grant_call_access).
+    Scoped to the call-access reason so a past *owner* (reassigned away) does NOT regain rights."""
+    mgr = LeadAssignmentManager(engine)
+    rows = await mgr.fetch_all(filters={
+        "lead_id": lead_id, "telecaller_id": telecaller_id,
+        "reason": AssignmentReason.INBOUND_CALL_ACCESS.value})
+    return bool(rows.items)
+
+
+async def call_access_lead_ids(engine, telecaller_id: str) -> List[str]:
+    """Lead ids this telecaller can act on via call-access (not owned). Used to widen their
+    lead list so a routed-call lead is findable (e.g. the post-call disposition lookup).
+    ponytail: returns all of them; fine for realistic per-agent volumes (hundreds)."""
+    mgr = LeadAssignmentManager(engine)
+    rows = await mgr.fetch_all(filters={
+        "telecaller_id": telecaller_id,
+        "reason": AssignmentReason.INBOUND_CALL_ACCESS.value})
+    return [r.lead_id for r in rows.items]
 
 
 async def record_assignment(engine, lead_id: str, telecaller_id: str, *,

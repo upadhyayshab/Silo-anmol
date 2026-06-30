@@ -77,11 +77,20 @@ class NoteRequest(BaseModel):
 
 
 class CallLogRequest(BaseModel):
-    outcome: CallOutcome
+    # Either pick a flat `outcome` (legacy) OR a 2-level disposition (`disposition` +
+    # `sub_disposition`); the sub-disposition maps to the outcome + side effects server-side.
+    outcome: Optional[CallOutcome] = None
+    disposition: Optional[str] = None       # main, e.g. "Connected" / "Not Connected"
+    sub_disposition: Optional[str] = None   # sub, e.g. "Order Booked" — drives outcome + effects
     note: Optional[str] = None
     follow_up_at: Optional[datetime] = None
     # Optional call length (seconds). Stored in the activity's `details` JSON.
     duration_seconds: Optional[int] = None
+    # Softphone calls: the Exotel CallSid. When present, the backend pulls the CDR
+    # (recording URL + real duration) and folds it into THIS disposition entry, so a
+    # softphone call produces one timeline row instead of two.
+    call_sid: Optional[str] = None
+    direction: str = "outbound"
 
 
 class AssignRequest(BaseModel):

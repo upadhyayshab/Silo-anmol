@@ -328,7 +328,11 @@ class UserSchema(BasePassSchema):
 
     email = db.Column(db.String(255), nullable=False, index=True)
     full_name = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.Enum(UserRole), nullable=False, index=True)
+    # DB-backed RBAC: role references roles.name (a system or admin-created role).
+    # varchar, not a PG enum, so custom role names are assignable; existence is
+    # validated at the app layer on assignment (roles are soft-deletable + seeded
+    # at startup, so a hard FK would add ordering rigidity for weak protection).
+    role = db.Column(db.String(64), nullable=False, index=True)
     phone = db.Column(db.String(20))
     outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)
     # Region for CRM lead routing — telecallers are matched to leads in the same state.
@@ -337,6 +341,8 @@ class UserSchema(BasePassSchema):
     agency_id = db.Column(db.String, db.ForeignKey("agencies.uid"), nullable=True, index=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     last_login = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_active_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    assignment_quota = db.Column(db.Integer, nullable=True, default=0)
     
     # Password reset fields
     password_reset_token = db.Column(db.String(255), nullable=True, index=True)
@@ -401,6 +407,41 @@ class UserScopeAssignmentSchema(BaseSchema):
 
 
 class UserScopeAssignmentManager(ERPGenericManager[UserScopeAssignmentSchema]):
+    pass
+
+
+class RoleSchema(BaseSchema):
+    """A role = a named permission bundle + scope shape. DB-backed RBAC store: the
+    25 default (`is_system`) roles are seeded from `utils.permissions.ROLE_DEFINITIONS`
+    on startup and kept in sync with code; admins may add custom roles as plain rows
+    (no deploy). `name` is the stable key a user's `role` references."""
+    __tablename__ = "roles"
+
+    name = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    scope_level = db.Column(db.String(16), nullable=False)       # ScopeLevel value
+    location_type = db.Column(db.String(32), nullable=True)      # OutletType pin, or None
+    is_system = db.Column(db.Boolean, default=False, nullable=False)  # seeded default → protected
+    description = db.Column(db.String(255), nullable=True)
+
+
+class RoleManager(ERPGenericManager[RoleSchema]):
+    pass
+
+
+class RolePermissionSchema(BaseSchema):
+    """One permission granted to a role (the role↔permission link, storing the
+    Permission string directly, e.g. "orders:read"; WILDCARD "*" = super admin).
+    Self-contained vocabulary — not coupled to the API-key scopes table."""
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        db.UniqueConstraint("role_name", "permission", name="uq_role_permission"),
+    )
+
+    role_name = db.Column(db.String(64), db.ForeignKey("roles.name"), nullable=False, index=True)
+    permission = db.Column(db.String(64), nullable=False)
+
+
+class RolePermissionManager(ERPGenericManager[RolePermissionSchema]):
     pass
 
 
@@ -704,8 +745,13 @@ class CustomerOrderSchema(BaseSchema):
     
     # Order management
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    # Native-CRM origin: set when the order is placed from a lead's "Place Order".
+    # Nullable — most orders have no lead. FK enforced only where the CRM `leads`
+    # table exists (see migration 20260625_02_order_lead_link).
+    lead_id = db.Column(db.String, db.ForeignKey("leads.uid"), nullable=True, index=True)
     agency_id = db.Column(db.String, db.ForeignKey("agencies.uid"), nullable=True, index=True)
     assigned_outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True, index=True)
+    source = db.Column(db.String(50), nullable=True, index=True, info={"description": "Lead/Order Source"})
     order_status = db.Column(db.Enum(OrderStatus), default=OrderStatus.PENDING, nullable=False, index=True)
     collection_type = db.Column(db.Enum(CollectionType), nullable=False)
     payment_method = db.Column(db.Enum(PaymentMethod), nullable=False)
@@ -1665,7 +1711,9 @@ __all__ = [
     "AgencySchema", "AgencyManager",
     "UserSchema", "UserManager",
     "UserScopeAssignmentSchema", "UserScopeAssignmentManager",
-    
+    "RoleSchema", "RoleManager",
+    "RolePermissionSchema", "RolePermissionManager",
+
     # Outlet Management
     "OutletSchema", "OutletManager",
     

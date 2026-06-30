@@ -115,12 +115,17 @@ class LeadManager(ERPGenericManager[LeadSchema]):
             return int(result.scalar_one())
 
     async def search_leads(self, *, q: str = None, filters: NESTED_FILTERS = None,
-                           sorts: list = None, limit: int = 25, offset: int = 0):
+                           sorts: list = None, limit: int = 25, offset: int = 0,
+                           scope_owner_id: str = None, scope_uids: list = None):
         """Paginated list with optional free-text OR-search across name/mobile/email/lead_number.
 
-        Returns (items, total). `filters` are ANDed (role scope, stage, etc.);
+        Returns (items, total). `filters` are ANDed (stage, deleted_at, etc.);
         `q` is ORed across the contact columns. Default sort: newest first.
         Sort grammar: "+field" ascending, "-field" descending.
+
+        Row scope: when `scope_owner_id` is given, results are limited to leads that user
+        owns OR (if `scope_uids` is given) any of those lead uids — this is how a telecaller
+        sees leads they were granted call-access to alongside the leads they own.
         """
         async with self.session_factory() as session:
             base = db.select(self.Schema)
@@ -129,6 +134,14 @@ class LeadManager(ERPGenericManager[LeadSchema]):
             if filters:
                 base = await self._filter(base, dict(filters), self.Schema)
                 count_q = await self._filter(count_q, dict(filters), self.Schema)
+
+            if scope_owner_id is not None:
+                conds = [self.Schema.owner_id == scope_owner_id]
+                if scope_uids:
+                    conds.append(self.Schema.uid.in_(scope_uids))
+                scope_cond = db.or_(*conds)
+                base = base.where(scope_cond)
+                count_q = count_q.where(scope_cond)
 
             if q:
                 like = f"%{q}%"
@@ -212,6 +225,31 @@ class LeadAssignmentManager(ERPGenericManager[LeadAssignmentSchema]):
 
 
 # ============================================================================
+# TELECALLER PRESENCE (Feature 3.3 — drives inbound routing 3.2)
+# ============================================================================
+
+class TelecallerStatusSchema(BaseSchema):
+    """Live presence for inbound routing. One row per telecaller, upserted by the
+    frontend heartbeat. A telecaller is "available" for an inbound call when their
+    `status` is 'available' AND `last_seen_at` is fresh — that freshness check is
+    done at read time (presenceService), so there's no background sweep marking
+    people offline; a missed heartbeat simply ages out."""
+    __tablename__ = "telecaller_status"
+
+    telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"),
+                              nullable=False, unique=True, index=True)
+    status = db.Column(db.String(16), nullable=False, default="available",
+                       server_default="available")   # available | on_call | away
+    last_seen_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    telecaller = relationship("UserSchema", foreign_keys=[telecaller_id])
+
+
+class TelecallerStatusManager(ERPGenericManager[TelecallerStatusSchema]):
+    pass
+
+
+# ============================================================================
 # FACEBOOK LEAD ADS — leadgen forms catalog + field mapping (Default Mapping)
 # ============================================================================
 
@@ -274,6 +312,7 @@ __all__ = [
     "LeadSchema", "LeadManager",
     "LeadActivitySchema", "LeadActivityManager",
     "LeadAssignmentSchema", "LeadAssignmentManager",
+    "TelecallerStatusSchema", "TelecallerStatusManager",
     "FbLeadgenFormSchema", "FbLeadgenFormManager",
     "FbFieldMappingSchema", "FbFieldMappingManager",
 ]

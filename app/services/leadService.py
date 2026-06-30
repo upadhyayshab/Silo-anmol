@@ -334,9 +334,12 @@ async def log_order_status_change(engine, order, new_status, by_user_id,
         return
     new_val = new_status.value if hasattr(new_status, "value") else str(new_status)
     old_val = old_status.value if hasattr(old_status, "value") else (old_status or None)
+    body = f"Order {order.order_number} -> {new_val}"
+    if remarks:
+        body += f" — {remarks}"
     await record_activity(
         engine, lead_id, LeadActivityType.ORDER_UPDATE, user_id=by_user_id,
-        body=f"Order {order.order_number} -> {new_val}",
+        body=body,
         details={"order_id": order.uid, "from": old_val, "to": new_val,
                  "remarks": remarks},
     )

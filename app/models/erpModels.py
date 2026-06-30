@@ -24,6 +24,7 @@ class UserCreateRequest(BaseModel):
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
     agency_id: Optional[str] = None
+    assignment_quota: Optional[int] = Field(default=0, description="Max leads per day or active pool for telecallers")
 
     @validator('email')
     def validate_email(cls, v):
@@ -39,6 +40,7 @@ class UserUpdateRequest(BaseModel):
     outlet_id: Optional[str] = None
     is_active: Optional[bool] = None
     agency_id: Optional[str] = None
+    assignment_quota: Optional[int] = None
 
 
 class UserPasswordChangeRequest(BaseModel):
@@ -55,7 +57,9 @@ class UserResponse(BaseModel):
     outlet_id: Optional[str] = None
     agency_id: Optional[str] = None
     is_active: bool
+    assignment_quota: Optional[int] = 0
     last_login: Optional[datetime] = None
+    last_active_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -339,6 +343,16 @@ class OrderItemRequest(BaseModel):
     # unit_price removed - now calculated automatically from product.cost_price - product_manual_discount
 
 
+class OrderPaymentRequest(BaseModel):
+    """Prepaid payment captured at order-creation time. The backend records this transaction
+    in the SAME DB commit as the order, so an order can never persist without the payment that
+    was taken for it. `payment_status` is computed server-side; `order_id` is implicit."""
+    payment_method: PaymentMethod
+    amount_paid: Decimal = Field(..., gt=0)
+    transaction_reference: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class OrderCreateRequest(BaseModel):
     customer_name: str
     customer_phone: str
@@ -359,6 +373,9 @@ class OrderCreateRequest(BaseModel):
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
     prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance")
     priority_level: int = Field(default=10, description="Order priority level (default 10 for normal)")
+    lead_id: Optional[str] = Field(default=None, description="CRM lead this order was placed from (links order to the lead timeline)")
+    source: Optional[str] = Field(default=None, description="Source of the order (e.g. FB Lead Ads, Organic Search, etc.)")
+    payment: Optional[OrderPaymentRequest] = Field(default=None, description="Prepaid payment to record atomically with the order (backend-owned; replaces the old second frontend call)")
     items: List[OrderItemRequest]
 
 
@@ -402,6 +419,7 @@ class OrderFullUpdateRequest(BaseModel):
     manual_discount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Manual discount in rupees for entire order")
     prepaid_amount: Decimal = Field(default=Decimal('0.00'), ge=0, description="Amount already paid in advance") # Added field
     priority_level: int = Field(default=10, description="Order priority level (default 10 for normal)")
+    source: Optional[str] = Field(default=None, description="Source of the order")
     items: List[OrderItemRequest]
 
 
@@ -461,6 +479,7 @@ class OrderResponse(BaseModel):
     telecaller_id: str
     agency_id: Optional[str] = None
     assigned_outlet_id: Optional[str] = None
+    source: Optional[str] = None
     order_status: OrderStatus
     collection_type: CollectionType
     payment_method: PaymentMethod
@@ -473,8 +492,8 @@ class OrderResponse(BaseModel):
     discount_applied: Decimal  # Total discount (product manual discounts)
     prepaid_amount: Decimal  # Amount already paid
     total_amount: Decimal  # Final net amount
-    total_commission: Decimal  # Total commission for the order
-    priority_level: int 
+    total_commission: Optional[Decimal] = None  # Total commission for the order (nulled below finance via field mask)
+    priority_level: int
     delivery_person_id: Optional[str] = None
     delivery_person: Optional[dict] = None
     telecaller: Optional[UserResponse] = None
