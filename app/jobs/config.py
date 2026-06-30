@@ -4,6 +4,7 @@ from apscheduler.triggers.cron import CronTrigger
 from services.smartping_job_service import smartping_job_service
 from services.inventory_audit_service import inventory_audit_service
 from services import facebook_service
+from services.leadService import sweep_unassigned
 
 # Define your interval or cron schedules here.
 
@@ -12,6 +13,13 @@ JOBS_CONFIG = [
         "name": "dispatch_smartping_jobs",
         "func": smartping_job_service.dispatch_due_jobs,
         "trigger": IntervalTrigger(minutes=1)
+    },
+    {
+        # Pick up leads that arrived while everyone was offline (e.g. overnight) and
+        # hand them to online telecallers. distribute_leads enforces online + quota.
+        "name": "assign_unassigned_leads",
+        "func": sweep_unassigned,
+        "trigger": IntervalTrigger(minutes=5)
     },
     {
         # Audit cycle opens Saturday; outlets fill through the following Wednesday.
