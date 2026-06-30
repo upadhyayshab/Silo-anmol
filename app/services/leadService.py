@@ -27,7 +27,7 @@ from utils.constants import UserRole
 from utils.crm_enums import (LeadStage, LeadActivityType, AssignmentReason,
                              DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS)
 from utils import dedup_utils
-from services import assignmentService
+from services import assignmentService, presenceService
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,13 @@ async def create_lead(engine, payload, by_user_id: str,
         owner_id = creator
         reason = AssignmentReason.SELF_CREATED.value
     else:
-        picked = await assignmentService.pick_telecaller(engine, outlet_id, region_state)
+        # Only auto-assign while at least one telecaller is logged in (CRM/softphone
+        # open -> fresh heartbeat). No one present -> picked is None -> the lead is
+        # created unassigned and waits for an admin 'distribute' (no auto-drain).
+        present = await presenceService.present_ids(engine)
+        picked = await assignmentService.pick_telecaller(
+            engine, outlet_id, region_state, only_ids=present
+        )
         owner_id = picked.uid if picked else None
         reason = AssignmentReason.ROUND_ROBIN.value
 

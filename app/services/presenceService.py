@@ -62,3 +62,25 @@ async def available_ids(engine, window_seconds: int = FRESHNESS_SECONDS) -> Set[
             )
         )
         return {tid for (tid,) in rows.all()}
+
+
+# "Logged in and working" for lead-assignment gating: a telecaller mid-call is still on
+# shift, so on_call counts here even though available_ids (inbound routing) excludes it.
+# These are the only statuses the frontend heartbeat ever sends (available | on_call).
+PRESENT_STATUSES = ("available", "on_call")
+
+
+async def present_ids(engine, window_seconds: int = FRESHNESS_SECONDS) -> Set[str]:
+    """Telecaller ids 'logged in' for lead-assignment eligibility: a fresh heartbeat with
+    a working status (available OR on_call). Broader than available_ids — used to gate
+    auto-assignment so new leads aren't dealt to telecallers who aren't on shift."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+    mgr = TelecallerStatusManager(engine)
+    async with mgr.session_factory() as session:
+        rows = await session.execute(
+            db.select(TelecallerStatusSchema.telecaller_id).where(
+                TelecallerStatusSchema.status.in_(PRESENT_STATUSES),
+                TelecallerStatusSchema.last_seen_at > cutoff,
+            )
+        )
+        return {tid for (tid,) in rows.all()}
