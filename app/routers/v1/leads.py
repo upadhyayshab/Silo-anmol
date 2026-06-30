@@ -9,7 +9,7 @@ Ownership on create: a lead is attributed to whoever creates it (telecaller/admi
 System/webhook leads (no human creator) are round-robin assigned. Admins redistribute
 in bulk via POST /leads/distribute; the owner is changed via POST /leads/{id}/assign.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, UploadFile, File, BackgroundTasks
@@ -30,7 +30,7 @@ from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole
 from utils.dependencies import filtering_dependency, sorting_dependency
-from services import leadService, leadImportService, telephonyService, assignmentService
+from services import leadService, leadImportService, telephonyService, assignmentService, crmReportService
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -148,6 +148,52 @@ async def get_today_queue(
     """
     actor = await _crm_actor(ctx)
     return await leadService.today_queue(engine, actor, owner_id=owner_id, limit=limit)
+
+
+# --------------------------------------------------------------------------
+# Prospect Report (superadmin CRM reports) — one flat row per prospect joining
+# the lead + latest call disposition + call count + order rollup. Registered
+# before /{lead_id} so "report" is not swallowed by the lead-detail route.
+# --------------------------------------------------------------------------
+
+def _report_scope_owner(ctx) -> Optional[str]:
+    """Superadmin/global sees all; a scoped caller is limited to leads they own."""
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return None
+    return ctx.user_id
+
+
+async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
+                        source, lead_numbers, limit, offset):
+    nums = [n.strip() for n in lead_numbers.split(",")] if lead_numbers else None
+    nums = [n for n in nums if n] if nums else None
+    return await crmReportService.prospect_report(
+        engine, from_date=from_date, to_date=to_date, region=region,
+        owner_id=owner_id, stage=stage, source=source, lead_numbers=nums,
+        scope_owner_id=_report_scope_owner(ctx), limit=limit, offset=offset,
+    )
+
+
+@router.get("/report")
+async def prospect_report(
+    from_date: Optional[date] = Query(None, description="Lead created on/after (inclusive)"),
+    to_date: Optional[date] = Query(None, description="Lead created on/before (inclusive)"),
+    region: Optional[str] = Query(None, description="Lead Inflow Region (lead.state)"),
+    owner_id: Optional[str] = Query(None),
+    stage: Optional[str] = Query(None),
+    source: Optional[str] = Query(None),
+    lead_numbers: Optional[str] = Query(None, description="Comma-separated prospect ids"),
+    limit: int = Query(50, ge=0, le=200, description="0 = all matched rows (for client-side export)"),
+    offset: int = Query(0, ge=0),
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
+):
+    """Prospect report rows. Paginated for the table; pass limit=0 to fetch the
+    full filtered set (capped) for the client-side Excel export."""
+    rows, total = await _build_report(
+        ctx, from_date=from_date, to_date=to_date, region=region, owner_id=owner_id,
+        stage=stage, source=source, lead_numbers=lead_numbers, limit=limit, offset=offset,
+    )
+    return {"items": rows, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
