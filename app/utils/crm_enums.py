@@ -54,12 +54,34 @@ DISPOSITION_OUTCOME = {
     "Call dropped": CallOutcome.NOT_ANSWERED.value,
     "Call Back": CallOutcome.CALL_BACK_LATER.value,
     "Order Booked": CallOutcome.ANSWERED.value,
-    "Interested Call Back": CallOutcome.CALL_BACK_LATER.value,
+    "Interested": CallOutcome.ANSWERED.value,
     "Not Interested": CallOutcome.ANSWERED.value,
     "Do Not Call": CallOutcome.ANSWERED.value,
+    "Wrong Number": CallOutcome.WRONG_NUMBER.value,
     "Invalid Number": CallOutcome.WRONG_NUMBER.value,
 }
 DNC_SUB_DISPOSITIONS = {"Do Not Call"}
+
+# Sub-disposition -> stage auto-applied after a call is logged. "Order Booked" is intentionally
+# absent: its conversion stage (FTU/RTU) comes from real order placement (handle_post_order), not
+# the disposition alone. A lead in PROTECTED_STAGES is never auto-demoted by a later call.
+DISPOSITION_STAGE = {
+    # Not Connected
+    "Ringing No Response": LeadStage.NOT_REACHABLE,
+    "Busy": LeadStage.NOT_REACHABLE,
+    "Switched off": LeadStage.NOT_REACHABLE,
+    "Not Reachable/Out of Coverage": LeadStage.NOT_REACHABLE,
+    "Call dropped": LeadStage.NOT_REACHABLE,
+    "Invalid Number": LeadStage.NOT_QUALIFIED,
+    # Connected
+    "Call Back": LeadStage.ENGAGED,
+    "Interested": LeadStage.ENGAGED,
+    "Not Interested": LeadStage.NOT_QUALIFIED,
+    "Do Not Call": LeadStage.NOT_QUALIFIED,
+    "Wrong Number": LeadStage.NOT_QUALIFIED,
+}
+# Converted stages we never auto-demote on a later disposition (value strings for easy compare).
+PROTECTED_STAGES = {LeadStage.FTU.value, LeadStage.RTU.value}
 
 
 class AssignmentReason(str, Enum):
