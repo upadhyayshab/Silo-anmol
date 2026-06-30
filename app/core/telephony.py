@@ -1,19 +1,19 @@
 """Telephony port — the vendor-agnostic interface the CRM core depends on.
 
-Radical Minds owns the parts that used to live here:
-  - Outbound click-to-call  -> their embeddable iframe (frontend, dialed in-browser)
-  - Inbound call routing     -> their native campaign/ACD rules (no per-call API to us)
-  - Agent availability       -> their softphone presence
+Two backend jobs, both vendor-agnostic via this port:
+  - `connect_call`  -> place an outbound click-to-call (agent dialed first, then
+                       the lead is bridged). Exotel does this with a server API.
+  - `parse_event`   -> normalize a call webhook (start/end + recording) so the CRM
+                       can log the call onto the lead's timeline.
 
-That leaves the backend a single telephony job: **ingest RM's call webhook and
-normalize it**, so the CRM can log the call + recording onto the lead's timeline.
-The port is therefore one method — `parse_event` — kept as an ABC so a future
-vendor's webhook format swaps in without touching the CRM (the Ports & Adapters
-guarantee the team asked for).
+Inbound owner-based routing (Feature 3.2) and agent presence (3.3) are *not* here
+yet — they need a `telecaller_status` table and round-robin logic that lives in
+the CRM service, not the adapter. Add when that engine is built.
 
-The concrete `RadicalMindsAdapter(TelephonyProvider)` is wired by
-`dependencies/telephony_dep.py`; `services/telephonyService.handle_event` calls
-`parse_event` and writes the timeline.
+The concrete `ExotelAdapter(TelephonyProvider)` is wired by
+`dependencies/telephony_dep.py`; the webhook router calls
+`services/telephonyService.handle_event`, the click-to-call route calls
+`connect_call`. Swap a future vendor in one place without touching the CRM.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -55,9 +55,27 @@ class CallEvent(BaseModel):
     called: Optional[str] = None
     agent_number: Optional[str] = None    # which agent took the call (from the webhook)
     telecaller_id: Optional[str] = None   # set if the vendor sends an agent id we map
+    reference: Optional[str] = None       # our custom_field echoed back (lead uid) to correlate
     duration_seconds: Optional[int] = None
     recording_url: Optional[str] = None
     occurred_at: Optional[datetime] = None
+    provider_raw: Optional[dict] = None
+
+
+class CallRequest(BaseModel):
+    """Click-to-call: dial `agent_number` first, then bridge `lead_number`."""
+    agent_number: str
+    lead_number: str
+    caller_id: Optional[str] = None    # override the adapter's default DID, if needed
+    reference: Optional[str] = None    # echoed back on webhooks to correlate (e.g. lead uid)
+
+
+class CallResponse(BaseModel):
+    """What the dialer returned when we asked it to place the call."""
+    call_id: Optional[str] = None
+    status: Optional[CallStatus] = None
+    ok: bool = True
+    error: Optional[str] = None
     provider_raw: Optional[dict] = None
 
 
@@ -65,8 +83,50 @@ class TelephonyProvider(ABC):
     """Port: the only telephony contract the CRM core knows about."""
 
     @abstractmethod
+    async def connect_call(self, request: CallRequest) -> CallResponse:
+        """Place an outbound click-to-call (agent-first, then bridge the lead)."""
+
+    @abstractmethod
     def parse_event(self, payload: Mapping[str, Any]) -> CallEvent:
         """Normalize a vendor call webhook (start / end / post-call) into a CallEvent."""
+
+    async def resolve_agent_email(self, agent_ref: str) -> Optional[str]:
+        """Map a vendor agent reference (e.g. a SIP id) to the agent's email — the
+        CRM then matches that email to a telecaller. Default: unsupported (returns
+        None); adapters whose webhook agent id isn't a phone override this."""
+        return None
+
+    async def resolve_agent_dial(self, email: str) -> Optional[str]:
+        """Reverse of the above: a telecaller's email -> the leg to dial them on for
+        outbound click-to-call (e.g. their SIP softphone id), so the call rings the
+        agent's app. Default: unsupported (returns None); the caller then falls back."""
+        return None
+
+    async def resolve_agent_sip(self, email: str) -> Optional[str]:
+        """A telecaller's email -> their SIP id (e.g. `sip:naveenh37746fa6`) so an
+        INBOUND call can be routed to that agent's WebRTC softphone instead of their
+        PSTN phone. Default: unsupported (returns None); the caller then falls back to
+        the agent's phone number."""
+        return None
+
+    async def list_caller_ids(self) -> list:
+        """The caller-ID numbers (DIDs) the CRM may dial out from, each as
+        `{"number": ..., "label": ...}`. The adapter scopes these to the CRM's own
+        call flow so unrelated numbers don't show. Default: none."""
+        return []
+
+    async def softphone_auth(self, email: str, name: str = "", agent_number: str = "") -> Optional[dict]:
+        """Credentials for an in-browser softphone SDK: `{accessToken, userId}` for
+        the given agent, or None if the vendor has no embeddable softphone / it isn't
+        configured. The CRM frontend inits the SDK with these. `name`/`agent_number`
+        let the adapter lazily map the agent on first use."""
+        return None
+
+    async def fetch_call_details(self, call_sid: str) -> Optional[dict]:
+        """Pull a finished call's record by its id — `{status: CallStatus,
+        duration_seconds, recording_url}` — for cases where no webhook fires (e.g. the
+        in-browser softphone, whose SDK reports no outcome). None if unsupported/unavailable."""
+        return None
 
 
 class MockTelephonyProvider(TelephonyProvider):
@@ -76,6 +136,9 @@ class MockTelephonyProvider(TelephonyProvider):
 
     ponytail: 'null adapter' to unblock dev, not a vendor.
     """
+
+    async def connect_call(self, request: CallRequest) -> CallResponse:
+        return CallResponse(call_id="mock-call", status=CallStatus.RINGING)
 
     def parse_event(self, payload: Mapping[str, Any]) -> CallEvent:
         return CallEvent(
@@ -95,7 +158,7 @@ class MockTelephonyProvider(TelephonyProvider):
 
 __all__ = [
     "CallDirection", "CallStatus", "CallEventKind",
-    "CallEvent",
+    "CallEvent", "CallRequest", "CallResponse",
     "TelephonyProvider", "MockTelephonyProvider",
 ]
 
