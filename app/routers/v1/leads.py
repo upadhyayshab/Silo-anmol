@@ -127,6 +127,13 @@ async def list_leads(
         )
         for lead in items
     ]
+    # Enrich each row with its latest call disposition / sub-disposition (one batched query).
+    dispositions = await leadService.latest_dispositions(engine, [lead.uid for lead in items])
+    for resp in responses:
+        d = dispositions.get(resp.uid)
+        if d:
+            resp.disposition = d["disposition"]
+            resp.sub_disposition = d["sub_disposition"]
     return LeadListResponse(items=responses, count=len(responses), total=total, limit=limit, offset=offset)
 
 

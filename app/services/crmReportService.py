@@ -18,7 +18,7 @@ import sqlalchemy as db
 
 from managers import (
     LeadManager, LeadSchema, LeadActivitySchema,
-    CustomerOrderSchema, OrderItemSchema, UserSchema,
+    CustomerOrderSchema, OrderItemSchema, UserSchema, OutletSchema,
 )
 from utils.crm_enums import LeadActivityType, CallOutcome, LeadStage
 from utils.crm_constants import LeadSource
@@ -134,14 +134,16 @@ async def prospect_report(
         lead_ids = [l.uid for l in leads]
         owner_ids = {l.owner_id for l in leads if l.owner_id}
 
-        # --- owner names ---
+        # --- owner names + contact (email/phone shown per-row = the telecaller's) ---
         owners: Dict[str, str] = {}
+        owner_contact: Dict[str, Dict[str, str]] = {}
         if owner_ids:
-            for uid, name, email in (await session.execute(
-                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email)
+            for uid, name, email, phone in (await session.execute(
+                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email, UserSchema.phone)
                   .where(UserSchema.uid.in_(owner_ids))
             )).all():
                 owners[uid] = name or email or uid
+                owner_contact[uid] = {"email": email or "", "phone": phone or ""}
 
         # --- call activities: count + latest disposition per lead ---
         call_count: Dict[str, int] = {}
@@ -167,6 +169,7 @@ async def prospect_report(
         for o in orders:
             agg = order_agg.setdefault(o.lead_id, {
                 "count": 0, "gross": 0.0, "net": 0.0, "status": None, "payment": None,
+                "outlet_id": None, "delivery_id": None, "remarks": None,
             })
             agg["count"] += 1
             agg["gross"] += _num(o.gross_amount)
@@ -174,6 +177,27 @@ async def prospect_report(
             if agg["status"] is None:   # newest-first -> first seen is latest
                 agg["status"] = o.order_status.value if o.order_status else None
                 agg["payment"] = o.payment_method.value if o.payment_method else None
+                agg["outlet_id"] = o.assigned_outlet_id
+                agg["delivery_id"] = o.delivery_person_id
+                agg["remarks"] = o.status_remarks or None
+
+        # --- latest order's outlet + delivery-person names (batched) ---
+        outlet_ids = {a["outlet_id"] for a in order_agg.values() if a.get("outlet_id")}
+        delivery_ids = {a["delivery_id"] for a in order_agg.values() if a.get("delivery_id")}
+        outlet_names: Dict[str, str] = {}
+        if outlet_ids:
+            for uid, name in (await session.execute(
+                db.select(OutletSchema.uid, OutletSchema.outlet_name)
+                  .where(OutletSchema.uid.in_(outlet_ids))
+            )).all():
+                outlet_names[uid] = name or ""
+        delivery_names: Dict[str, str] = {}
+        if delivery_ids:
+            for uid, name in (await session.execute(
+                db.select(UserSchema.uid, UserSchema.full_name)
+                  .where(UserSchema.uid.in_(delivery_ids))
+            )).all():
+                delivery_names[uid] = name or ""
 
         # --- quantity: sum(order_items.quantity) per lead via one grouped query ---
         qty: Dict[str, int] = {}
@@ -190,17 +214,21 @@ async def prospect_report(
             call = latest_call.get(l.uid)
             details = (call.details or {}) if call else {}
             agg = order_agg.get(l.uid, {})
+            contact = owner_contact.get(l.owner_id, {})
             rows.append({
                 "uid": l.uid,   # for the table's "open lead" link; not in the Excel export
                 "prospect_id": l.lead_number,
                 "owner": owners.get(l.owner_id, ""),
-                "email": l.email or "",
-                "phone": l.mobile or "",
+                "email": contact.get("email", ""),   # telecaller (lead owner) contact, not the lead's
+                "phone": contact.get("phone", ""),
                 "lead_stage": l.stage.value if l.stage else "",
                 "lead_source": l.source.value if l.source else "",
                 "disposition": _disposition_label(details, call.outcome if call else None),
                 "sub_disposition": details.get("sub_disposition") or "",
                 "call_attempt": _call_attempt_label(call.outcome if call else None),
+                "outlet": outlet_names.get(agg.get("outlet_id"), "") if agg.get("outlet_id") else "",
+                "delivery_guy": delivery_names.get(agg.get("delivery_id"), "") if agg.get("delivery_id") else "",
+                "order_remarks": agg.get("remarks") or "",
                 "orders": agg.get("count", 0),
                 "quantity": qty.get(l.uid, 0),
                 "gross": round(agg.get("gross", 0.0), 2),

@@ -157,6 +157,9 @@ class LeadResponse(BaseModel):
     lead_score: Optional[int] = None
     follow_up_at: Optional[datetime] = None
     last_activity_at: Optional[datetime] = None
+    # Latest call disposition (from the most recent CALL_LOG); enriched at list-build time.
+    disposition: Optional[str] = None
+    sub_disposition: Optional[str] = None
     order_count: int = 0
     order_value: Decimal = Decimal("0")
     do_not_call: bool = False

@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import sqlalchemy as db
 from sqlalchemy.exc import IntegrityError
 
+from config import get_engine, get_settings
 from managers import (
     LeadManager, LeadSchema,
     LeadActivityManager, LeadActivitySchema,
@@ -25,7 +26,8 @@ from models import (
 )
 from utils.constants import UserRole
 from utils.crm_enums import (LeadStage, LeadActivityType, AssignmentReason,
-                             DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS)
+                             DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS,
+                             DISPOSITION_STAGE, PROTECTED_STAGES)
 from utils import dedup_utils
 from services import assignmentService, presenceService
 
@@ -405,6 +407,15 @@ async def log_call(engine, lead: LeadSchema, outcome: Optional[str], note: Optio
         body = f"{label} — {note}" if note else label
     if updates:
         await LeadManager(engine).update(lead.uid, updates)
+    # Auto-advance stage off the disposition (e.g. Not Interested -> Not Qualified, Interested ->
+    # Engaged). Converted leads (FTU/RTU) are protected from auto-demotion; "Order Booked" has no
+    # entry, so its stage stays driven by real order placement.
+    if sub_disposition:
+        target = DISPOSITION_STAGE.get(sub_disposition)
+        current = lead.stage.value if hasattr(lead.stage, "value") else lead.stage
+        if target and current not in PROTECTED_STAGES and current != target.value:
+            await change_stage(engine, lead, target, by_user_id=by_user_id,
+                               note=f"Auto: {sub_disposition} → {target.value}")
     details: Dict[str, Any] = {}
     if duration_seconds is not None:
         details["duration_seconds"] = duration_seconds
@@ -539,6 +550,23 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     return {"assigned": assigned, "skipped": skipped, "by_telecaller": by_tc}
 
 
+async def sweep_unassigned():
+    """Scheduled sweep: hand any leads sitting unassigned (e.g. created overnight while
+    everyone was offline) to online telecallers. Reuses distribute_leads, so the
+    <30m-online filter, assignment_quota cap and least-loaded balancing all apply —
+    leads with no online/under-quota agent simply stay unassigned for the next sweep.
+    ponytail: distribute_leads runs O(agents) count-queries; fine at this scale."""
+    engine = get_engine(get_settings().name)
+    unassigned = await LeadManager(engine).fetch_all(filters={"owner_id": None})
+    lead_ids = [l.uid for l in unassigned.items if l.deleted_at is None]
+    if not lead_ids:
+        return {"assigned": 0, "skipped": 0}
+    result = await distribute_leads(engine, lead_ids, None, by_user_id="system")
+    logger.info("sweep_unassigned: distributed %s/%s unassigned leads",
+                result.get("assigned"), len(lead_ids))
+    return result
+
+
 # --------------------------------------------------------------------------
 # Today's callback queue (checkpoint 2.5 — backend support)
 # --------------------------------------------------------------------------
@@ -665,6 +693,32 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
         return resp
 
     return LeadResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
+
+
+async def latest_dispositions(engine, lead_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:
+    """Map lead_id -> {disposition, sub_disposition} from each lead's most recent CALL_LOG.
+    One batched query (avoids N+1 across a list page). The disposition label mirrors the
+    superadmin report so both surfaces agree."""
+    if not lead_ids:
+        return {}
+    from services import crmReportService
+    out: Dict[str, Dict[str, Optional[str]]] = {}
+    async with LeadActivityManager(engine).session_factory() as session:
+        rows = (await session.execute(
+            db.select(LeadActivitySchema)
+              .where(LeadActivitySchema.lead_id.in_(lead_ids),
+                     LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG)
+              .order_by(LeadActivitySchema.created_at.desc())
+        )).scalars().all()
+    for a in rows:
+        if a.lead_id in out:
+            continue  # newest-first -> first seen is the latest call
+        details = a.details or {}
+        out[a.lead_id] = {
+            "disposition": crmReportService._disposition_label(details, a.outcome) or None,
+            "sub_disposition": details.get("sub_disposition") or None,
+        }
+    return out
 
 
 async def fetch_activities(engine, lead_id: str, *, limit: int = 100,
