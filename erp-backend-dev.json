@@ -114,6 +114,46 @@
                 {
                     "name": "FB_GRAPH_VERSION",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/FB_GRAPH_VERSION"
+                },
+                {
+                    "name": "DAILER_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_API_KEY"
+                },
+                {
+                    "name": "DAILER_TOKEN",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_TOKEN"
+                },
+                {
+                    "name": "DAILER_SID",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_SID"
+                },
+                {
+                    "name": "DAILER_SUBDOMAIN",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_SUBDOMAIN"
+                },
+                {
+                    "name": "DAILER_CCM_SUBDOMAIN",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_CCM_SUBDOMAIN"
+                },
+                {
+                    "name": "DAILER_CRM_FLOW_ID",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_CRM_FLOW_ID"
+                },
+                {
+                    "name": "DAILER_APP_ID",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_APP_ID"
+                },
+                {
+                    "name": "DAILER_APP_SECRET",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_APP_SECRET"
+                },
+                {
+                    "name": "DAILER_APP_ENTITY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_APP_ENTITY"
+                },
+                {
+                    "name": "DAILER_STATUS_CALLBACK",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-erp-backend-dev/DAILER_STATUS_CALLBACK"
                 }
             ],
             "logConfiguration": {
