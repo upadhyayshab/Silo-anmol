@@ -20,8 +20,8 @@ from managers import (
     FbFieldMappingManager, FbFieldMappingSchema, FbLeadgenFormManager,
 )
 from services import facebook_leads, facebook_service, facebook_mapping
-from utils.auth import require_roles
-from utils.constants import UserRole
+from utils.auth import require_permission, AuthContext
+from utils.permissions import Permission
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +77,6 @@ async def receive(request: Request, background_tasks: BackgroundTasks):
 
 pages_router = APIRouter(prefix="/facebook/pages", tags=["CRM - Facebook Pages"])
 
-ADMIN = (UserRole.SUPER_ADMIN, UserRole.ADMIN)
-
 
 class PagePatch(BaseModel):
     routing_state: str | None = None
@@ -86,7 +84,7 @@ class PagePatch(BaseModel):
 
 
 @pages_router.post("/sync")
-async def sync(_: str = Depends(require_roles(*ADMIN))):
+async def sync(_: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Discover all business pages and subscribe each to the leadgen webhook.
 
     Does NOT backfill — new pages come back in `new`; pull each one's history
@@ -96,13 +94,13 @@ async def sync(_: str = Depends(require_roles(*ADMIN))):
 
 
 @pages_router.get("")
-async def list_pages(_: str = Depends(require_roles(*ADMIN))):
+async def list_pages(_: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     rows = await FacebookPageManager(engine).fetch_all()
     return [r.model_dump() for r in rows.items]
 
 
 @pages_router.patch("/{page_id}")
-async def update_page(page_id: str, patch: PagePatch, _: str = Depends(require_roles(*ADMIN))):
+async def update_page(page_id: str, patch: PagePatch, _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     rows = await FacebookPageManager(engine).fetch_all(filters={"page_id": page_id})
     if not rows.items:
         raise HTTPException(status_code=404, detail="Page not found")
@@ -112,7 +110,7 @@ async def update_page(page_id: str, patch: PagePatch, _: str = Depends(require_r
 
 @pages_router.post("/{page_id}/backfill")
 async def backfill(page_id: str, background_tasks: BackgroundTasks,
-                   _: str = Depends(require_roles(*ADMIN))):
+                   _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     background_tasks.add_task(facebook_service.backfill_page, engine, page_id)
     return {"status": "backfill started", "page_id": page_id}
 
@@ -180,33 +178,33 @@ async def _default_payload() -> dict:
 
 
 @mappings_router.get("/default")
-async def get_default_mapping(_: str = Depends(require_roles(*ADMIN))):
+async def get_default_mapping(_: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """The global Default Mapping (seeded on first read)."""
     return await _default_payload()
 
 
 @mappings_router.put("/default")
-async def put_default_mapping(body: MappingPut, _: str = Depends(require_roles(*ADMIN))):
+async def put_default_mapping(body: MappingPut, _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Upsert global default mapping rows (by field_kind + meta_field)."""
     await _upsert_mapping("default", None, body.items)
     return await _default_payload()
 
 
 @forms_router.get("")
-async def list_forms(page_id: Optional[str] = Query(None), _: str = Depends(require_roles(*ADMIN))):
+async def list_forms(page_id: Optional[str] = Query(None), _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     f = {"page_id": page_id} if page_id else {}
     rows = await FbLeadgenFormManager(engine).fetch_all(filters=f, limit=500)
     return [r.model_dump() for r in rows.items]
 
 
 @forms_router.post("/sync")
-async def sync_forms(page_id: str = Query(...), _: str = Depends(require_roles(*ADMIN))):
+async def sync_forms(page_id: str = Query(...), _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Pull a page's leadgen forms + questions and upsert them."""
     return await facebook_service.sync_forms(engine, page_id)
 
 
 @forms_router.patch("/{form_id}")
-async def patch_form(form_id: str, patch: FormPatch, _: str = Depends(require_roles(*ADMIN))):
+async def patch_form(form_id: str, patch: FormPatch, _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Activate/deactivate a form (ingestion gate) or set notes."""
     mgr = FbLeadgenFormManager(engine)
     rows = await mgr.fetch_all(filters={"form_id": form_id})
@@ -249,20 +247,20 @@ async def _form_mapping_payload(form_id: str) -> dict:
 
 
 @forms_router.get("/{form_id}/mapping")
-async def get_form_mapping(form_id: str, _: str = Depends(require_roles(*ADMIN))):
+async def get_form_mapping(form_id: str, _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Effective mapping for a form (default overlaid by per-form overrides) + questions."""
     return await _form_mapping_payload(form_id)
 
 
 @forms_router.put("/{form_id}/mapping")
-async def put_form_mapping(form_id: str, body: MappingPut, _: str = Depends(require_roles(*ADMIN))):
+async def put_form_mapping(form_id: str, body: MappingPut, _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Upsert per-form mapping overrides (questions + marketing)."""
     await _upsert_mapping("form", form_id, body.items)
     return await _form_mapping_payload(form_id)
 
 
 @forms_router.post("/{form_id}/test")
-async def test_lead(form_id: str, body: dict = Body(...), _: str = Depends(require_roles(*ADMIN))):
+async def test_lead(form_id: str, body: dict = Body(...), _: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Test Lead: run a sample leadgen object through the mapping WITHOUT saving.
 
     Body is a leadgen-like object, e.g.
@@ -281,7 +279,7 @@ translations_router = APIRouter(prefix="/facebook/translations", tags=["CRM - Fa
 
 
 @translations_router.get("/pending")
-async def pending_translations(_: str = Depends(require_roles(*ADMIN))):
+async def pending_translations(_: AuthContext = Depends(require_permission(Permission.FACEBOOK_ADMIN))):
     """Questions across active forms with no English label yet.
 
     Ops translate each by PUTting a per-form mapping with a `label`
