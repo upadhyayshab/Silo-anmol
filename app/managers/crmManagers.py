@@ -46,6 +46,7 @@ class LeadSchema(BaseSchema):
     address_line_2 = db.Column(db.Text, nullable=True)
     city = db.Column(db.String(100), nullable=True)
     district = db.Column(db.String(100), nullable=True, index=True)
+    taluk = db.Column(db.String(100), nullable=True, index=True)
     state = db.Column(db.String(100), nullable=True)
     pincode = db.Column(db.String(10), nullable=True, index=True)
     country = db.Column(db.String(100), nullable=True, server_default="India")

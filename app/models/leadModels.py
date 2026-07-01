@@ -26,6 +26,7 @@ class LeadCreateRequest(BaseModel):
     address_line_2: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
+    taluk: Optional[str] = None
     state: Optional[str] = None
     pincode: Optional[str] = None
     country: Optional[str] = None
@@ -53,6 +54,7 @@ class LeadUpdateRequest(BaseModel):
     address_line_2: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
+    taluk: Optional[str] = None
     state: Optional[str] = None
     pincode: Optional[str] = None
     country: Optional[str] = None
@@ -145,6 +147,7 @@ class LeadResponse(BaseModel):
     address_line_2: Optional[str] = None
     city: Optional[str] = None
     district: Optional[str] = None
+    taluk: Optional[str] = None
     state: Optional[str] = None
     pincode: Optional[str] = None
     country: Optional[str] = None

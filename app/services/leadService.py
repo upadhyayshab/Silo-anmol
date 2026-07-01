@@ -42,11 +42,22 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # have dedicated endpoints that log richer timeline entries).
 EDITABLE_FIELDS = {
     "first_name", "last_name", "mobile", "phone", "email",
-    "address_line", "address_line_2", "city", "district", "state", "pincode", "country",
+    "address_line", "address_line_2", "city", "district", "taluk", "state", "pincode", "country",
     "source", "lead_score", "follow_up_at",
     "do_not_call", "do_not_sms", "do_not_email",
     "custom_fields", "campaign_data", "notes",
 }
+
+GEO_FIELDS = ("state", "district", "taluk")
+
+
+def canon_geo(value):
+    """Lowercase-canonical a geography string so leads line up with the
+    outlet_mappings / cluster_districts convention. Blank -> None. Pure
+    (no I/O) so it is unit-testable; display layers title-case it back."""
+    if not isinstance(value, str):
+        return value
+    return value.strip().lower() or None
 
 
 def _now() -> datetime:
@@ -146,6 +157,11 @@ async def create_lead(engine, payload, by_user_id: str,
     """
     lead_manager = LeadManager(engine)
 
+    # Canonicalize geography to lowercase before any branch (matches
+    # outlet_mappings / cluster_districts). Display layers title-case it back.
+    for _f in GEO_FIELDS:
+        setattr(payload, _f, canon_geo(getattr(payload, _f, None)))
+
     creator = _real_user(by_user_id)  # None for system/webhook/microservice
 
     # --- Deduplication: merge into an existing non-deleted lead if one matches.
@@ -200,6 +216,7 @@ async def create_lead(engine, payload, by_user_id: str,
         address_line_2=payload.address_line_2,
         city=payload.city,
         district=payload.district,
+        taluk=payload.taluk,
         state=payload.state,
         pincode=payload.pincode,
         country=payload.country,
@@ -258,6 +275,12 @@ async def update_lead(engine, lead: LeadSchema, changes: Dict[str, Any],
                       by_user_id: str) -> LeadSchema:
     """Apply an editable-field patch and log a single FIELD_UPDATE diff (1.5)."""
     lead_manager = LeadManager(engine)
+
+    # Canonicalize geography before diffing so an unchanged Title-Cased value from
+    # the form matches the stored lowercase and produces no spurious update.
+    for _f in GEO_FIELDS:
+        if _f in changes:
+            changes[_f] = canon_geo(changes[_f])
 
     applied: Dict[str, Any] = {}
     diff: Dict[str, Any] = {}
