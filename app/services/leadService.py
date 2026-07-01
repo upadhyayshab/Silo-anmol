@@ -24,7 +24,7 @@ from models import (
     LeadResponse, LeadDetailResponse, LeadActivityResponse,
     TodayQueueBucket, TodayQueueResponse,
 )
-from utils.constants import UserRole
+from utils.constants import UserRole, TELECALLER_ROLES
 from utils.crm_enums import (LeadStage, LeadActivityType, AssignmentReason,
                              DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS,
                              DISPOSITION_STAGE, PROTECTED_STAGES)
@@ -512,7 +512,7 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         return sum(1 for l in open_leads.items if (l.stage.value if hasattr(l.stage, "value") else l.stage) not in terminal)
 
     async def add_to_pool(u):
-        if u.role != UserRole.TELECALLER or not u.is_active:
+        if u.role not in TELECALLER_ROLES or not u.is_active:
             return
         # Filter offline telecallers (inactive > 30m)
         if not u.last_active_at or (now - u.last_active_at.replace(tzinfo=timezone.utc)).total_seconds() > 1800:
@@ -533,7 +533,7 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
                 continue
     else:
         active = await user_manager.fetch_all(
-            filters={"role": UserRole.TELECALLER, "is_active": True}
+            filters={"role": TELECALLER_ROLES, "is_active": True}
         )
         for u in active.items:
             await add_to_pool(u)

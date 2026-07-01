@@ -28,7 +28,7 @@ from core.telephony import TelephonyProvider
 from dependencies.telephony_dep import get_telephony_provider
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission, ScopeLevel
-from utils.constants import UserRole
+from utils.constants import UserRole, TELECALLER_ROLES
 from utils.dependencies import filtering_dependency, sorting_dependency
 from services import leadService, leadImportService, telephonyService, assignmentService, crmReportService
 
@@ -388,7 +388,7 @@ async def assign_lead(lead_id: str, payload: AssignRequest,
         telecaller = await user_manager.fetch(payload.telecaller_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Telecaller not found")
-    if telecaller.role != UserRole.TELECALLER or not telecaller.is_active:
+    if telecaller.role not in TELECALLER_ROLES or not telecaller.is_active:
         raise HTTPException(status_code=400, detail="Target user is not an active telecaller")
     await leadService.reassign(engine, lead, payload.telecaller_id, by_user_id=ctx.user_id)
     fresh = await lead_manager.fetch(lead_id)

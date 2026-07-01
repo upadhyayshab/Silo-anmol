@@ -18,7 +18,7 @@ from managers import (
     UserManager, UserSchema,
     LeadAssignmentManager, LeadAssignmentSchema,
 )
-from utils.constants import UserRole
+from utils.constants import UserRole, TELECALLER_ROLES
 from utils.crm_enums import AssignmentReason
 from utils.outlet_assignment import auto_assign_outlet
 
@@ -65,7 +65,7 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
     # Tier 1: telecallers tied to the resolved outlet.
     if outlet_id:
         scoped = await user_manager.fetch_all(
-            filters={"role": UserRole.TELECALLER, "is_active": True, "outlet_id": outlet_id}
+            filters={"role": TELECALLER_ROLES, "is_active": True, "outlet_id": outlet_id}
         )
         eligible = _restrict(list(scoped.items), only_ids)
         if eligible:
@@ -74,7 +74,7 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
     # Tier 2: telecallers in the same state (region-scoped fallback).
     if state:
         all_active = await user_manager.fetch_all(
-            filters={"role": UserRole.TELECALLER, "is_active": True}
+            filters={"role": TELECALLER_ROLES, "is_active": True}
         )
         in_state = _restrict(
             [u for u in all_active.items if _same_state(getattr(u, "state", None), state)],
@@ -87,7 +87,7 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
 
     # No region info at all: global pool.
     everyone = await user_manager.fetch_all(
-        filters={"role": UserRole.TELECALLER, "is_active": True}
+        filters={"role": TELECALLER_ROLES, "is_active": True}
     )
     return _restrict(list(everyone.items), only_ids)
 

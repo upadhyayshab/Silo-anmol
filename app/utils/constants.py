@@ -35,6 +35,13 @@ class UserRole(str, Enum):
     AGENCY_ADMIN = "AGENCY_ADMIN"
 
 
+# Roles that work CRM leads as telecallers (auto-assignment, distribute, inbound).
+# In-house TELECALLERs and agency AGENCY_TELECALLERs are pooled identically for lead
+# routing; they keep distinct RBAC/agency-management rules elsewhere. A list (not a
+# tuple) so it drops straight into manager `.in_()` filters.
+TELECALLER_ROLES = [UserRole.TELECALLER, UserRole.AGENCY_TELECALLER]
+
+
 class OrderStatus(str, Enum):
     PENDING = "pending"
     DELIVERY_ALLOTTED = "delivery_allotted"
