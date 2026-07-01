@@ -15,7 +15,7 @@ from models import (
     DeliveryHandoverResponse, DeliveryGuyCashBalanceResponse,
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
-from utils.auth import require_permission, apply_scope, AuthContext
+from utils.auth import require_permission, get_auth_context, apply_scope, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import OutletCollectionStatus, PaymentStatus, PaymentMethod, OrderStatus
 
@@ -32,16 +32,34 @@ outlet_manager = OutletManager(engine)
 router = APIRouter(prefix="/delivery-handovers", tags=["Delivery Guy Cash Handovers"])
 
 
+def _own_confinement(ctx: AuthContext) -> Optional[str]:
+    """Reads gate: broad `handovers:read` sees all in scope; `handovers:read:own`
+    (delivery guy) is confined to their own records. Returns the delivery_guy_id a
+    caller is locked to, or None for broad read. 403 if neither permission is held."""
+    if ctx.has(Permission.HANDOVERS_READ):
+        return None
+    if ctx.has(Permission.HANDOVERS_READ_OWN):
+        return ctx.user_id
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Missing permission: {Permission.HANDOVERS_READ.value}",
+    )
+
+
 @router.get("/delivery-guys/{delivery_guy_id}/cash-balance", response_model=DeliveryGuyCashBalanceResponse)
 async def get_cash_balance(
     delivery_guy_id: str,
-    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_READ))
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """
     Calculate the current cash balance for a delivery guy.
     Balance = (Total Collected from CASH orders) - (Total CONFIRMED handovers)
     """
     try:
+        # Own-scoped callers (delivery guy) may only ever see their own balance.
+        own = _own_confinement(ctx)
+        if own is not None:
+            delivery_guy_id = own
         # Scope fence: a non-GLOBAL caller (outlet mgr) may only inspect a delivery
         # guy whose outlet they cover. GLOBAL/microservice -> unrestricted.
         if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
@@ -157,12 +175,17 @@ async def list_handovers(
     date_to: Optional[date] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_READ))
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """
     List handovers with filters using direct SQL query
     """
     try:
+        # Own-scoped callers (delivery guy) only ever see their own handovers.
+        own = _own_confinement(ctx)
+        if own is not None:
+            delivery_guy_id = own
+
         # Row scope: outlet mgr -> own outlet, cluster/state -> their outlets, global -> all.
         # apply_scope overrides any user-supplied outlet_id for scoped callers.
         scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")

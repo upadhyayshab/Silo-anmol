@@ -63,6 +63,7 @@ class Permission(str, Enum):
     DELIVERY_WRITE = "delivery:write"
     HANDOVERS_READ = "handovers:read"
     HANDOVERS_WRITE = "handovers:write"
+    HANDOVERS_READ_OWN = "handovers:read:own"  # delivery guy: OWN cash balance + handover history only
     NOTIFICATIONS_WRITE = "notifications:write"
     # Marketing / CRM
     CAMPAIGNS_READ = "campaigns:read"
@@ -133,6 +134,8 @@ ROLE_DEFINITIONS = {
     # ----- L1: ground (read + own tasks) -----
     UserRole.DELIVERY_GUY: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
         P.ORDERS_READ, P.TRANSFERS_READ, P.PAYOUTS_READ_OWN,
+        # Delivery-captain app: view OWN cash balance + handover history (self-scoped, not the outlet's).
+        P.HANDOVERS_READ_OWN,
     }),
     UserRole.VIEWER: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
         P.ORDERS_READ, P.INVENTORY_READ, P.PRODUCTS_READ,

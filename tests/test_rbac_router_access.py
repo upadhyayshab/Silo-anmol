@@ -289,6 +289,14 @@ def test_handovers_write_holders():
         assert has_permission(role, "handovers:write"), f"{role} should hold handovers:write"
 
 
+def test_handovers_read_own_is_delivery_guy_only():
+    # Delivery-captain app: DELIVERY_GUY reads its OWN cash balance + handovers via the
+    # self-scoped perm, NOT the broad outlet-wide handovers:read.
+    assert has_permission("DELIVERY_GUY", "handovers:read:own")
+    assert not has_permission("DELIVERY_GUY", "handovers:read"), \
+        "DELIVERY_GUY must not hold broad handovers:read (would leak colleagues' cash)"
+
+
 def test_notifications_write_holders():
     for role in NOTIFICATIONS_WRITE_HOLDERS:
         assert has_permission(role, "notifications:write"), f"{role} should hold notifications:write"
