@@ -77,7 +77,7 @@ def test_validate_new_role_name_rejects_bad_names():
     # "A" (single char) is rejected too: ROLE_NAME_RE requires a leading letter
     # PLUS 1-63 more chars, i.e. length 2-64.
     for name in ("lowercase", "1BAD", "has space", "", "_LEADING_UNDERSCORE",
-                 "A", "a" * 65):
+                 "A", "a" * 65, "SUPER_ADMIN\n", "AB\n"):
         try:
             validate_new_role_name(name)
             assert False, f"expected ValueError for {name!r}"

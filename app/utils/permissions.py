@@ -402,8 +402,10 @@ def validate_scope_level(scope: str) -> None:
 
 
 def validate_new_role_name(name: str) -> None:
-    """New role name must match ROLE_NAME_RE (uppercase slug)."""
-    if not ROLE_NAME_RE.match(name or ""):
+    """New role name must match ROLE_NAME_RE (uppercase slug). Uses `re.fullmatch`
+    (not `.match`) so a trailing newline (e.g. "AB\n") — which `$` alone would
+    accept — is rejected too."""
+    if not re.fullmatch(ROLE_NAME_RE, name or ""):
         raise ValueError(
             f"invalid role name: {name!r} (must match ^[A-Z][A-Z0-9_]{{1,63}}$)"
         )

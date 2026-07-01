@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from config import get_settings, get_engine
 from managers import (
-    RoleManager, RoleSchema, RolePermissionManager, RolePermissionSchema,
+    RoleManager, RoleSchema, RolePermissionSchema,
     ActivityLogManager, ActivityLogSchema,
 )
 from models import RoleCreateRequest, RolePermsUpdateRequest, RoleItemResponse, RolesCatalogResponse
@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 engine = get_engine(settings.name)
 role_manager = RoleManager(engine)
-role_permission_manager = RolePermissionManager(engine)
 activity_manager = ActivityLogManager(engine)
 
 router = APIRouter(prefix="/roles", tags=["Roles"])
@@ -82,7 +81,8 @@ async def create_role(
 
     async with role_manager.session_factory() as session:
         existing = (await session.execute(db.select(RoleSchema).where(
-            RoleSchema.name == payload.name))).scalars().first()
+            RoleSchema.name == payload.name,
+            RoleSchema.deleted_at.is_(None)))).scalars().first()
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                                 detail=f"role already exists: {payload.name}")
@@ -98,12 +98,15 @@ async def create_role(
 
     await roleStore.refresh_role_cache(engine)
 
-    await activity_manager.create(ActivityLogSchema(
-        user_id=ctx.user_id, action="role.create", entity_type="role",
-        entity_id=payload.name,
-        details={"after": sorted(payload.perms), "scope_level": payload.scope_level},
-        ip_address=_client_ip(request),
-    ))
+    try:
+        await activity_manager.create(ActivityLogSchema(
+            user_id=ctx.user_id, action="role.create", entity_type="role",
+            entity_id=payload.name,
+            details={"after": sorted(payload.perms), "scope_level": payload.scope_level},
+            ip_address=_client_ip(request),
+        ))
+    except Exception:
+        logger.warning("role.create audit log write failed for role %s", payload.name, exc_info=True)
 
     return RoleItemResponse(
         name=payload.name, scope_level=payload.scope_level,
@@ -156,11 +159,14 @@ async def update_role_perms(
 
     await roleStore.refresh_role_cache(engine)
 
-    await activity_manager.create(ActivityLogSchema(
-        user_id=ctx.user_id, action="role.update", entity_type="role", entity_id=name,
-        details={"before": sorted(current), "after": sorted(desired)},
-        ip_address=_client_ip(request),
-    ))
+    try:
+        await activity_manager.create(ActivityLogSchema(
+            user_id=ctx.user_id, action="role.update", entity_type="role", entity_id=name,
+            details={"before": sorted(current), "after": sorted(desired)},
+            ip_address=_client_ip(request),
+        ))
+    except Exception:
+        logger.warning("role.update audit log write failed for role %s", name, exc_info=True)
 
     return RoleItemResponse(
         name=name, scope_level=scope_level, location_type=location_type,
