@@ -98,9 +98,31 @@ class ClusterDistrictManager(ERPGenericManager[ClusterDistrictSchema]):
     pass
 
 
+# ============================================================================
+# PINCODE REFERENCE (India Post / GeoNames extract — telecaller geo auto-fill)
+# ============================================================================
+
+class PincodeSchema(BaseSchema):
+    """A single (pincode -> state/district/taluk) row from the GeoNames India
+    extract. One pincode has many rows (multiple talukas / boundary districts);
+    callers DISTINCT on read. Seeded by scripts/seed/seed_in_pincodes.py."""
+    __tablename__ = "pincodes"
+
+    pincode = db.Column(db.String(10), nullable=False, index=True)
+    state = db.Column(db.String(100), nullable=False)
+    district = db.Column(db.String(100), nullable=True)
+    taluk = db.Column(db.String(100), nullable=True)
+
+
+class PincodeManager(ERPGenericManager[PincodeSchema]):
+    pass
+
+
 __all__ = [
     "ClusterSchema",
     "ClusterManager",
     "ClusterDistrictSchema",
     "ClusterDistrictManager",
+    "PincodeSchema",
+    "PincodeManager",
 ]
