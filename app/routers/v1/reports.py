@@ -1149,7 +1149,7 @@ CLASSIFICATION_QUERY_SQL = f"""
             co.gross_amount - co.discount_applied AS net_amount,
 {FILTER_CLASSIFICATION_SQL}
         FROM customer_orders co
-        LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
+        LEFT JOIN order_attribution lsq ON co.uid = lsq.order_id
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
           AND (CAST(:outlet_ids AS VARCHAR[]) IS NULL OR co.assigned_outlet_id = ANY(CAST(:outlet_ids AS VARCHAR[])))
@@ -1261,7 +1261,7 @@ async def fetch_logistics_order_summary(
         FROM customer_orders co
         LEFT JOIN (SELECT order_id, SUM(quantity) AS total_qty FROM order_items GROUP BY order_id) ot
             ON co.uid = ot.order_id
-        LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
+        LEFT JOIN order_attribution lsq ON co.uid = lsq.order_id
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
           AND (CAST(:outlet_ids AS VARCHAR[]) IS NULL OR co.assigned_outlet_id = ANY(CAST(:outlet_ids AS VARCHAR[])))
@@ -1355,7 +1355,7 @@ async def fetch_marketing_order_summary(
         FROM customer_orders co
         LEFT JOIN (SELECT order_id, SUM(quantity) AS total_qty FROM order_items GROUP BY order_id) ot
             ON co.uid = ot.order_id
-        LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
+        LEFT JOIN order_attribution lsq ON co.uid = lsq.order_id
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
           AND (CAST(:outlet_ids AS VARCHAR[]) IS NULL OR co.assigned_outlet_id = ANY(CAST(:outlet_ids AS VARCHAR[])))

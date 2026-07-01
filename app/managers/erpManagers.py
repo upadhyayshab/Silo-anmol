@@ -1540,7 +1540,7 @@ class RiderPayoutManager(ERPGenericManager[RiderPayoutSchema]):
 # ============================================================================
 
 class LSQOrderAdSchema(BaseSchema):
-    __tablename__ = "lsq_order_ad"
+    __tablename__ = "order_attribution"  # was lsq_order_ad; now holds LSQ + in-house CRM + Medusa attribution
 
     lead_id = db.Column(db.String(255), nullable=False)
     order_id = db.Column(db.String, db.ForeignKey("customer_orders.uid"), nullable=False, index=True)
