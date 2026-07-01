@@ -39,6 +39,16 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else None
 
 
+def _require_real_user(ctx: AuthContext) -> None:
+    """Role changes must be attributable. Reject API-key/microservice callers: their
+    `user_id` is "microservice", and `ActivityLog.user_id` FKs `users.uid` (NOT NULL),
+    so the audit insert would fail (and be swallowed) — leaving a role mutation with no
+    audit trail. A privilege-granting write must be tied to a real user."""
+    if ctx.is_microservice:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="role changes require an authenticated user")
+
+
 @router.get("", response_model=RolesCatalogResponse)
 async def list_roles(
     ctx: AuthContext = Depends(require_permission(Permission.ROLES_MANAGE)),
@@ -72,6 +82,7 @@ async def create_role(
     ctx: AuthContext = Depends(require_permission(Permission.ROLES_MANAGE)),
 ):
     """Create a CUSTOM role (is_system=False)."""
+    _require_real_user(ctx)
     try:
         validate_new_role_name(payload.name)
         validate_scope_level(payload.scope_level)
@@ -125,6 +136,7 @@ async def update_role_perms(
     """Edit a role's PERMS ONLY (no scope edit). `payload.perms` is the desired
     FULL perm set; diffed against current `role_permissions` rows. `is_system`
     roles ARE editable this way — only SUPER_ADMIN is untouchable."""
+    _require_real_user(ctx)
     if name == "SUPER_ADMIN":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail="SUPER_ADMIN is untouchable")
