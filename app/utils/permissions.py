@@ -13,6 +13,7 @@ Three orthogonal axes:
   - data scope  -> ScopeLevel   (which rows: GLOBAL/STATE/CLUSTER/OUTLET)
   - sensitivity -> MASKED_COLUMNS (which columns, e.g. cost/margin, tax ids)
 """
+import re
 from enum import Enum
 from typing import Optional
 
@@ -373,8 +374,50 @@ def masked_columns_for(resource: str, role) -> list:
     return cols
 
 
+# ---------------------------------------------------------------------------
+# Roles-admin guardrails (DB-free, pure). Used by routers/v1/roles.py to
+# validate create/edit requests before touching the DB; kept here so they're
+# importable + unit-testable without a DB (see tests/test_role_admin.py).
+# ---------------------------------------------------------------------------
+ROLE_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+
+
+def validate_role_perms(perms: list) -> None:
+    """Every perm must be in ALL_PERMISSIONS; WILDCARD ("*") is rejected — no
+    privilege escalation via the roles admin API (wildcard stays SUPER_ADMIN-only).
+    Empty list is fine."""
+    for p in perms:
+        if p == WILDCARD:
+            raise ValueError("wildcard permission (\"*\") cannot be granted via the roles admin API")
+        if p not in ALL_PERMISSIONS:
+            raise ValueError(f"unknown permission: {p}")
+
+
+def validate_scope_level(scope: str) -> None:
+    """`scope` must be a valid ScopeLevel value."""
+    try:
+        ScopeLevel(scope)
+    except ValueError:
+        raise ValueError(f"invalid scope_level: {scope}")
+
+
+def validate_new_role_name(name: str) -> None:
+    """New role name must match ROLE_NAME_RE (uppercase slug)."""
+    if not ROLE_NAME_RE.match(name or ""):
+        raise ValueError(
+            f"invalid role name: {name!r} (must match ^[A-Z][A-Z0-9_]{{1,63}}$)"
+        )
+
+
+def diff_perms(desired: set, current: set) -> tuple:
+    """Pure set-diff for a PATCH perms update. Returns (to_add, to_remove)."""
+    return desired - current, current - desired
+
+
 __all__ = [
     "Permission", "ScopeLevel", "WILDCARD", "MASKED_COLUMNS", "ROLE_DEFINITIONS",
     "ALL_PERMISSIONS", "get_role_def", "role_perms", "role_scope_level",
     "has_permission", "masked_columns_for", "set_role_cache",
+    "ROLE_NAME_RE", "validate_role_perms", "validate_scope_level",
+    "validate_new_role_name", "diff_perms",
 ]

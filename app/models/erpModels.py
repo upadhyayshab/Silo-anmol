@@ -1189,6 +1189,34 @@ class SmartpingEnqueueResponse(BaseModel):
     skipped: int = 0
     jobs: List[SmartpingJobResponse] = Field(default_factory=list)
 
+
+# ============================================================================
+# ROLES ADMIN (superadmin-editable roles & permissions)
+# ============================================================================
+
+class RoleCreateRequest(BaseModel):
+    name: str
+    scope_level: str
+    location_type: Optional[str] = None
+    perms: List[str] = Field(default_factory=list)
+
+
+class RolePermsUpdateRequest(BaseModel):
+    perms: List[str]
+
+
+class RoleItemResponse(BaseModel):
+    name: str
+    scope_level: str
+    location_type: Optional[str] = None
+    is_system: bool
+    perms: List[str]
+
+
+class RolesCatalogResponse(BaseModel):
+    roles: List[RoleItemResponse]
+    permissions: List[str]
+
 # ============================================================================
 # EXPORTS
 # ============================================================================
@@ -1257,5 +1285,8 @@ __all__ = [
     "SmartpingEventEnqueueRequest",
     "SmartpingJobResponse",
     "SmartpingDispatchResponse",
-    "SmartpingEnqueueResponse"
+    "SmartpingEnqueueResponse",
+
+    # Roles admin
+    "RoleCreateRequest", "RolePermsUpdateRequest", "RoleItemResponse", "RolesCatalogResponse",
 ]
