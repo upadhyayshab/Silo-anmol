@@ -1048,9 +1048,14 @@ class OrderItemManager(ERPGenericManager[OrderItemSchema]):
         self,
         start_date: date,
         end_date: date,
-        session: AsyncSession = None
+        session: AsyncSession = None,
+        outlet_ids: Optional[list] = None
     ) -> List[Dict[str, Any]]:
-        """Get product quantity grouped by date, outlet, status, and product for reporting."""
+        """Get product quantity grouped by date, outlet, status, and product for reporting.
+
+        When ``outlet_ids`` is provided (non-empty), results are narrowed to orders whose
+        assigned_outlet_id is in that list; None => no outlet filtering (default).
+        """
         date_col = func.date(
             CustomerOrderSchema.order_date.op('AT TIME ZONE')('Asia/Kolkata')
         )
@@ -1071,6 +1076,13 @@ class OrderItemManager(ERPGenericManager[OrderItemSchema]):
             .join(ProductSchema, OrderItemSchema.product_id == ProductSchema.uid)
             .outerjoin(OutletSchema, CustomerOrderSchema.assigned_outlet_id == OutletSchema.uid)
             .where(date_col.between(start_date, end_date))
+        )
+
+        if outlet_ids:
+            query = query.where(CustomerOrderSchema.assigned_outlet_id.in_(outlet_ids))
+
+        query = (
+            query
             .group_by(
                 date_col, outlet_name,
                 CustomerOrderSchema.order_status,

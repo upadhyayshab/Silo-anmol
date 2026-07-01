@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 import sqlalchemy as db
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 from sqlalchemy import select, func
@@ -14,7 +14,7 @@ from managers import (
     ProductManager, OutletManager, UserManager, StockTransferOrderManager,
     TransferItemManager, CustomerOrderSchema, OutletSchema, ProductSchema, InventorySchema
 )
-from utils.auth import require_permission, get_auth_context, AuthContext
+from utils.auth import require_permission, get_auth_context, AuthContext, outlet_ids_for_state
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import OrderStatus, TransferStatus, PaymentStatus, OutletType
 from utils.warehouse_utils import get_default_warehouse_id
@@ -37,6 +37,7 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 @router.get("/super-admin")
 async def get_super_admin_dashboard(
+    state: Optional[str] = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
@@ -47,13 +48,25 @@ async def get_super_admin_dashboard(
             raise HTTPException(403, "Org-wide dashboard requires global scope")
         today = date.today()
         month_start = today.replace(day=1)
-        
+
+        # Optional state narrowing: resolve to outlet uids, sentinel so a
+        # zero-outlet state matches nothing rather than everything. Orders,
+        # inventory AND invoices (revenue) all narrow so the overview is consistent.
+        order_filters = {}
+        inventory_filters = {}
+        invoice_filters = {"is_cancelled": False}
+        if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            outlet_ids = await outlet_ids_for_state(state)
+            order_filters["assigned_outlet_id"] = outlet_ids or ["__none__"]
+            inventory_filters["outlet_id"] = outlet_ids or ["__none__"]
+            invoice_filters["outlet_id"] = outlet_ids or ["__none__"]
+
         # Get all data for comprehensive overview
-        all_orders = await order_manager.fetch_all()
-        all_invoices = await invoice_manager.fetch_all(filters={"is_cancelled": False})
+        all_orders = await order_manager.fetch_all(filters=order_filters or None)
+        all_invoices = await invoice_manager.fetch_all(filters=invoice_filters)
         all_outlets = await outlet_manager.fetch_all(filters={"is_active": True})
         all_users = await user_manager.fetch_all(filters={"is_active": True})
-        all_inventory = await inventory_manager.fetch_all()
+        all_inventory = await inventory_manager.fetch_all(filters=inventory_filters or None)
         
         # Calculate KPIs
         total_orders = len(all_orders.items)
@@ -130,6 +143,7 @@ async def get_super_admin_dashboard(
 async def get_orders_geography_overview(
     district: str = None,
     taluk: str = None,
+    state: Optional[str] = None,
     from_date: str = None,
     to_date: str = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
@@ -174,6 +188,12 @@ async def get_orders_geography_overview(
                 query = query.where(CustomerOrderSchema.district == district)
             if taluk:
                 query = query.where(CustomerOrderSchema.taluk == taluk)
+
+            # Optional state narrowing by assigned outlet's state (sentinel so a
+            # zero-outlet state matches nothing, not everything).
+            if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+                ids = await outlet_ids_for_state(state)
+                query = query.where(CustomerOrderSchema.assigned_outlet_id.in_(ids or ["__none__"]))
                 
             # Apply Date filters directly to SQL
             if filter_from_date:
@@ -268,6 +288,7 @@ async def get_orders_geography_overview(
 async def get_inventory_overview(
     product_id: str = None,
     outlet_id: str = None,
+    state: Optional[str] = None,
     from_date: str = None,
     to_date: str = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
@@ -328,6 +349,11 @@ async def get_inventory_overview(
                     )
                 else:
                     query = query.where(InventorySchema.outlet_id == outlet_id)
+            elif state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+                # Optional state narrowing (explicit outlet_id takes precedence).
+                # Sentinel so a zero-outlet state matches nothing, not everything.
+                ids = await outlet_ids_for_state(state)
+                query = query.where(InventorySchema.outlet_id.in_(ids or ["__none__"]))
 
             # Apply Date Filters on last_updated
             if filter_from_date:
@@ -403,6 +429,7 @@ async def get_inventory_overview(
 
 @router.get("/super-admin/district-outlets-overview")
 async def get_district_outlets_overview(
+    state: Optional[str] = None,
     from_date: str = None,
     to_date: str = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
@@ -452,6 +479,12 @@ async def get_district_outlets_overview(
             if filter_to_date:
                 end_dt = datetime.combine(filter_to_date, time.max)
                 query = query.where(CustomerOrderSchema.order_date <= end_dt)
+
+            # Optional state narrowing by assigned outlet's state (sentinel so a
+            # zero-outlet state matches nothing, not everything).
+            if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+                ids = await outlet_ids_for_state(state)
+                query = query.where(CustomerOrderSchema.assigned_outlet_id.in_(ids or ["__none__"]))
 
             # Let PostgreSQL handle the heavy lifting of grouping
             query = query.group_by(

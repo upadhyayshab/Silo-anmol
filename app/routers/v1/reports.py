@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional, Dict, Any
 from datetime import datetime, date, timedelta
 from decimal import Decimal
-from sqlalchemy import text
+from sqlalchemy import text, bindparam, String, ARRAY
 
 from config import get_settings, get_engine
 from managers import (
@@ -12,8 +12,8 @@ from managers import (
     DeliveryGuyManager, DeliveryGuyHandoverManager, OrderTransactionManager,
     DeliveryGuySchema, DeliveryGuyHandoverSchema, OrderTransactionSchema
 )
-from utils.auth import require_permission, apply_scope, AuthContext
-from utils.permissions import Permission
+from utils.auth import require_permission, apply_scope, AuthContext, outlet_ids_for_state
+from utils.permissions import Permission, ScopeLevel
 from utils.constants import OrderStatus, TransferStatus, PaymentStatus, PaymentMethod, OutletCollectionStatus
 from utils.functions import ensure_date
 import calendar
@@ -317,6 +317,7 @@ async def get_sales_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
+    state: Optional[str] = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """
@@ -334,6 +335,10 @@ async def get_sales_summary(
         filters = {"is_cancelled": False}
         if outlet_id:
             filters["outlet_id"] = outlet_id
+        elif state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            # Global-only state filter: narrow to outlets in that state (IN on outlet_id).
+            _state_outlet_ids = await outlet_ids_for_state(state)
+            filters["outlet_id"] = _state_outlet_ids or ["__none__"]
         filters = await apply_scope(filters, ctx, outlet_column="outlet_id")
 
         invoices = await invoice_manager.fetch_all(filters=filters)
@@ -536,7 +541,8 @@ async def get_financial_summary(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
-    _: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
+    state: Optional[str] = None,
+    ctx: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """
     Get financial summary including P&L basics
@@ -546,11 +552,15 @@ async def get_financial_summary(
             from_date = date.today().replace(day=1)
         if not to_date:
             to_date = date.today()
-        
+
         filters = {"is_cancelled": False}
         if outlet_id:
             filters["outlet_id"] = outlet_id
-        
+        elif state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            # Global-only state filter: narrow to outlets in that state (IN on outlet_id).
+            _state_outlet_ids = await outlet_ids_for_state(state)
+            filters["outlet_id"] = _state_outlet_ids or ["__none__"]
+
         invoices = await invoice_manager.fetch_all(filters=filters)
         
         # Filter by date range
@@ -616,8 +626,9 @@ async def get_product_performance(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     outlet_id: Optional[str] = None,
+    state: Optional[str] = None,
     limit: int = 20,
-    _: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
+    ctx: AuthContext = Depends(require_permission(Permission.FINANCE_READ)),
 ):
     """
     Get product performance analytics based on DELIVERED orders only
@@ -637,6 +648,10 @@ async def get_product_performance(
         filters = {"order_status": OrderStatus.DELIVERED}
         if outlet_id:
             filters["assigned_outlet_id"] = outlet_id
+        elif state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            # Global-only state filter: narrow to outlets in that state (IN on assigned_outlet_id).
+            _state_outlet_ids = await outlet_ids_for_state(state)
+            filters["assigned_outlet_id"] = _state_outlet_ids or ["__none__"]
         
         # Fetch all delivered orders
         orders = await order_manager.fetch_all(filters=filters, limit=0)
@@ -1137,8 +1152,9 @@ CLASSIFICATION_QUERY_SQL = f"""
         LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
+          AND (CAST(:outlet_ids AS VARCHAR[]) IS NULL OR co.assigned_outlet_id = ANY(CAST(:outlet_ids AS VARCHAR[])))
     )
-    SELECT 
+    SELECT
         order_date AS date,
         main_filter,
         sub_filter,
@@ -1152,13 +1168,17 @@ CLASSIFICATION_QUERY_SQL = f"""
     ORDER BY order_date, main_filter, sub_filter;
 """
 
-async def _execute_order_summary_queries(conn, from_date: date, to_date: date, target_outlet_id: Optional[str], main_filter: Optional[str], sub_filter: Optional[str], main_query_text: str) -> List[Dict[str, Any]]:
+async def _execute_order_summary_queries(conn, from_date: date, to_date: date, target_outlet_id: Optional[str], main_filter: Optional[str], sub_filter: Optional[str], main_query_text: str, target_outlet_ids: Optional[list] = None) -> List[Dict[str, Any]]:
+    # Pin :outlet_ids to VARCHAR[] so asyncpg encodes None/list[str] unambiguously
+    # (a plain text() bind can't infer the array type from the SQL cast alone).
+    _ids_bind = bindparam("outlet_ids", type_=ARRAY(String()))
     result = await conn.execute(
-        text(main_query_text),
+        text(main_query_text).bindparams(_ids_bind),
         {
             "start_date": from_date,
             "end_date": to_date,
             "outlet_id": target_outlet_id,
+            "outlet_ids": target_outlet_ids,
             "main_filter": main_filter,
             "sub_filter": sub_filter
         }
@@ -1166,11 +1186,12 @@ async def _execute_order_summary_queries(conn, from_date: date, to_date: date, t
     rows = result.all()
 
     class_result = await conn.execute(
-        text(CLASSIFICATION_QUERY_SQL),
+        text(CLASSIFICATION_QUERY_SQL).bindparams(_ids_bind),
         {
             "start_date": from_date,
             "end_date": to_date,
             "outlet_id": target_outlet_id,
+            "outlet_ids": target_outlet_ids,
             "main_filter": main_filter,
             "sub_filter": sub_filter
         }
@@ -1224,7 +1245,8 @@ async def fetch_logistics_order_summary(
     to_date: date,
     target_outlet_id: Optional[str],
     main_filter: Optional[str] = None,
-    sub_filter: Optional[str] = None
+    sub_filter: Optional[str] = None,
+    target_outlet_ids: Optional[list] = None
 ) -> List[Dict[str, Any]]:
     """Fetch logistics daily order summary where Placed is based on created_at,
     Pending/Delivered/Cancelled is based on updated_at."""
@@ -1242,6 +1264,7 @@ async def fetch_logistics_order_summary(
         LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
+          AND (CAST(:outlet_ids AS VARCHAR[]) IS NULL OR co.assigned_outlet_id = ANY(CAST(:outlet_ids AS VARCHAR[])))
     ),
     filtered_stats AS (
         SELECT * FROM order_stats
@@ -1308,7 +1331,7 @@ async def fetch_logistics_order_summary(
     ORDER BY date ASC;
     """
     
-    return await _execute_order_summary_queries(conn, from_date, to_date, target_outlet_id, main_filter, sub_filter, DAILY_REV_QUERY)
+    return await _execute_order_summary_queries(conn, from_date, to_date, target_outlet_id, main_filter, sub_filter, DAILY_REV_QUERY, target_outlet_ids)
 
 async def fetch_marketing_order_summary(
     conn,
@@ -1316,7 +1339,8 @@ async def fetch_marketing_order_summary(
     to_date: date,
     target_outlet_id: Optional[str],
     main_filter: Optional[str],
-    sub_filter: Optional[str]
+    sub_filter: Optional[str],
+    target_outlet_ids: Optional[list] = None
 ) -> List[Dict[str, Any]]:
     """Fetch marketing daily order summary where Placed/Pending/Delivered/Cancelled
     are all cohort-grouped by created_at. Includes classifications."""
@@ -1334,6 +1358,7 @@ async def fetch_marketing_order_summary(
         LEFT JOIN lsq_order_ad lsq ON co.uid = lsq.order_id
         LEFT JOIN users u ON co.telecaller_id = u.uid
         WHERE (CAST(:outlet_id AS VARCHAR) IS NULL OR co.assigned_outlet_id = CAST(:outlet_id AS VARCHAR))
+          AND (CAST(:outlet_ids AS VARCHAR[]) IS NULL OR co.assigned_outlet_id = ANY(CAST(:outlet_ids AS VARCHAR[])))
     ),
     cohort_stats AS (
         SELECT DATE(created_at AT TIME ZONE 'Asia/Kolkata') AS d,
@@ -1376,13 +1401,14 @@ async def fetch_marketing_order_summary(
     ORDER BY date ASC;
     """
     
-    return await _execute_order_summary_queries(conn, from_date, to_date, target_outlet_id, main_filter, sub_filter, MARKETING_REV_QUERY)
+    return await _execute_order_summary_queries(conn, from_date, to_date, target_outlet_id, main_filter, sub_filter, MARKETING_REV_QUERY, target_outlet_ids)
 
 @router.get("/daily-order-summary")
 async def get_daily_order_summary(
     from_date: date,
     to_date: date,
     outlet_id: Optional[str] = None,
+    state: Optional[str] = None,
     main_filter: Optional[str] = None,
     sub_filter: Optional[str] = None,
     view_type: str = "logistics",
@@ -1398,14 +1424,20 @@ async def get_daily_order_summary(
         if scope_outlet is not None:
             target_outlet_id = scope_outlet[0] if isinstance(scope_outlet, list) else scope_outlet
 
+        # Global-only state filter: narrow to outlets in that state (ANY on assigned_outlet_id).
+        # Runs in parallel to the scalar outlet_id branch; if both set they AND together.
+        target_outlet_ids = None
+        if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            target_outlet_ids = await outlet_ids_for_state(state) or ["__none__"]
+
         async with engine.connect() as conn:
             if view_type == "marketing":
                 summary = await fetch_marketing_order_summary(
-                    conn, from_date, to_date, target_outlet_id, main_filter, sub_filter
+                    conn, from_date, to_date, target_outlet_id, main_filter, sub_filter, target_outlet_ids
                 )
             else:
                 summary = await fetch_logistics_order_summary(
-                    conn, from_date, to_date, target_outlet_id, main_filter, sub_filter
+                    conn, from_date, to_date, target_outlet_id, main_filter, sub_filter, target_outlet_ids
                 )
 
         return {
@@ -1749,6 +1781,7 @@ async def get_daily_collection_tracker(
 
 @router.get("/inventory-pivot")
 async def get_inventory_pivot(
+    state: Optional[str] = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """
@@ -1768,12 +1801,13 @@ async def get_inventory_pivot(
     CROSS JOIN products p
     LEFT JOIN inventory i ON i.outlet_id = o.uid AND i.product_id = p.uid
     WHERE o.is_active = true AND p.is_active = true
+      AND (CAST(:state AS VARCHAR) IS NULL OR LOWER(o.state) = LOWER(CAST(:state AS VARCHAR)))
     ORDER BY o.outlet_name, p.product_name
     """)
 
     try:
         async with engine.connect() as conn:
-            result = await conn.execute(PIVOT_QUERY)
+            result = await conn.execute(PIVOT_QUERY, {"state": state})
             rows = result.all()
 
         outlets_map = {}
@@ -1880,13 +1914,22 @@ async def get_outlet_product_summary(
 async def get_product_quantity_report(
     from_date: date,
     to_date: date,
+    state: Optional[str] = None,
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ))
 ):
     """Product quantity report grouped by date, outlet, status, and product."""
     try:
+        # Global-only state filter: resolve to outlet uids; None => no filtering.
+        # A non-blank state with zero outlets => ["__none__"] so it matches nothing
+        # (not everything) — matches the sentinel convention used elsewhere.
+        _state_outlet_ids = None
+        if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            _state_outlet_ids = await outlet_ids_for_state(state) or ["__none__"]
+
         data = await order_item_manager.get_product_quantity_report(
             start_date=from_date,
-            end_date=to_date
+            end_date=to_date,
+            outlet_ids=_state_outlet_ids
         )
         return {
             "items": data,

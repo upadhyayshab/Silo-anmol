@@ -17,7 +17,7 @@ from models import (
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult
 )
-from utils.auth import require_permission, apply_scope, apply_field_mask, AuthContext
+from utils.auth import require_permission, apply_scope, apply_field_mask, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, payment_status_for
 from utils.crm_constants import ActivityType
@@ -531,12 +531,20 @@ async def get_orders_count_grouped(
 @router.get("/orders-with-lsq")
 async def get_orders_with_lsq(
     filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    state: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ)),
 ):
     try:
         filters = await _apply_order_scope(filters, ctx)
+        # State filter (super admin): narrow to the outlets in `state`, unless the
+        # caller already pinned a specific outlet. Global scope only — scoped roles
+        # keep the row scope applied above.
+        if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value) \
+                and "assigned_outlet_id" not in filters:
+            ids = await outlet_ids_for_state(state)
+            filters["assigned_outlet_id"] = ids or ["__none__"]
         orders = await order_manager.fetch_all(
             filters=filters,
             joins = [CustomerOrderSchema.lsq_order_ad , (CustomerOrderSchema.items , OrderItemSchema.product)],
@@ -1370,6 +1378,7 @@ openapi_examples={
 async def get_orders(transfer_status: Optional[OrderStatus] = None,
     telecaller_id: Optional[str] = None,
     outlet_id: Optional[str] = None,
+    state: Optional[str] = None,
     customer_phone: Optional[str] = None,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
@@ -1406,6 +1415,11 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
             filters["telecaller_id"] = telecaller_id
         if outlet_id and is_admin:
             filters["assigned_outlet_id"] = outlet_id
+        # State filter (super admin): narrow to the outlets in `state`. A specific
+        # outlet_id is more specific and wins if both are supplied.
+        elif state and is_admin:
+            ids = await outlet_ids_for_state(state)
+            filters["assigned_outlet_id"] = ids or ["__none__"]
         if customer_phone:
             filters["customer_phone"] = customer_phone
 
