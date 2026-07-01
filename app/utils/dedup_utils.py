@@ -90,8 +90,15 @@ def compute_backfill(existing_values: Dict[str, Any],
     """Decide which fields to backfill onto an existing lead from incoming data.
 
     Pure function (no DB) so it is directly unit-testable. Only *empty* fields
-    are filled — a populated value is never overwritten. ``custom_fields`` and
-    ``campaign_data`` are shallow-merged (incoming fills gaps only).
+    are filled — a populated value is never overwritten. ``custom_fields`` is
+    shallow-merged (incoming fills gaps only).
+
+    ``campaign_data`` is handled differently: it is NOT gap-filled. The flat
+    top-level keys stay first-touch (never overwritten, never extended); instead
+    each subsequent non-empty incoming ``campaign_data`` dict is appended as a
+    touch onto a ``touches`` list, so re-submissions from later ads/forms are
+    recorded without disturbing first-touch attribution. A retry carrying the
+    same ``leadgen_id`` as an existing touch is skipped (idempotent).
     """
     updates: Dict[str, Any] = {}
 
@@ -104,15 +111,29 @@ def compute_backfill(existing_values: Dict[str, Any],
         if cur_cmp in (None, ""):
             updates[field] = new_val
 
-    for jcol in ("custom_fields", "campaign_data"):
-        blob = incoming.get(jcol)
-        if isinstance(blob, dict) and blob:
-            cur = existing_values.get(jcol) or {}
-            merged = dict(cur)
-            for k, v in blob.items():
-                merged.setdefault(k, v)
-            if merged != cur:
-                updates[jcol] = merged
+    blob = incoming.get("custom_fields")
+    if isinstance(blob, dict) and blob:
+        cur = existing_values.get("custom_fields") or {}
+        merged = dict(cur)
+        for k, v in blob.items():
+            merged.setdefault(k, v)
+        if merged != cur:
+            updates["custom_fields"] = merged
+
+    # ponytail: touches[] holds 2nd+ ad/web touches; flat keys stay first-touch. Promote to a lead_touches table if attribution needs SQL joins.
+    incoming_campaign = incoming.get("campaign_data")
+    if isinstance(incoming_campaign, dict) and incoming_campaign:
+        cur = dict(existing_values.get("campaign_data") or {})
+        touches = list(cur.get("touches", []))
+        incoming_leadgen = incoming_campaign.get("leadgen_id")
+        already = incoming_leadgen is not None and any(
+            isinstance(t, dict) and t.get("leadgen_id") == incoming_leadgen
+            for t in touches
+        )
+        if not already:
+            touches.append(incoming_campaign)
+            cur["touches"] = touches
+            updates["campaign_data"] = cur
 
     return updates
 

@@ -59,6 +59,18 @@ EDITABLE_FIELDS = {
 
 GEO_FIELDS = ("state", "district", "taluk")
 
+# Stages a lead is considered "dormant" in — a re-submitted form on one of these
+# reopens the lead (see _reengage). NEW_LEAD/ENGAGED/RTU/FTU are live pipeline
+# positions and are left untouched on re-submission.
+DORMANT_STAGES = frozenset({LeadStage.LAPSED, LeadStage.NOT_REACHABLE, LeadStage.NOT_QUALIFIED})
+
+
+def _reengage_target_stage(current):
+    """Stage a re-filled dormant lead should reopen to, or None to leave as-is."""
+    # normalize current (may be a str value or a LeadStage) to a LeadStage
+    cur = current if isinstance(current, LeadStage) else LeadStage(current)
+    return LeadStage.ENGAGED if cur in DORMANT_STAGES else None
+
 
 def canon_geo(value):
     """Lowercase-canonical a geography string so leads line up with the
@@ -149,7 +161,8 @@ async def record_activity(engine, lead_id: str, activity_type: LeadActivityType,
 # --------------------------------------------------------------------------
 
 async def create_lead(engine, payload, by_user_id: str,
-                      *, source_label: Optional[str] = None) -> Tuple[LeadSchema, bool]:
+                      *, source_label: Optional[str] = None,
+                      reengage_on_merge: bool = True) -> Tuple[LeadSchema, bool]:
     """Create a lead, or merge it into an existing duplicate.
 
     Returns ``(lead, created)`` — ``created`` is ``False`` when an existing
@@ -185,6 +198,8 @@ async def create_lead(engine, payload, by_user_id: str,
             engine, existing, payload.model_dump(),
             source_label=label, by_user_id=by_user_id,
         )
+        if reengage_on_merge:
+            merged = await _reengage(engine, merged, payload, source_label=label, by_user_id=by_user_id)
         return merged, False
 
     outlet = await assignmentService.resolve_outlet(
@@ -266,6 +281,8 @@ async def create_lead(engine, payload, by_user_id: str,
             engine, existing, payload.model_dump(),
             source_label=label, by_user_id=by_user_id,
         )
+        if reengage_on_merge:
+            merged = await _reengage(engine, merged, payload, source_label=label, by_user_id=by_user_id)
         return merged, False
 
     await record_activity(engine, lead.uid, LeadActivityType.CREATED, user_id=creator,
@@ -282,6 +299,101 @@ async def create_lead(engine, payload, by_user_id: str,
     final = await lead_manager.fetch(lead.uid)
     _fire_capi(final, LeadStage.NEW_LEAD)
     return final, True
+
+
+async def _reengage(engine, lead, payload, *, source_label, by_user_id):
+    """Re-engage a lead that just re-submitted a form (best-effort enrichment).
+
+    Runs after a dedup merge: if the lead is dormant it is reopened to ENGAGED,
+    handed to a present telecaller when its owner is gone/inactive, surfaced via
+    follow_up_at, logged (RE_ENGAGED), and its owner is notified. The lead is
+    ALREADY persisted by the time we get here — every step is best-effort, so any
+    failure logs a warning and returns the lead unchanged rather than raising.
+    """
+    lead_manager = LeadManager(engine)
+    try:
+        current = lead.stage if isinstance(lead.stage, LeadStage) else LeadStage(lead.stage)
+        prev_stage = current
+        target = _reengage_target_stage(current)
+        reopened = False
+
+        # change_stage does NOT enforce PROTECTED_STAGES (that guard lives in log_call),
+        # so it cleanly reopens NOT_QUALIFIED/NOT_REACHABLE/LAPSED -> ENGAGED while logging
+        # STAGE_CHANGE and firing CAPI. No manual fallback needed.
+        if target is not None:
+            lead = await change_stage(engine, lead, LeadStage.ENGAGED, by_user_id=None,
+                                      note=f"Re-engaged via {source_label}")
+            reopened = True
+
+        # Owner decision: reopen to a present agent if unowned or the owner is inactive.
+        reassigned = False
+        final_owner = lead.owner_id
+        needs_reassign = not lead.owner_id
+        if lead.owner_id:
+            try:
+                owner = await UserManager(engine).fetch(lead.owner_id)
+                if not getattr(owner, "is_active", True):
+                    needs_reassign = True
+            except Exception as e:
+                logger.warning(f"[reengage] could not fetch owner {lead.owner_id} for "
+                               f"{lead.uid}: {e}")
+        if needs_reassign:
+            present = await presenceService.present_ids(engine)
+            picked = await assignmentService.pick_telecaller(
+                engine, lead.outlet_id, lead.state, only_ids=present
+            )
+            if picked:
+                await reassign(engine, lead, picked.uid, by_user_id="system",
+                               reason=AssignmentReason.ROUND_ROBIN.value)
+                final_owner = picked.uid
+                reassigned = True
+                lead = await lead_manager.fetch(lead.uid)
+
+        # Surface it in the telecaller's queue.
+        await lead_manager.update(lead.uid, {"follow_up_at": _now()})
+
+        incoming_leadgen = ((payload.campaign_data or {}).get("leadgen_id")
+                            if getattr(payload, "campaign_data", None) else None)
+        await record_activity(
+            engine, lead.uid, LeadActivityType.RE_ENGAGED, user_id=None,
+            body=f"Lead re-engaged via {source_label}",
+            details={
+                "source": source_label,
+                "from_stage": prev_stage.value if hasattr(prev_stage, "value") else str(prev_stage),
+                "reopened_to": (LeadStage.ENGAGED.value if reopened else None),
+                "reassigned": reassigned,
+                "owner_id": final_owner,
+                "incoming_leadgen_id": incoming_leadgen,
+            },
+        )
+
+        # Notify the final owner (best-effort; own try/except so a notify failure
+        # can't sink the re-engagement).
+        if final_owner:
+            try:
+                # Lazy import: notifications.py builds its own manager off config and
+                # imports nothing from services, so this can't cause a circular import.
+                from routers.v1.notifications import create_system_notification
+                await create_system_notification(
+                    user_id=final_owner,
+                    title="Lead re-engaged",
+                    message=f"{lead.first_name or 'A lead'} ({lead.mobile}) re-submitted a form",
+                    notification_type="info",
+                )
+            except Exception as e:
+                logger.warning(f"[reengage] could not notify owner {final_owner} for "
+                               f"{lead.uid}: {e}")
+
+        final_lead = await lead_manager.fetch(lead.uid)
+        # If we did NOT reopen, no stage change fired CAPI — report the current stage
+        # so this touch is still attributed. When reopened, change_stage already fired.
+        if not reopened:
+            _fire_capi(final_lead, final_lead.stage)
+        return final_lead
+    except Exception as e:
+        logger.warning(f"[reengage] best-effort re-engagement failed for "
+                       f"{getattr(lead, 'uid', None)}: {e}")
+        return lead
 
 
 async def update_lead(engine, lead: LeadSchema, changes: Dict[str, Any],

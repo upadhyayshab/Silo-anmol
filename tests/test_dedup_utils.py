@@ -75,6 +75,32 @@ def test_compute_backfill_noop_when_nothing_to_fill():
     assert compute_backfill(existing, incoming) == {}
 
 
+def test_compute_backfill_appends_campaign_touch():
+    # A second form-fill appends to touches[]; first-touch flat keys stay put.
+    existing = {"campaign_data": {"leadgen_id": "L1", "campaign_id": "C1"}}
+    incoming = {"campaign_data": {"leadgen_id": "L2", "campaign_id": "C2"}}
+    updates = compute_backfill(existing, incoming)
+    cd = updates["campaign_data"]
+    assert cd["leadgen_id"] == "L1"          # first-touch NOT overwritten
+    assert cd["campaign_id"] == "C1"         # first-touch NOT extended/overwritten
+    assert cd["touches"] == [{"leadgen_id": "L2", "campaign_id": "C2"}]
+
+
+def test_compute_backfill_dedups_touch_by_leadgen():
+    # A retry carrying an already-recorded leadgen_id must not double-append.
+    existing = {"campaign_data": {"leadgen_id": "L1",
+                                  "touches": [{"leadgen_id": "L2"}]}}
+    incoming = {"campaign_data": {"leadgen_id": "L2"}}   # same as existing touch
+    assert "campaign_data" not in compute_backfill(existing, incoming)
+
+
+def test_compute_backfill_first_campaign_touch_from_empty():
+    existing = {"campaign_data": None}
+    incoming = {"campaign_data": {"leadgen_id": "L2", "ad_id": "A2"}}
+    cd = compute_backfill(existing, incoming)["campaign_data"]
+    assert cd["touches"] == [{"leadgen_id": "L2", "ad_id": "A2"}]
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

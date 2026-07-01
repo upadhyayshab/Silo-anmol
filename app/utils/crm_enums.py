@@ -31,6 +31,7 @@ class LeadActivityType(str, Enum):
     CALL_LOG = "call_log"
     ORDER = "order"  # an order was placed from the CRM for this lead
     ORDER_UPDATE = "order_update" # an order's status/payment/delivery was updated
+    RE_ENGAGED = "re_engaged"  # a dormant lead re-submitted a form and was reopened/reassigned
 
 
 class CallOutcome(str, Enum):

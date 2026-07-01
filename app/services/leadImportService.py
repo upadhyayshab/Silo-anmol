@@ -203,8 +203,11 @@ async def import_leads_csv(engine, file_bytes: bytes, by_user_id: str) -> Dict[s
 
             payload = _build_payload(data, campaign, custom)
             # System-owned -> round-robin assigned (not the importing admin).
+            # Bulk CSV import must NOT trigger re-engagement (a backfill of historic
+            # leads would spuriously reopen/reassign/notify across the whole team).
             _, was_created = await leadService.create_lead(
-                engine, payload, by_user_id="system", source_label="CSV import"
+                engine, payload, by_user_id="system", source_label="CSV import",
+                reengage_on_merge=False,
             )
             if was_created:
                 created += 1
