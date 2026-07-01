@@ -251,6 +251,25 @@ async def _scoped_outlet_ids(ctx: AuthContext) -> list:
     return []
 
 
+async def outlet_ids_for_state(state: Optional[str]) -> list:
+    """Resolve a state name to the uids of outlets located in it (case-insensitive).
+
+    Lets GLOBAL callers (super admin) voluntarily narrow order/report views to one
+    state. Returns [] for a blank state (caller applies no filter). For a *non-blank*
+    state that matches no outlet, callers must fall back to the "__none__" sentinel so
+    the query matches nothing instead of returning every row — mirror `apply_scope`:
+
+        if state:
+            ids = await outlet_ids_for_state(state)
+            filters[outlet_column] = ids or ["__none__"]
+    """
+    if not state or not str(state).strip():
+        return []
+    mgr = _get_outlet_mgr()
+    res = await mgr.fetch_all(filters={"state": {"$ieq": str(state).strip()}}, limit=0)
+    return [o.uid for o in res.items]
+
+
 _user_mgr = None
 
 
