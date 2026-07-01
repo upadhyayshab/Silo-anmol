@@ -191,8 +191,12 @@ async def create_lead(engine, payload, by_user_id: str,
         engine, district=payload.district, pincode=payload.pincode, state=payload.state
     )
     outlet_id = outlet.uid if outlet else None
-    # Authoritative region: the resolved outlet's state, else the lead's own state.
-    region_state = (getattr(outlet, "state", None) if outlet else None) or payload.state
+    # Telecaller routing follows the lead's *own* state (where the customer is), falling
+    # back to the serving outlet's state only when the lead has none. A warehouse can span
+    # states — e.g. AP leads are served by the 'telangana'-tagged AP/Telangana warehouse —
+    # and telecallers are tagged by their own state, so using the outlet's state here would
+    # aim AP leads at a 'telangana' pool that has zero agents and spill them cross-state.
+    routing_state = payload.state or (getattr(outlet, "state", None) if outlet else None)
 
     if payload.owner_id:
         owner_id = payload.owner_id
@@ -207,7 +211,7 @@ async def create_lead(engine, payload, by_user_id: str,
         # created unassigned and waits for an admin 'distribute' (no auto-drain).
         present = await presenceService.present_ids(engine)
         picked = await assignmentService.pick_telecaller(
-            engine, outlet_id, region_state, only_ids=present
+            engine, outlet_id, routing_state, only_ids=present
         )
         owner_id = picked.uid if picked else None
         reason = AssignmentReason.ROUND_ROBIN.value
@@ -513,6 +517,13 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     now = datetime.now(timezone.utc)
     pool_objects = []
     current_loads = {}
+    # An explicit target pool (admin picked telecallers) is honored as-is. An automatic
+    # distribution (sweep / no pool given) stays within each lead's own state — see the
+    # per-lead region scoping below. `staffed_states` holds every state that has at least
+    # one active telecaller, so we can tell "state's agents are just offline" (wait) from
+    # "state is genuinely unstaffed" (cross-state last resort).
+    auto = not telecaller_ids
+    staffed_states = set()
 
     async def get_active_count(uid: str) -> int:
         open_leads = await lead_manager.fetch_all(filters={"owner_id": uid})
@@ -546,6 +557,7 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         )
         for u in active.items:
             await add_to_pool(u)
+        staffed_states = {u.state.strip().lower() for u in active.items if u.state}
 
     if not pool_objects:
         return {"assigned": 0, "skipped": len(lead_ids or []), "by_telecaller": {},
@@ -554,12 +566,6 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     assigned, skipped, by_tc = 0, 0, {}
     
     for lid in lead_ids or []:
-        # Re-evaluate pool to exclude those who just hit their quota
-        valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
-        if not valid_pool:
-            skipped += 1
-            continue
-
         try:
             lead = await lead_manager.fetch(lid)
         except Exception:
@@ -568,7 +574,29 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         if lead.deleted_at is not None:
             skipped += 1
             continue
-            
+
+        # Re-evaluate pool to exclude those who just hit their quota
+        valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
+
+        # Region separation (auto/sweep only): keep a lead within its own state. If the
+        # state has telecallers but none are online/under-quota right now, leave it for the
+        # next sweep rather than cross state lines; cross-state only when the lead has no
+        # state or the state is genuinely unstaffed. Mirrors assignmentService._active_telecallers.
+        lead_state = getattr(lead, "state", None)
+        if auto and lead_state:
+            in_state = [u for u in valid_pool
+                        if assignmentService._same_state(getattr(u, "state", None), lead_state)]
+            if in_state:
+                valid_pool = in_state
+            elif lead_state.strip().lower() in staffed_states:
+                skipped += 1
+                continue
+            # else: state genuinely unstaffed -> fall through to the cross-state pool
+
+        if not valid_pool:
+            skipped += 1
+            continue
+
         # Select the telecaller with the lowest current load (Load balancing round-robin)
         valid_pool.sort(key=lambda u: current_loads[u.uid])
         selected_tc = valid_pool[0]

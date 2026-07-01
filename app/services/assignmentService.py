@@ -76,13 +76,18 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
         all_active = await user_manager.fetch_all(
             filters={"role": TELECALLER_ROLES, "is_active": True}
         )
-        in_state = _restrict(
-            [u for u in all_active.items if _same_state(getattr(u, "state", None), state)],
-            only_ids,
-        )
+        in_state_all = [u for u in all_active.items if _same_state(getattr(u, "state", None), state)]
+        in_state = _restrict(in_state_all, only_ids)
         if in_state:
             return in_state
-        # Tier 3 only triggers when the whole state is unstaffed (of eligible agents).
+        # In-state telecallers exist but none are eligible right now (offline / not in the
+        # available set): leave the lead unassigned for the next sweep rather than spill it
+        # across state lines. Assigning across states silently is the actual bug — an AP
+        # lead handed to a Karnataka agent because AP agents happened to be offline.
+        if in_state_all:
+            return []
+        # Tier 3: the state is genuinely unstaffed (no active telecaller at all) — only then
+        # do we cross state lines, as a documented last resort.
         return _restrict(list(all_active.items), only_ids)
 
     # No region info at all: global pool.
