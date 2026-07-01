@@ -10,8 +10,10 @@ class UserRole(str, Enum):
     ACCOUNTANT = "ACCOUNTANT"
     DELIVERY_GUY = "DELIVERY_GUY"
     # --- RBAC blueprint roles (see utils/permissions.ROLE_DEFINITIONS) ---
-    # Additive: existing JWTs/rows are unaffected. Assigning one of these to a
-    # user requires a Postgres ENUM `ADD VALUE` migration first (Phase 2).
+    # Additive: existing JWTs/rows are unaffected. `users.role` is a varchar
+    # column, not a Postgres ENUM, so any role name — built-in or custom — is
+    # assignable without a migration; existence is validated at the app layer
+    # against the `roles` table.
     VIEWER = "VIEWER"                          # L1 read-only
     CLUSTER_MANAGER = "CLUSTER_MANAGER"        # L3 ops, cluster scope
     STATE_HEAD = "STATE_HEAD"                  # L4 oversight, state scope

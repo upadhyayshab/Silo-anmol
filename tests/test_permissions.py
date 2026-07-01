@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 from utils.constants import UserRole
 from utils.permissions import (
     Permission, ScopeLevel, WILDCARD, ROLE_DEFINITIONS,
-    has_permission, masked_columns_for, role_scope_level, role_perms,
+    has_permission, masked_columns_for, role_scope_level, role_perms, set_role_cache,
 )
 
 
@@ -100,6 +100,15 @@ def test_payouts_approve_is_finance_admin_tier():
     assert has_permission(UserRole.ACCOUNTANT, Permission.PAYOUTS_WRITE)
     for r in (UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER, UserRole.TELECALLER):
         assert not has_permission(r, Permission.PAYOUTS_APPROVE), r
+
+
+def test_roles_manage_is_super_admin_only():
+    # roles:manage gates the roles admin API. It's not granted explicitly to any role —
+    # SUPER_ADMIN gets it only via WILDCARD. Exercise the code-fallback path (empty cache).
+    set_role_cache({})
+    for role in UserRole:
+        expected = (role == UserRole.SUPER_ADMIN)
+        assert has_permission(role, Permission.ROLES_MANAGE) == expected, role.value
 
 
 def test_scope_levels():

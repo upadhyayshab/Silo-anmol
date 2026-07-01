@@ -10,11 +10,13 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+import path_setup  # noqa: E402,F401 — wires SharedBackend onto sys.path for services.roleStore
 
 from utils import permissions  # noqa: E402
 from utils.permissions import (ScopeLevel, WILDCARD, has_permission, role_perms,  # noqa: E402
                                role_scope_level, set_role_cache)
 from utils.constants import UserRole  # noqa: E402
+from services.roleStore import _roles_to_bootstrap  # noqa: E402
 
 
 def _reset():
@@ -60,10 +62,19 @@ def test_unknown_role_is_empty():
     assert has_permission("NOPE_NOT_A_ROLE", "orders:read") is False
 
 
+def test_roles_to_bootstrap():
+    # Missing roles (B, C) are the only ones bootstrapped; A already exists so it's excluded.
+    assert _roles_to_bootstrap({"A", "B", "C"}, {"A"}) == {"B", "C"}
+    # Nothing missing -> nothing re-seeded/overwritten once every defined role is present.
+    assert _roles_to_bootstrap({"A", "B"}, {"A", "B", "C"}) == set()
+    assert _roles_to_bootstrap(set(), set()) == set()
+
+
 if __name__ == "__main__":
     test_fallback_to_code_when_cache_empty()
     test_db_cache_overrides_code()
     test_custom_db_only_role_resolves()
     test_wildcard_passes_everything()
     test_unknown_role_is_empty()
+    test_roles_to_bootstrap()
     print("OK")

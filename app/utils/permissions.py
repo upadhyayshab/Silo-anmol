@@ -84,6 +84,7 @@ class Permission(str, Enum):
     CONFIG_READ = "config:read"
     CONFIG_WRITE = "config:write"
     AUDIT_READ = "audit:read"
+    ROLES_MANAGE = "roles:manage"   # superadmin-only; gates the roles admin API
 
 
 class ScopeLevel(str, Enum):
@@ -123,9 +124,11 @@ P = Permission
 # to a warehouse/factory when set. Admin-composed custom roles live in the DB
 # (later phase); these reproduce + extend today's behaviour.
 #
-# NOTE: new role *names* added to UserRole need a Postgres ENUM `ADD VALUE`
-# migration before a user can be assigned one (Phase 2). Reading existing users
-# is unaffected.
+# NOTE: `users.role` is a plain String(64) column, not a Postgres ENUM (see
+# `managers/erpManagers.py:335`), so any role name — built-in or a custom,
+# admin-created one — is assignable to a user with NO migration. Existence is
+# validated at the app layer (against the `roles` table / this dict), not by
+# the database schema.
 # ---------------------------------------------------------------------------
 ROLE_DEFINITIONS = {
     # ----- L5: super admin (everything, global) -----

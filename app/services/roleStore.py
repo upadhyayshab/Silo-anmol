@@ -1,15 +1,17 @@
 """DB-backed role store — the runtime source of truth for RBAC roles.
 
 Two jobs, both run once at startup (`load_roles`):
-  1. `seed_default_roles` — upsert the in-code defaults (`utils.permissions.ROLE_DEFINITIONS`)
-     into the `roles` / `role_permissions` tables. Idempotent; the 25 system roles are kept
-     in exact sync with code on every boot (perms reconciled add+prune). Custom, admin-created
-     roles are left untouched.
+  1. `seed_default_roles` — bootstrap-only. Inserts a system role (`utils.permissions.
+     ROLE_DEFINITIONS`) into the `roles` / `role_permissions` tables ONLY if it is missing.
+     A role that already exists in the DB is left completely untouched (scope, location,
+     and permissions included) — the DB is authoritative at runtime, so a superadmin's live
+     edits survive the next deploy/restart instead of being re-synced away.
   2. `refresh_role_cache` — load every role + its permissions from the DB into the resolver
      cache (`utils.permissions.set_role_cache`), which `has_permission`/`apply_scope`/masking read.
 
-Code dict = seed + fallback; the DB tables are authoritative at runtime, so an admin can add
-a role without a deploy (call `refresh_role_cache` after the write to publish it).
+Code dict = seed + fallback, applied once to a fresh DB; the DB tables are authoritative at
+runtime thereafter, so an admin can add/edit a role without a deploy (call `refresh_role_cache`
+after the write to publish it).
 """
 import logging
 
@@ -27,34 +29,45 @@ def _perm_strs(role_def: dict) -> set:
     return {p.value if hasattr(p, "value") else str(p) for p in role_def["perms"]}
 
 
+def _roles_to_bootstrap(defined_names: set, existing_names: set) -> set:
+    """System role names present in code but missing from the DB — the only rows we insert.
+
+    Pure/DB-free so it's unit-testable on its own (see tests/test_role_store.py)."""
+    return defined_names - existing_names
+
+
 async def seed_default_roles(engine) -> None:
-    """Upsert ROLE_DEFINITIONS into roles/role_permissions. Idempotent and self-healing:
-    system roles' scope/location/perms are reconciled to match code on every startup."""
+    """Bootstrap-only seed of ROLE_DEFINITIONS into roles/role_permissions.
+
+    Inserts a system role (row + perms) ONLY if it doesn't exist yet in the DB. A role
+    that's already present is left entirely alone — no scope/location overwrite, no perm
+    add, no perm prune — so a superadmin's live DB edits aren't wiped on the next boot.
+
+    Accepted trade-off: a permission added to an EXISTING role in code will NOT
+    auto-propagate to an already-seeded DB row; it must be toggled via the roles admin
+    UI (later task) or a one-off script. New role *types* still seed (they're missing),
+    and new *permission types* still surface automatically via ALL_PERMISSIONS.
+    """
     async with RoleManager(engine).session_factory() as session:
         existing = {r.name: r for r in
                     (await session.execute(db.select(RoleSchema))).scalars().all()}
+        defined_names = {role.value for role in ROLE_DEFINITIONS}
+        to_bootstrap = _roles_to_bootstrap(defined_names, set(existing))
+
         for role, d in ROLE_DEFINITIONS.items():
             name = role.value
+            if name not in to_bootstrap:
+                continue    # already exists — DB is authoritative, leave it untouched
+
             scope = d["scope"].value if hasattr(d["scope"], "value") else str(d["scope"])
             loc = d.get("location_type")
-            want = _perm_strs(d)
-
-            row = existing.get(name)
-            if row is None:
-                session.add(RoleSchema(name=name, scope_level=scope, location_type=loc,
-                                       is_system=True, description=f"System role: {name}"))
-            else:
-                row.scope_level, row.location_type, row.is_system = scope, loc, True
-
-            current = {rp.permission: rp for rp in (await session.execute(
-                db.select(RolePermissionSchema).where(
-                    RolePermissionSchema.role_name == name))).scalars().all()}
-            for perm in want - set(current):                 # add new
+            session.add(RoleSchema(name=name, scope_level=scope, location_type=loc,
+                                   is_system=True, description=f"System role: {name}"))
+            for perm in _perm_strs(d):
                 session.add(RolePermissionSchema(role_name=name, permission=perm))
-            for perm in set(current) - want:                 # prune removed (system roles only)
-                await session.delete(current[perm])
         await session.commit()
-    logger.info(f"[rbac] seeded {len(ROLE_DEFINITIONS)} system roles")
+    logger.info(f"[rbac] bootstrapped {len(to_bootstrap)} missing system roles "
+                f"(of {len(ROLE_DEFINITIONS)} defined)")
 
 
 async def refresh_role_cache(engine) -> int:
