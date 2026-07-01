@@ -148,10 +148,12 @@ async def get_today_queue(
     limit: int = Query(100, ge=1, le=500),
     ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
 ):
-    """Overdue / due-today / newly-assigned buckets for the caller's leads.
+    """New / engaged / not-reachable stage buckets for the caller's leads.
 
-    Telecallers are auto-scoped to their own leads; admins see everyone (or one
-    telecaller via `owner_id`). Soft-deleted leads are excluded.
+    A lead leaves the queue once a call is logged today (IST) and rolls to the
+    next day if still in one of these stages. Telecallers are auto-scoped to
+    their own leads; admins see everyone (or one telecaller via `owner_id`).
+    Soft-deleted leads are excluded.
     """
     actor = await _crm_actor(ctx)
     return await leadService.today_queue(engine, actor, owner_id=owner_id, limit=limit)

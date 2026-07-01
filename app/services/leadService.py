@@ -17,7 +17,6 @@ from config import get_engine, get_settings
 from managers import (
     LeadManager, LeadSchema,
     LeadActivityManager, LeadActivitySchema,
-    LeadAssignmentSchema,
     UserManager, OutletManager,
 )
 from models import (
@@ -33,9 +32,19 @@ from services import assignmentService, presenceService
 
 logger = logging.getLogger(__name__)
 
-# India Standard Time — the business is India-wide, so "today" for the callback
+# India Standard Time — the business is India-wide, so "today" for the working
 # queue is bucketed on the IST calendar day.
 IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _start_of_ist_day(now: datetime) -> datetime:
+    """UTC instant of the most recent IST midnight (start of "today" in IST).
+
+    Used to decide whether a lead has been worked *today*: any call logged at or
+    after this instant counts. Returned tz-aware in UTC so it compares directly
+    against stored timestamps. Pure (no I/O) so it is unit-testable."""
+    ist_midnight = now.astimezone(IST).replace(hour=0, minute=0, second=0, microsecond=0)
+    return ist_midnight.astimezone(timezone.utc)
 
 
 # Fields a telecaller/admin may edit via PATCH (stage & owner are excluded — they
@@ -596,11 +605,17 @@ async def sweep_unassigned():
 
 async def today_queue(engine, user, *, owner_id: Optional[str] = None,
                       limit: int = 100) -> TodayQueueResponse:
-    """The telecaller's callback queue, split into three buckets.
+    """The telecaller's working queue, split into three stage buckets.
 
-    - **overdue**         — ``follow_up_at`` in the past, oldest first
-    - **due_today**       — ``follow_up_at`` later today (IST), soonest first
-    - **newly_assigned**  — current active assignment < 24h old, never called
+    - **new**            — stage New Lead, newest first
+    - **engaged**        — stage Engaged, earliest follow-up first
+    - **not_reachable**  — stage Not Reachable, oldest-touched first
+
+    A lead drops out of every bucket once a call is logged *today* (IST calendar
+    day), and reappears the next day if it is still in one of these stages — so
+    working a lead clears it for the day, while unreached leads roll to tomorrow.
+    Logging a call also auto-advances the stage via the disposition map, so a
+    connected lead naturally leaves "new"/"not_reachable" on its own.
 
     Role-scoped: a telecaller sees only their own leads; an admin sees all, or a
     single telecaller's via ``owner_id``. Soft-deleted leads are excluded from
@@ -615,13 +630,22 @@ async def today_queue(engine, user, *, owner_id: Optional[str] = None,
         scope_owner = user.uid            # telecaller -> own leads only
 
     now = _now()
-    now_ist = now.astimezone(IST)
-    day_end_ist = (now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
-                   + timedelta(days=1))
-    cutoff_24h = now - timedelta(hours=24)
+    today_start = _start_of_ist_day(now)
 
-    def _scope(q):
-        q = q.where(LeadSchema.deleted_at.is_(None))
+    # Leads already worked today: a call logged at/after IST midnight. An
+    # IN-subquery (not a JOIN) keeps the select one-row-per-lead so bucket counts
+    # stay exact even when a lead has several call logs.
+    worked_today = db.select(LeadActivitySchema.lead_id).where(
+        LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG,
+        LeadActivitySchema.created_at >= today_start,
+    )
+
+    def _bucket_base(stage):
+        q = db.select(LeadSchema).where(
+            LeadSchema.deleted_at.is_(None),
+            LeadSchema.stage == stage.value,
+            LeadSchema.uid.not_in(worked_today),
+        )
         if scope_owner:
             q = q.where(LeadSchema.owner_id == scope_owner)
         return q
@@ -641,41 +665,14 @@ async def today_queue(engine, user, *, owner_id: Optional[str] = None,
         ]
         return TodayQueueBucket(count=total, items=items)
 
-    # Overdue: follow-up time already passed.
-    overdue_base = _scope(db.select(LeadSchema)).where(
-        LeadSchema.follow_up_at.is_not(None),
-        LeadSchema.follow_up_at < now,
-    )
-    overdue = await _materialize(overdue_base, LeadSchema.follow_up_at.asc())
-
-    # Due today: the remaining part of the IST day (now .. end of today).
-    due_base = _scope(db.select(LeadSchema)).where(
-        LeadSchema.follow_up_at >= now,
-        LeadSchema.follow_up_at < day_end_ist,
-    )
-    due_today = await _materialize(due_base, LeadSchema.follow_up_at.asc())
-
-    # Newly assigned: a current active assignment < 24h old, with no call yet.
-    # Built with IN-subqueries (not a JOIN) so the select stays one-row-per-lead
-    # — this keeps the bucket count exact even if a lead momentarily had >1
-    # active assignment (e.g. a race during reassignment).
-    called_subq = db.select(LeadActivitySchema.lead_id).where(
-        LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG
-    )
-    recent_assign = db.select(LeadAssignmentSchema.lead_id).where(
-        LeadAssignmentSchema.is_active.is_(True),
-        LeadAssignmentSchema.created_at >= cutoff_24h,
-    )
-    if scope_owner:
-        recent_assign = recent_assign.where(LeadAssignmentSchema.telecaller_id == scope_owner)
-    newly_base = _scope(db.select(LeadSchema)).where(
-        LeadSchema.uid.in_(recent_assign),
-        LeadSchema.uid.not_in(called_subq),
-    )
-    newly_assigned = await _materialize(newly_base, LeadSchema.created_at.desc())
+    # Postgres orders NULLs last on ASC, so engaged leads without a scheduled
+    # follow-up naturally sort after those with one.
+    new = await _materialize(_bucket_base(LeadStage.NEW_LEAD), LeadSchema.created_at.desc())
+    engaged = await _materialize(_bucket_base(LeadStage.ENGAGED), LeadSchema.follow_up_at.asc())
+    not_reachable = await _materialize(_bucket_base(LeadStage.NOT_REACHABLE), LeadSchema.updated_at.asc())
 
     return TodayQueueResponse(
-        overdue=overdue, due_today=due_today, newly_assigned=newly_assigned,
+        new=new, engaged=engaged, not_reachable=not_reachable,
         generated_at=now,
     )
 

@@ -214,9 +214,9 @@ class TodayQueueBucket(BaseModel):
 
 
 class TodayQueueResponse(BaseModel):
-    overdue: TodayQueueBucket        # follow_up_at < now
-    due_today: TodayQueueBucket      # follow_up_at later today (IST)
-    newly_assigned: TodayQueueBucket  # assigned < 24h ago, never called
+    new: TodayQueueBucket            # stage New Lead
+    engaged: TodayQueueBucket        # stage Engaged
+    not_reachable: TodayQueueBucket  # stage Not Reachable
     generated_at: datetime
 
 
