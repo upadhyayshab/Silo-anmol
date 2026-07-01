@@ -5,9 +5,8 @@ custom roles without a deploy). Does NOT touch `users.role` yet; that enum→var
 conversion is a separate, gated migration. The 25 default roles are seeded into these
 tables at app startup (`services.roleStore.seed_default_roles`), not here.
 
-ponytail: chained on the current dev head (`20260628_02_crm_cols`), which sits behind the
-CRM/FB chain. RBAC is prod-bound and CRM is NOT — so before this rides to prod, re-parent
-`down_revision` onto the prod chain (same divergence the cluster/agency migrations note).
+Chained on `20260628_02_crm_cols`. As of 2026-07-02 CRM/FB is deployed to prod, so no
+re-parenting is needed — that ancestor is in prod's chain (CRM/prod separation retired).
 
 Revision ID: 20260629_01_rbac_roles_tables
 Revises: 20260628_02_crm_cols

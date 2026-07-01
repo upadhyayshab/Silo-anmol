@@ -13,8 +13,8 @@ Not auto-reverted: downgrade is a no-op. varchar is a safe superset of the enum 
 loss), and silently re-imposing a hard enum on a shared/prod DB is the risky direction we
 don't want a downgrade to take. To revert manually, ALTER the column back to the enum type.
 
-ponytail: re-parent down_revision onto the prod chain before this rides to prod
-(prod excludes CRM/FB — known divergence).
+As of 2026-07-02 CRM/FB is deployed to prod, so no re-parenting is needed before this
+rides to prod (CRM/prod separation retired).
 
 Revision ID: 20260629_02_user_role_to_varchar
 Revises: 20260629_01_rbac_roles_tables
