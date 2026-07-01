@@ -213,6 +213,7 @@ class ExotelAdapter(TelephonyProvider):
         self._app_entity = app_entity or "app"   # token scope sent to Exotel as Entity
         self._token_url = f"https://{integrations_host}/v2/integrations/token"
         self._usermapping_url = f"https://{integrations_host}/v2/integrations/usermapping"
+        self._device_url = f"https://{integrations_host}/v2/integrations/device"
         self._sdk_token: Optional[str] = None
         self._sdk_token_ts = 0.0
         self._sdk_token_ttl = 30 * 86400   # re-mint monthly; Exotel expires it at 90 days
@@ -387,6 +388,10 @@ class ExotelAdapter(TelephonyProvider):
         e = email.strip().lower()
         exo = self._email_overrides.get(e, e)
         await self._ensure_mapping(exo, name, agent_number)
+        # Flip the agent's softphone (SIP) device Available — the same flag as the ON/OFF
+        # toggle in the Exotel dashboard. Without it, CCM make-call fails 10708 ("no online
+        # device") even though the SDK's SIP is registered. Best-effort: never blocks auth.
+        await self.set_device_status(exo, on=True)
         # The CRM WebSDK builds `?user_id=${userId}` WITHOUT url-encoding, so a "+" in a
         # plus-addressed Exotel email (crm+1@…) is read as a space -> 404. Pre-encode it.
         return {"accessToken": token, "userId": exo.replace("+", "%2B")}
@@ -438,6 +443,34 @@ class ExotelAdapter(TelephonyProvider):
                 logger.warning(f"[exotel] auto-map POST for {exotel_email}: HTTP {r.status_code} {r.text[:200]}")
         except Exception as ex:
             logger.warning(f"[exotel] auto-map POST failed for {exotel_email}: {ex}")
+
+    async def set_device_status(self, email: str, on: bool = True, device: str = "sip") -> bool:
+        """Flip an agent's Exotel device availability via PUT /v2/integrations/device — the
+        same flag as the dashboard's ON/OFF toggle. The WebSDK only REGISTERS the SIP device;
+        this availability flag is separate, and CCM make-call needs it ON or it errors 10708.
+
+        `device`: "sip" (the WebRTC softphone) or "phone" (the agent's PSTN leg). UserId is
+        the AppUserId (agent's Exotel email), matching /usermapping. Best-effort: returns
+        False (and logs) on any failure — never blocks the softphone token mint or a call.
+        """
+        if not email:
+            return False
+        token = await self._sdk_access_token()
+        if not token:
+            return False
+        e = email.strip().lower()
+        exo = self._email_overrides.get(e, e)
+        body = {"UserId": exo, "DeviceName": device, "DeviceStatus": bool(on)}
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                r = await client.put(self._device_url, json=body,
+                                     headers={"Authorization": token, "Content-Type": "application/json"})
+            if r.status_code == 200:
+                return True
+            logger.warning(f"[exotel] set device {device}={on} for {exo}: HTTP {r.status_code} {r.text[:200]}")
+        except Exception as ex:
+            logger.warning(f"[exotel] set device status failed for {exo}: {ex}")
+        return False
 
     async def _sdk_access_token(self) -> Optional[str]:
         """Mint (and cache) the SDK 'app' access token. Auth is the Id/Secret in the
@@ -578,6 +611,7 @@ if __name__ == "__main__":
     assert _e164_in("+918068875264") == "+918068875264"
 
     a = ExotelAdapter("sid", "key", "token", caller_id="08047", status_callback="https://cb/exotel/call")
+    assert a._device_url.endswith("/v2/integrations/device")   # device-status PUT target wired
 
     # Real Passthru shapes seen in prod (contact-centre flow):
     pt = a.parse_event({
