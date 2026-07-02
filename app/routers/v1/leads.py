@@ -102,6 +102,7 @@ async def list_leads(
     limit: int = Query(25, ge=1, le=200),
     offset: int = Query(0, ge=0),
     q: Optional[str] = Query(None, description="Free-text search: name / mobile / email / lead number"),
+    fb_page_id: Optional[str] = Query(None, description="Filter to leads whose campaign_data.page_id matches this FB page"),
     filters: dict = Depends(filtering_dependency),
     sorts: list = Depends(sorting_dependency),
     ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
@@ -110,6 +111,8 @@ async def list_leads(
 
     Telecallers are auto-restricted to their own leads. Supports the standard
     `field:eq/like/in/...` filters and `field:asc/desc` sorts, plus `q` search.
+    `fb_page_id` filters on campaign_data.page_id (JSON path — FB leads have no
+    plain page column).
     """
     # Telecallers see leads they own OR leads they were granted call-access to (handled a
     # routed inbound call). GLOBAL/microservice see all.
@@ -119,7 +122,7 @@ async def list_leads(
         scope_uids = await assignmentService.call_access_lead_ids(engine, ctx.user_id)
     items, total = await lead_manager.search_leads(
         q=q, filters={**filters, "deleted_at": None}, sorts=sorts, limit=limit, offset=offset,
-        scope_owner_id=scope_owner_id, scope_uids=scope_uids,
+        scope_owner_id=scope_owner_id, scope_uids=scope_uids, fb_page_id=fb_page_id,
     )
     user_cache, outlet_cache = {}, {}
     responses = [
