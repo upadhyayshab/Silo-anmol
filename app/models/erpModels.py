@@ -24,6 +24,7 @@ class UserCreateRequest(BaseModel):
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
     agency_id: Optional[str] = None
+    state: Optional[str] = None
     assignment_quota: Optional[int] = Field(default=0, description="Max leads per day or active pool for telecallers")
 
     @validator('email')
@@ -40,6 +41,7 @@ class UserUpdateRequest(BaseModel):
     outlet_id: Optional[str] = None
     is_active: Optional[bool] = None
     agency_id: Optional[str] = None
+    state: Optional[str] = None
     assignment_quota: Optional[int] = None
 
 
