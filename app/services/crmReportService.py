@@ -134,16 +134,17 @@ async def prospect_report(
         lead_ids = [l.uid for l in leads]
         owner_ids = {l.owner_id for l in leads if l.owner_id}
 
-        # --- owner names + contact (email/phone shown per-row = the telecaller's) ---
+        # --- owner names + email (owner_email is the telecaller's; the lead's own
+        # contact details — name, phone — come from the lead row itself below) ---
         owners: Dict[str, str] = {}
-        owner_contact: Dict[str, Dict[str, str]] = {}
+        owner_emails: Dict[str, str] = {}
         if owner_ids:
-            for uid, name, email, phone in (await session.execute(
-                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email, UserSchema.phone)
+            for uid, name, email in (await session.execute(
+                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email)
                   .where(UserSchema.uid.in_(owner_ids))
             )).all():
                 owners[uid] = name or email or uid
-                owner_contact[uid] = {"email": email or "", "phone": phone or ""}
+                owner_emails[uid] = email or ""
 
         # --- call activities: count + latest disposition per lead ---
         call_count: Dict[str, int] = {}
@@ -214,13 +215,13 @@ async def prospect_report(
             call = latest_call.get(l.uid)
             details = (call.details or {}) if call else {}
             agg = order_agg.get(l.uid, {})
-            contact = owner_contact.get(l.owner_id, {})
             rows.append({
                 "uid": l.uid,   # for the table's "open lead" link; not in the Excel export
                 "prospect_id": l.lead_number,
+                "lead_name": " ".join(p for p in (l.first_name, l.last_name) if p),
                 "owner": owners.get(l.owner_id, ""),
-                "email": contact.get("email", ""),   # telecaller (lead owner) contact, not the lead's
-                "phone": contact.get("phone", ""),
+                "owner_email": owner_emails.get(l.owner_id, ""),
+                "phone": l.mobile or "",   # the lead's own mobile, not the owner's
                 "lead_stage": l.stage.value if l.stage else "",
                 "lead_source": l.source.value if l.source else "",
                 "disposition": _disposition_label(details, call.outcome if call else None),
