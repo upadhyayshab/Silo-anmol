@@ -227,9 +227,13 @@ async def get_user(
             phone=user.phone,
             role=user.role,
             outlet_id=user.outlet_id,
+            agency_id=user.agency_id,
+            state=user.state,
             is_active=user.is_active,
+            assignment_quota=user.assignment_quota,
             created_at=user.created_at,
             last_login=user.last_login,
+            last_active_at=user.last_active_at,
             updated_at=user.updated_at
         )
     
@@ -402,8 +406,12 @@ async def list_users(
                 role=user.role,
                 phone=user.phone,
                 outlet_id=user.outlet_id,
+                agency_id=user.agency_id,
+                state=user.state,
                 is_active=user.is_active,
+                assignment_quota=user.assignment_quota,
                 last_login=user.last_login,
+                last_active_at=user.last_active_at,
                 created_at=user.created_at,
                 updated_at=user.updated_at
             )
@@ -461,8 +469,11 @@ async def create_user(
             phone=created_user.phone,
             outlet_id=created_user.outlet_id,
             agency_id=created_user.agency_id,
+            state=created_user.state,
             is_active=created_user.is_active,
+            assignment_quota=created_user.assignment_quota,
             last_login=created_user.last_login,
+            last_active_at=created_user.last_active_at,
             created_at=created_user.created_at,
             updated_at=created_user.updated_at
         )
@@ -507,8 +518,11 @@ async def update_user(
             phone=updated_user.phone,
             outlet_id=updated_user.outlet_id,
             agency_id=updated_user.agency_id,
+            state=updated_user.state,
             is_active=updated_user.is_active,
+            assignment_quota=updated_user.assignment_quota,
             last_login=updated_user.last_login,
+            last_active_at=updated_user.last_active_at,
             created_at=updated_user.created_at,
             updated_at=updated_user.updated_at
         )

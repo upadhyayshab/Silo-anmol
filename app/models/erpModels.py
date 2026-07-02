@@ -56,6 +56,7 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     outlet_id: Optional[str] = None
     agency_id: Optional[str] = None
+    state: Optional[str] = None
     is_active: bool
     assignment_quota: Optional[int] = 0
     last_login: Optional[datetime] = None

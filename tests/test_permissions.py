@@ -118,6 +118,47 @@ def test_scope_levels():
     assert role_scope_level(UserRole.CEO) == ScopeLevel.GLOBAL
 
 
+# --------------------------------------------------------------------------
+# Task 7: users list/get/create responses expose full user detail (state,
+# activity timestamps) so the admin Users table can render them. DB-free
+# checks only (this module stays config-free); see routers/v1/users.py.
+# --------------------------------------------------------------------------
+
+def test_user_response_has_full_detail_fields():
+    from models import UserResponse
+    for field in ("state", "created_at", "updated_at", "last_active_at",
+                  "agency_id", "assignment_quota"):
+        assert field in UserResponse.model_fields, f"UserResponse missing {field}"
+
+
+def test_user_schema_has_full_detail_columns():
+    # Guards the DB columns the router reads from stay in sync with UserResponse.
+    # managers.py needs SharedBackend on sys.path first (see app/path_setup.py);
+    # scoped to this test so the module stays DB-free for everything else.
+    import path_setup  # noqa: F401
+    from managers import UserSchema
+    for column in ("state", "created_at", "updated_at", "last_active_at",
+                   "agency_id", "assignment_quota"):
+        assert hasattr(UserSchema, column), f"UserSchema missing {column}"
+
+
+def test_users_router_populates_full_detail_on_list_get_create_update():
+    # Source-level regression guard: every UserResponse(...) construction site in
+    # the users router must pass state/last_active_at (the fields that were being
+    # silently dropped before Task 7), not just declare them on the model.
+    import re
+    users_router_path = os.path.join(
+        os.path.dirname(__file__), "..", "app", "routers", "v1", "users.py")
+    with open(users_router_path, encoding="utf-8") as f:
+        src = f.read()
+
+    calls = re.findall(r"UserResponse\((?:[^()]|\([^()]*\))*\)", src)
+    assert len(calls) >= 4, f"expected list/get/create/update UserResponse(...) sites, found {len(calls)}"
+    for call in calls:
+        assert "state=" in call, f"UserResponse(...) missing state=: {call[:80]}..."
+        assert "last_active_at=" in call, f"UserResponse(...) missing last_active_at=: {call[:80]}..."
+
+
 def _check_apply_scope():
     """apply_scope branching, override, and deny-by-default. Needs utils.auth
     (-> config); run only from __main__ so pytest collection stays config-free."""
