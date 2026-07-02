@@ -4,15 +4,17 @@ Leads created by a telecaller (or agency telecaller) via the API with no
 explicit source are auto-attributed to source='Telecaller'. The value must
 exist on the Postgres `lead_source` type before the API can persist it.
 
-Revision ID: 20260702_04_lead_source_telecaller
+Revision ID: 20260702_04_src_telecaller
 Revises: 20260702_03_lead_source_medusa
 Create Date: 2026-07-02 00:00:00.000000
+
+Note: revision id kept <=32 chars to fit alembic_version.version_num (varchar 32).
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "20260702_04_lead_source_telecaller"
+revision = "20260702_04_src_telecaller"
 down_revision = "20260702_03_lead_source_medusa"
 branch_labels = None
 depends_on = None
