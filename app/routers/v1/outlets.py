@@ -127,7 +127,7 @@ async def list_outlets(
     city: str = None,
     state: str = None,
     outlet_type: Optional[OutletType] = None,
-    limit: int = 50,
+    limit: int = 150,
     offset: int = 0,
     ctx: AuthContext = Depends(require_permission(Permission.OUTLETS_READ, allow_scopes=["delivery:read"]))
 ):
