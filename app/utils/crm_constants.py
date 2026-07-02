@@ -27,6 +27,10 @@ class LeadSource(str, Enum):
     BROWSED_3_PAGES     = "browsed 3 pages"
     # Leads/orders first captured at an outlet (sent to LeadSquared via order sync).
     OUTLET              = "Outlet"
+    # D2C webstore (Medusa) leads — LSQ stores the lowercase value 'medusa'.
+    MEDUSA              = "medusa"
+    # Auto-set by the API when a telecaller creates a lead with no source given.
+    TELECALLER          = "Telecaller"
 
 
 class LSQPaymentStatusActivityField(str, Enum):

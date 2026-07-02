@@ -117,7 +117,8 @@ class LeadManager(ERPGenericManager[LeadSchema]):
 
     async def search_leads(self, *, q: str = None, filters: NESTED_FILTERS = None,
                            sorts: list = None, limit: int = 25, offset: int = 0,
-                           scope_owner_id: str = None, scope_uids: list = None):
+                           scope_owner_id: str = None, scope_uids: list = None,
+                           fb_page_id: str = None):
         """Paginated list with optional free-text OR-search across name/mobile/email/lead_number.
 
         Returns (items, total). `filters` are ANDed (stage, deleted_at, etc.);
@@ -127,6 +128,13 @@ class LeadManager(ERPGenericManager[LeadSchema]):
         Row scope: when `scope_owner_id` is given, results are limited to leads that user
         owns OR (if `scope_uids` is given) any of those lead uids — this is how a telecaller
         sees leads they were granted call-access to alongside the leads they own.
+
+        `fb_page_id`: FB leads carry their originating page inside the `campaign_data`
+        JSON blob (`{"page_id": "..."}`), not a plain column, so this is a JSON-path
+        filter rather than a generic `field:eq`. Uses the cross-dialect
+        `campaign_data['page_id'].as_string()` comparator (compiles to `->>'page_id'`
+        on Postgres) so it also works against sqlite in tests. Leads with NULL
+        campaign_data simply don't match — no error.
         """
         async with self.session_factory() as session:
             base = db.select(self.Schema)
@@ -135,6 +143,11 @@ class LeadManager(ERPGenericManager[LeadSchema]):
             if filters:
                 base = await self._filter(base, dict(filters), self.Schema)
                 count_q = await self._filter(count_q, dict(filters), self.Schema)
+
+            if fb_page_id is not None:
+                fb_cond = self.Schema.campaign_data["page_id"].as_string() == fb_page_id
+                base = base.where(fb_cond)
+                count_q = count_q.where(fb_cond)
 
             if scope_owner_id is not None:
                 conds = [self.Schema.owner_id == scope_owner_id]

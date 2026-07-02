@@ -57,6 +57,17 @@ def generate_order_number() -> str:
     return f"ORD-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
 
 
+def _assert_discount_within_selling_price(product_name: str, per_unit_discount: Decimal, cost_price: Decimal) -> None:
+    """A per-unit discount can never exceed the product's selling price (cost_price) — since
+    selling price <= MRP (unit_price), this also caps the discount at MRP. Pure/DB-free so it's
+    unit-testable like payment_status_for; pinned by test_order_form_validation."""
+    if per_unit_discount > cost_price:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Discount for {product_name} exceeds its selling price",
+        )
+
+
 # --- order row-scope helpers (Step 4c) -------------------------------------
 # Order visibility is FUNCTION-specific (telecaller=own-created, delivery=assigned-to-
 # deliver, managers=by outlet, agency=by agency), so unlike transfers it can't key on a
@@ -168,8 +179,9 @@ async def create_order(
             
             # Calculate unit_price after product manual discount
             per_unit_discount = item.product_manual_discount / item.quantity if item.quantity > 0 else Decimal('0.00')
+            _assert_discount_within_selling_price(product.product_name, per_unit_discount, product.cost_price)
             calculated_unit_price = product.cost_price - per_unit_discount
-            # Ensure unit_price is not negative
+            # Ensure unit_price is not negative (safety net; the check above already blocks this)
             if calculated_unit_price < 0:
                 calculated_unit_price = Decimal('0.00')
             

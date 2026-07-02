@@ -90,13 +90,102 @@ def test_agency_update_fence_blocks_move():
     ufence(sa, "ACCOUNTANT", None, {"agency_id": "ag2"})
 
 
+# --- create_user (Task 8: SUPER_ADMIN creating TELECALLER / AGENCY_TELECALLER) ---
+#
+# This codebase's test suite is deliberately DB-free (no conftest.py, no
+# TestClient(app) fixture — tests/test_admin.py's `from app import app` even
+# fails to collect here: `ModuleNotFoundError: path_setup`). Rather than stand
+# up a real DB, these tests call the router's create_user() coroutine
+# directly with a monkeypatched user_manager (fetch_all/create stubbed with
+# async fakes) — the same function FastAPI invokes for `POST /users`, so a
+# clean return (no HTTPException) is exactly what a 201 requires.
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def _create_user_as_super_admin(payload_kwargs, monkeypatch):
+    from utils.auth import AuthContext
+    from models import UserCreateRequest
+    from routers.v1 import users as users_router
+
+    class _FakeFetchAllResult:
+        items = []
+
+    async def _fake_fetch_all(*a, **k):
+        return _FakeFetchAllResult()
+
+    async def _fake_create(user):
+        # Mimic the DB assigning identity/timestamps on insert.
+        import datetime
+        user.uid = "new-user-uid"
+        user.created_at = datetime.datetime.now(datetime.timezone.utc)
+        return user
+
+    monkeypatch.setattr(users_router.user_manager, "fetch_all", _fake_fetch_all)
+    monkeypatch.setattr(users_router.user_manager, "create", _fake_create)
+
+    ctx = AuthContext(user_id="s", role="SUPER_ADMIN", scope_level="GLOBAL", perms={"*"})
+    payload = UserCreateRequest(**payload_kwargs)
+    return _run(users_router.create_user(payload, ctx))
+
+
+def test_create_user_agency_telecaller_with_agency_returns_201_body(monkeypatch):
+    response = _create_user_as_super_admin(dict(
+        email="agency.tc@example.com",
+        password="password123",
+        full_name="Agency TC",
+        role="AGENCY_TELECALLER",
+        phone="9876543210",
+        agency_id="ag1",
+        assignment_quota=25,
+    ), monkeypatch)
+    assert response.role == "AGENCY_TELECALLER"
+    assert response.agency_id == "ag1"
+    assert response.assignment_quota == 25  # was silently dropped before the Task 8 fix
+
+
+def test_create_user_telecaller_without_agency_returns_201_body(monkeypatch):
+    response = _create_user_as_super_admin(dict(
+        email="telecaller@example.com",
+        password="password123",
+        full_name="Plain TC",
+        role="TELECALLER",
+        phone="9876543211",
+    ), monkeypatch)
+    assert response.role == "TELECALLER"
+    assert response.agency_id is None
+
+
+class _MinimalMonkeypatch:
+    """Tiny stand-in for pytest's `monkeypatch` fixture, for the __main__ runner
+    below (pytest itself injects the real fixture when run via `pytest`)."""
+    def __init__(self):
+        self._restores = []
+
+    def setattr(self, obj, name, value):
+        self._restores.append((obj, name, getattr(obj, name)))
+        setattr(obj, name, value)
+
+    def undo(self):
+        for obj, name, old in reversed(self._restores):
+            setattr(obj, name, old)
+
+
 if __name__ == "__main__":
+    import inspect
     fails = 0
     for n, f in sorted(globals().items()):
         if n.startswith("test_") and callable(f):
+            mp = _MinimalMonkeypatch() if "monkeypatch" in inspect.signature(f).parameters else None
             try:
-                f(); print("PASS", n)
+                f(mp) if mp else f()
+                print("PASS", n)
             except AssertionError as e:
                 fails += 1; print("FAIL", n, e)
+            finally:
+                if mp:
+                    mp.undo()
     print("OK" if not fails else f"{fails} FAILED")
     sys.exit(1 if fails else 0)
