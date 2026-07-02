@@ -53,12 +53,18 @@ def _restrict(pool: List[UserSchema], only_ids: Optional[set]) -> List[UserSchem
 
 async def _active_telecallers(engine, outlet_id: Optional[str],
                               state: Optional[str],
-                              only_ids: Optional[set] = None) -> List[UserSchema]:
+                              only_ids: Optional[set] = None,
+                              *, allow_cross_state: bool = True) -> List[UserSchema]:
     """Tiered pool: telecallers in the outlet -> same state -> global, optionally
     restricted to `only_ids` (available agents for inbound routing).
 
     Region separation: a lead is only assigned across states as a last resort
     (when no telecaller exists in its state at all).
+
+    `allow_cross_state=False` disables that last resort: an unstaffed/no-region
+    lead returns [] (stays unassigned for a super admin to place manually) instead
+    of spilling to the global pool. Auto lead-assignment passes False; inbound call
+    routing keeps the default True (a live call must still ring an available agent).
     """
     user_manager = UserManager(engine)
 
@@ -86,11 +92,15 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
         # lead handed to a Karnataka agent because AP agents happened to be offline.
         if in_state_all:
             return []
-        # Tier 3: the state is genuinely unstaffed (no active telecaller at all) — only then
-        # do we cross state lines, as a documented last resort.
+        # Tier 3: the state is genuinely unstaffed (no active telecaller at all). Cross state
+        # lines only for callers that opt in (inbound routing); auto-assign leaves it unassigned.
+        if not allow_cross_state:
+            return []
         return _restrict(list(all_active.items), only_ids)
 
-    # No region info at all: global pool.
+    # No region info at all: global pool (auto-assign opts out -> leave unassigned).
+    if not allow_cross_state:
+        return []
     everyone = await user_manager.fetch_all(
         filters={"role": TELECALLER_ROLES, "is_active": True}
     )
@@ -117,14 +127,19 @@ async def _active_assignment_counts(engine, telecaller_ids: List[str]) -> dict:
 
 async def pick_telecaller(engine, outlet_id: Optional[str],
                           state: Optional[str] = None,
-                          only_ids: Optional[set] = None) -> Optional[UserSchema]:
+                          only_ids: Optional[set] = None,
+                          *, allow_cross_state: bool = True) -> Optional[UserSchema]:
     """Pick the least-loaded active telecaller for an outlet/state (None if none exist).
 
     `only_ids` constrains the pool to a given set of telecallers — used by inbound
     routing to pick only among *available* (fresh-heartbeat) agents. Default None
     keeps the original lead-create behaviour (any active telecaller).
+
+    `allow_cross_state=False` keeps auto-assignment in-region: no in-state agent ->
+    None (unassigned, for a super admin to place manually), never a cross-state pick.
     """
-    pool = await _active_telecallers(engine, outlet_id, state, only_ids)
+    pool = await _active_telecallers(engine, outlet_id, state, only_ids,
+                                     allow_cross_state=allow_cross_state)
     if not pool:
         return None
     counts = await _active_assignment_counts(engine, [u.uid for u in pool])

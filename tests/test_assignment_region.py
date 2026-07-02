@@ -1,9 +1,11 @@
 """Region separation for lead auto-assignment (DB-free).
 
 Pins the fix for the prod bug where Andhra Pradesh leads were handed to Karnataka
-telecallers: a lead crosses state lines *only* when it has no state or its state is
-genuinely unstaffed. If in-state agents merely happen to be offline / unavailable, the
-lead waits (stays unassigned) instead of spilling to another state.
+telecallers. Auto-assignment (create round-robin + distribute/sweep) stays strictly
+in-region: a lead with no in-state agent (offline, over-quota, unstaffed, or no state)
+is left unassigned for a super admin to place manually — never spilled across states.
+Inbound call routing keeps the cross-state last resort (allow_cross_state default True)
+so a live incoming call still rings an available agent.
 
 Two paths are covered because both do their own round-robin:
   - assignmentService._active_telecallers  (create + inbound routing)
@@ -77,15 +79,33 @@ def test_in_state_offline_waits_not_cross():
 
 def test_unstaffed_state_crosses_as_last_resort():
     # Kerala has no telecaller at all -> documented last resort: cross state lines.
+    # (Default allow_cross_state=True — the inbound-routing path.)
     _patch_users([_user("ka1", "karnataka")])
     pool = run(A._active_telecallers("E", None, "kerala", only_ids={"ka1"}))
     assert {u.uid for u in pool} == {"ka1"}, [u.uid for u in pool]
 
 
 def test_no_state_uses_global_pool():
+    # Default allow_cross_state=True — the inbound-routing path.
     _patch_users([_user("ka1", "karnataka"), _user("ap1", "andhra pradesh")])
     pool = run(A._active_telecallers("E", None, None, only_ids=None))
     assert {u.uid for u in pool} == {"ka1", "ap1"}, [u.uid for u in pool]
+
+
+def test_unstaffed_state_no_cross_when_disabled():
+    # allow_cross_state=False (auto-assign): unstaffed state -> [] (unassigned for manual).
+    _patch_users([_user("ka1", "karnataka")])
+    pool = run(A._active_telecallers("E", None, "kerala", only_ids={"ka1"},
+                                     allow_cross_state=False))
+    assert pool == [], [u.uid for u in pool]
+
+
+def test_no_state_no_global_when_disabled():
+    # allow_cross_state=False (auto-assign): no region -> [] instead of the global pool.
+    _patch_users([_user("ka1", "karnataka"), _user("ap1", "andhra pradesh")])
+    pool = run(A._active_telecallers("E", None, None, only_ids=None,
+                                     allow_cross_state=False))
+    assert pool == [], [u.uid for u in pool]
 
 
 def test_outlet_tier_wins_over_state():
@@ -151,9 +171,9 @@ def test_distribute_auto_keeps_leads_in_state():
     assert picked.get("L_ap") == "ap"                 # in-state
     assert picked.get("L_ka") == "ka"                 # in-state
     assert "L_tg" not in picked                        # staffed-but-offline -> waits, not cross
-    assert picked.get("L_kl") in ("ap", "ka")          # unstaffed -> cross-state last resort
-    assert picked.get("L_no") in ("ap", "ka")          # no state -> global pool
-    assert res["assigned"] == 4 and res["skipped"] == 1, res
+    assert "L_kl" not in picked                        # unstaffed -> unassigned (no cross-state), for manual
+    assert "L_no" not in picked                        # no state -> unassigned, for manual
+    assert res["assigned"] == 2 and res["skipped"] == 3, res
 
 
 if __name__ == "__main__":
