@@ -352,6 +352,17 @@ class OrderPaymentRequest(BaseModel):
     transaction_reference: Optional[str] = None
     notes: Optional[str] = None
 
+    @validator('transaction_reference', always=True)
+    def validate_transaction_reference(cls, v, values):
+        # always=True: must also run when the field is omitted entirely (defaults to None) —
+        # cash/COD payments don't carry a transaction id; upi/online/card are prepaid methods
+        # and must be traceable to a real payment.
+        method = values.get('payment_method')
+        if method in (PaymentMethod.UPI, PaymentMethod.ONLINE, PaymentMethod.CARD):
+            if not v or not v.strip():
+                raise ValueError('transaction_reference is required for prepaid payments')
+        return v
+
 
 class OrderCreateRequest(BaseModel):
     customer_name: str
@@ -1239,7 +1250,7 @@ __all__ = [
     "InventoryResponse", "StockAdjustmentRequest","InventoryAuditResponse",
     
     # Order
-    "OrderItemRequest", "OrderCreateRequest", "ProxyOrderCreateRequest", "OrderUpdateRequest",
+    "OrderItemRequest", "OrderPaymentRequest", "OrderCreateRequest", "ProxyOrderCreateRequest", "OrderUpdateRequest",
     "OrderFullUpdateRequest",
     "OrderStatusUpdateRequest", "OrderAssignRequest", "OrderRevokeRequest",
     "OrderItemResponse", "OrderResponse",
