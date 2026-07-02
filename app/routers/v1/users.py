@@ -456,6 +456,7 @@ async def create_user(
             phone=payload.phone,
             outlet_id=payload.outlet_id,
             agency_id=payload.agency_id,
+            assignment_quota=payload.assignment_quota,
             is_active=True
         )
 
