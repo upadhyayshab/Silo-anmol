@@ -29,6 +29,8 @@ class LeadSource(str, Enum):
     OUTLET              = "Outlet"
     # D2C webstore (Medusa) leads — LSQ stores the lowercase value 'medusa'.
     MEDUSA              = "medusa"
+    # Auto-set by the API when a telecaller creates a lead with no source given.
+    TELECALLER          = "Telecaller"
 
 
 class LSQPaymentStatusActivityField(str, Enum):

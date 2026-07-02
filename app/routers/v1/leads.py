@@ -29,6 +29,7 @@ from dependencies.telephony_dep import get_telephony_provider
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole, TELECALLER_ROLES
+from utils.crm_constants import LeadSource
 from utils.dependencies import filtering_dependency, sorting_dependency
 from services import leadService, leadImportService, telephonyService, assignmentService, crmReportService
 
@@ -246,6 +247,11 @@ async def create_lead(payload: LeadCreateRequest, response: Response,
     record/timeline — the same owner-scoping the list/detail endpoints enforce.
     Admins (and the owner) get the full lead detail.
     """
+    # Telecallers (incl. agency telecallers) creating a lead with no explicit
+    # source have it auto-attributed to 'Telecaller' rather than left blank.
+    if payload.source is None and ctx.role in TELECALLER_ROLES:
+        payload.source = LeadSource.TELECALLER
+
     # Owner-stamping is preserved by leadService.create_lead (by_user_id attributes
     # a new lead to its creator unless payload.owner_id is set).
     lead, created = await leadService.create_lead(engine, payload, by_user_id=ctx.user_id)
