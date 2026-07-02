@@ -646,10 +646,16 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     async def add_to_pool(u):
         if u.role not in TELECALLER_ROLES or not u.is_active:
             return
-        # Filter offline telecallers (inactive > 30m)
+        active_count = await get_active_count(u.uid)
+        # Explicit admin pick (Change Owner / chosen pool, auto=False): honor it regardless
+        # of online status or quota — the super admin deliberately chose this telecaller.
+        if not auto:
+            pool_objects.append(u)
+            current_loads[u.uid] = active_count
+            return
+        # Auto/sweep only: skip offline telecallers (no heartbeat > 30m) and those at quota.
         if not u.last_active_at or (now - u.last_active_at.replace(tzinfo=timezone.utc)).total_seconds() > 1800:
             return
-        active_count = await get_active_count(u.uid)
         if u.assignment_quota and u.assignment_quota > 0 and active_count >= u.assignment_quota:
             return
         pool_objects.append(u)
@@ -686,8 +692,12 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
             skipped += 1
             continue
 
-        # Re-evaluate pool to exclude those who just hit their quota
-        valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
+        # Re-evaluate pool to exclude those who just hit their quota (auto/sweep only;
+        # an explicit admin pick is honored regardless of quota).
+        if auto:
+            valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
+        else:
+            valid_pool = list(pool_objects)
 
         # Region separation (auto/sweep only): keep a lead strictly within its own state.
         # No in-state agent (unstaffed, all offline/over-quota, or the lead has no state) ->

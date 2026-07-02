@@ -176,6 +176,78 @@ def test_distribute_auto_keeps_leads_in_state():
     assert res["assigned"] == 2 and res["skipped"] == 3, res
 
 
+# --- leadService.distribute_leads (explicit admin pick / Change Owner) ------------
+
+def _patch_distribute_with_fetch(agents_by_uid, leads, calls):
+    """Like _patch_distribute but the explicit-pool path uses UserManager.fetch(uid)."""
+    agents = list(agents_by_uid.values())
+
+    class _UM:
+        def __init__(self, engine):
+            pass
+
+        async def fetch_all(self, filters=None):
+            return _Res(agents)
+
+        async def fetch(self, uid):
+            return agents_by_uid[uid]
+
+    class _LM:
+        def __init__(self, engine):
+            pass
+
+        async def fetch_all(self, filters=None):
+            return _Res([])                       # zero current load for everyone
+
+        async def fetch(self, lid):
+            return leads[lid]
+
+    L.UserManager = _UM
+    L.LeadManager = _LM
+
+    async def _fake_reassign(engine, lead, tc_uid, by_user_id, reason=None):
+        calls.append((lead.uid, tc_uid))
+        return lead
+
+    L.reassign = _fake_reassign
+
+
+def test_distribute_explicit_pick_honors_offline():
+    # Super admin explicitly picks an OFFLINE telecaller (Change Owner). Explicit picks
+    # bypass the online/quota filters (auto=False) -> the lead is assigned, not skipped.
+    off = _tc("off1", "karnataka", online=False)
+    leads = {"L1": SimpleNamespace(uid="L1", state="karnataka", deleted_at=None)}
+    calls = []
+    _patch_distribute_with_fetch({"off1": off}, leads, calls)
+    res = run(L.distribute_leads("E", ["L1"], ["off1"], by_user_id="admin"))
+    assert dict(calls).get("L1") == "off1", calls
+    assert res["assigned"] == 1 and res["skipped"] == 0, res
+
+
+def test_distribute_explicit_pick_ignores_region():
+    # Explicit pick crosses state lines freely (admin override): an AP lead goes to a KA
+    # telecaller when the admin chose them.
+    ka = _tc("ka1", "karnataka")
+    leads = {"L_ap": SimpleNamespace(uid="L_ap", state="andhra pradesh", deleted_at=None)}
+    calls = []
+    _patch_distribute_with_fetch({"ka1": ka}, leads, calls)
+    res = run(L.distribute_leads("E", ["L_ap"], ["ka1"], by_user_id="admin"))
+    assert dict(calls).get("L_ap") == "ka1", calls
+    assert res["assigned"] == 1 and res["skipped"] == 0, res
+
+
+def test_distribute_explicit_pick_still_requires_active():
+    # Even an explicit pick can't target a deactivated account.
+    inact = _tc("in1", "karnataka")
+    inact.is_active = False
+    leads = {"L1": SimpleNamespace(uid="L1", state="karnataka", deleted_at=None)}
+    calls = []
+    _patch_distribute_with_fetch({"in1": inact}, leads, calls)
+    res = run(L.distribute_leads("E", ["L1"], ["in1"], by_user_id="admin"))
+    assert "L1" not in dict(calls), calls
+    assert res["assigned"] == 0 and res["skipped"] == 1, res
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):
