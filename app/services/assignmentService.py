@@ -17,9 +17,10 @@ import sqlalchemy as db
 from managers import (
     UserManager, UserSchema,
     LeadAssignmentManager, LeadAssignmentSchema,
+    LeadManager, LeadSchema,
 )
 from utils.constants import UserRole, TELECALLER_ROLES
-from utils.crm_enums import AssignmentReason
+from utils.crm_enums import AssignmentReason, LeadStage
 from utils.outlet_assignment import auto_assign_outlet
 
 logger = logging.getLogger(__name__)
@@ -125,10 +126,39 @@ async def _active_assignment_counts(engine, telecaller_ids: List[str]) -> dict:
         return {tid: int(cnt) for tid, cnt in rows.all()}
 
 
+async def _fresh_counts(engine, telecaller_ids: List[str]) -> dict:
+    """Map telecaller_id -> count of UNTOUCHED leads they own (stage still New Lead).
+
+    This is the assignment_quota currency: a lead frees its slot the moment it's
+    worked (any disposition moves the stage off New Lead), so the quota caps how many
+    un-started leads an agent may hold, not their total open book. Twin of
+    leadService.distribute_leads.get_active_count — keep the two definitions in sync."""
+    if not telecaller_ids:
+        return {}
+    mgr = LeadManager(engine)
+    async with mgr.session_factory() as session:
+        rows = await session.execute(
+            db.select(LeadSchema.owner_id, db.func.count())
+            .where(
+                LeadSchema.owner_id.in_(telecaller_ids),
+                LeadSchema.stage == LeadStage.NEW_LEAD.value,
+                LeadSchema.deleted_at.is_(None),
+            )
+            .group_by(LeadSchema.owner_id)
+        )
+        return {oid: int(cnt) for oid, cnt in rows.all()}
+
+
+def _at_quota(u: UserSchema, fresh_n: int) -> bool:
+    """True if this agent is at/over their fresh-lead quota. quota 0/None = uncapped."""
+    return bool(u.assignment_quota and u.assignment_quota > 0 and fresh_n >= u.assignment_quota)
+
+
 async def pick_telecaller(engine, outlet_id: Optional[str],
                           state: Optional[str] = None,
                           only_ids: Optional[set] = None,
-                          *, allow_cross_state: bool = True) -> Optional[UserSchema]:
+                          *, allow_cross_state: bool = True,
+                          enforce_quota: bool = False) -> Optional[UserSchema]:
     """Pick the least-loaded active telecaller for an outlet/state (None if none exist).
 
     `only_ids` constrains the pool to a given set of telecallers — used by inbound
@@ -137,13 +167,24 @@ async def pick_telecaller(engine, outlet_id: Optional[str],
 
     `allow_cross_state=False` keeps auto-assignment in-region: no in-state agent ->
     None (unassigned, for a super admin to place manually), never a cross-state pick.
+
+    `enforce_quota=True` drops agents already at their fresh-lead quota (untouched
+    New-Lead count >= assignment_quota) and balances by that same fresh count — so
+    the create path caps a fresh backlog and lets overflow wait unassigned. Left OFF
+    by default: inbound live-call routing must still ring an at-quota agent.
     """
     pool = await _active_telecallers(engine, outlet_id, state, only_ids,
                                      allow_cross_state=allow_cross_state)
     if not pool:
         return None
-    counts = await _active_assignment_counts(engine, [u.uid for u in pool])
-    # Least active assignments, tie-break deterministically by uid for stable rotation.
+    if enforce_quota:
+        counts = await _fresh_counts(engine, [u.uid for u in pool])
+        pool = [u for u in pool if not _at_quota(u, counts.get(u.uid, 0))]
+        if not pool:
+            return None  # everyone in-region at quota -> unassigned; the 5-min sweep retries
+    else:
+        counts = await _active_assignment_counts(engine, [u.uid for u in pool])
+    # Least loaded, tie-break deterministically by uid for stable rotation.
     return min(pool, key=lambda u: (counts.get(u.uid, 0), u.uid))
 
 

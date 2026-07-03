@@ -229,6 +229,7 @@ async def create_lead(engine, payload, by_user_id: str,
         picked = await assignmentService.pick_telecaller(
             engine, outlet_id, routing_state, only_ids=present,
             allow_cross_state=False,  # no in-region agent -> stays unassigned for manual (super-admin) assignment
+            enforce_quota=True,  # cap fresh backlog at assignment_quota; overflow waits for the sweep
         )
         owner_id = picked.uid if picked else None
         reason = AssignmentReason.ROUND_ROBIN.value
@@ -640,9 +641,15 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
 
     async def get_active_count(uid: str) -> int:
         open_leads = await lead_manager.fetch_all(filters={"owner_id": uid})
-        # Terminal stages that don't count towards active quota
-        terminal = ["Not Qualified", "Not Reachable", "Lapsed"]
-        return sum(1 for l in open_leads.items if (l.stage.value if hasattr(l.stage, "value") else l.stage) not in terminal)
+        # Quota currency = UNTOUCHED leads (stage still New Lead). Working a lead frees
+        # its slot (any disposition moves the stage off New Lead), so the sweep tops an
+        # agent back up as they clear their fresh backlog. Twin of
+        # assignmentService._fresh_counts — keep the two in sync.
+        return sum(
+            1 for l in open_leads.items
+            if l.deleted_at is None
+            and (l.stage.value if hasattr(l.stage, "value") else l.stage) == LeadStage.NEW_LEAD.value
+        )
 
     async def add_to_pool(u):
         if u.role not in TELECALLER_ROLES or not u.is_active:
