@@ -15,10 +15,6 @@ from services import leadService
 from utils.crm_enums import LeadStage
 from utils.constants import TELECALLER_ROLES
 
-# Stages that don't count toward a telecaller's active load (mirrors
-# leadService.get_active_count).
-TERMINAL_STAGES = [LeadStage.NOT_QUALIFIED, LeadStage.NOT_REACHABLE, LeadStage.LAPSED]
-
 # "online" = seen within this window (matches assignmentService auto-assign).
 ONLINE_WINDOW_SECONDS = 1800
 
@@ -150,10 +146,15 @@ async def state_lane_overview(engine, *, from_date: Optional[date] = None,
                 LeadSchema.deleted_at.is_(None), LeadSchema.owner_id.is_(None))
               .group_by(LeadSchema.state))).all()}
 
+        # Load = FRESH (untouched, New Lead) leads only — the same currency the quota
+        # engine caps (assignmentService._fresh_counts). Counting the whole open book here
+        # made a telecaller's historical LSQ backlog (worked FTU/RTU/Engaged leads) show as
+        # over-quota (e.g. 349/30 red) when their real fresh backlog was ~2. The quota gates
+        # un-started leads, so the bar must measure those.
         load_by_owner = {o: int(c) for o, c in (await session.execute(
             db.select(LeadSchema.owner_id, db.func.count()).where(
                 LeadSchema.deleted_at.is_(None), LeadSchema.owner_id.isnot(None),
-                LeadSchema.stage.notin_(TERMINAL_STAGES))
+                LeadSchema.stage == LeadStage.NEW_LEAD.value)
               .group_by(LeadSchema.owner_id))).all()}
 
         telecallers = [
