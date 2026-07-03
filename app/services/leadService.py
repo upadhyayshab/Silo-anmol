@@ -767,6 +767,7 @@ async def today_queue(engine, user, *, owner_id: Optional[str] = None,
     - **new**            — stage New Lead, newest first
     - **engaged**        — stage Engaged, earliest follow-up first
     - **not_reachable**  — stage Not Reachable, oldest-touched first
+    - **ftu** / **rtu**  — converted (first-time / repeat), oldest-touched first
 
     A lead drops out of every bucket once a call is logged *today* (IST calendar
     day), and reappears the next day if it is still in one of these stages — so
@@ -827,9 +828,14 @@ async def today_queue(engine, user, *, owner_id: Optional[str] = None,
     new = await _materialize(_bucket_base(LeadStage.NEW_LEAD), LeadSchema.created_at.desc())
     engaged = await _materialize(_bucket_base(LeadStage.ENGAGED), LeadSchema.follow_up_at.asc())
     not_reachable = await _materialize(_bucket_base(LeadStage.NOT_REACHABLE), LeadSchema.updated_at.asc())
+    # Converted leads (first-time / repeat) surfaced for follow-up/re-order calls,
+    # oldest-touched first, and cleared for the day once called (same worked-today rule).
+    ftu = await _materialize(_bucket_base(LeadStage.FTU), LeadSchema.updated_at.asc())
+    rtu = await _materialize(_bucket_base(LeadStage.RTU), LeadSchema.updated_at.asc())
 
     return TodayQueueResponse(
         new=new, engaged=engaged, not_reachable=not_reachable,
+        ftu=ftu, rtu=rtu,
         generated_at=now,
     )
 

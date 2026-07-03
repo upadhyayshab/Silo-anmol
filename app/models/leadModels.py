@@ -217,6 +217,8 @@ class TodayQueueResponse(BaseModel):
     new: TodayQueueBucket            # stage New Lead
     engaged: TodayQueueBucket        # stage Engaged
     not_reachable: TodayQueueBucket  # stage Not Reachable
+    ftu: TodayQueueBucket            # stage FTU (first-time converted)
+    rtu: TodayQueueBucket            # stage RTU (repeat converted)
     generated_at: datetime
 
 
