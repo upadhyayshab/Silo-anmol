@@ -14,11 +14,12 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from config import get_settings, get_engine
 from managers import LeadManager, LeadActivityManager, UserManager
 from models import (
-    LeadCreateRequest, LeadUpdateRequest, StageChangeRequest, NoteRequest,
+    LeadCreateRequest, LeadQueryRequest, LeadUpdateRequest, StageChangeRequest, NoteRequest,
     CallLogRequest, AssignRequest, DistributeRequest, DistributeResponse,
     LeadResponse, LeadDetailResponse,
     LeadActivityResponse, LeadListResponse, StatusResponse,
@@ -31,7 +32,7 @@ from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole, TELECALLER_ROLES, OWNER_ROLES
 from utils.crm_constants import LeadSource
 from utils.dependencies import filtering_dependency, sorting_dependency
-from services import leadService, leadImportService, telephonyService, assignmentService, crmReportService
+from services import leadService, leadImportService, telephonyService, assignmentService, crmReportService, leadFilterService
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -124,20 +125,64 @@ async def list_leads(
         q=q, filters={**filters, "deleted_at": None}, sorts=sorts, limit=limit, offset=offset,
         scope_owner_id=scope_owner_id, scope_uids=scope_uids, fb_page_id=fb_page_id,
     )
+    responses = await _leads_to_responses(items)
+    return LeadListResponse(items=responses, count=len(responses), total=total, limit=limit, offset=offset)
+
+
+async def _leads_to_responses(items):
+    """Build list-row responses, each enriched with its latest call disposition
+    (one batched query). Shared by GET /leads and POST /leads/query."""
     user_cache, outlet_cache = {}, {}
     responses = [
-        await leadService.build_lead_response(
-            engine, lead, user_cache=user_cache, outlet_cache=outlet_cache
-        )
+        await leadService.build_lead_response(engine, lead, user_cache=user_cache, outlet_cache=outlet_cache)
         for lead in items
     ]
-    # Enrich each row with its latest call disposition / sub-disposition (one batched query).
     dispositions = await leadService.latest_dispositions(engine, [lead.uid for lead in items])
     for resp in responses:
         d = dispositions.get(resp.uid)
         if d:
             resp.disposition = d["disposition"]
             resp.sub_disposition = d["sub_disposition"]
+    return responses
+
+
+# --------------------------------------------------------------------------
+# Advanced query builder (LSQ-style) — registered before /{lead_id} so the
+# static paths aren't swallowed by the lead-detail route.
+# --------------------------------------------------------------------------
+
+@router.get("/filter-fields")
+async def lead_filter_fields(ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ))):
+    """The filterable-field catalog that drives the query-builder UI (labels,
+    types, allowed operators, enum options)."""
+    return {"fields": leadFilterService.catalog_for_api()}
+
+
+@router.post("/query", response_model=LeadListResponse)
+async def query_leads(
+    body: LeadQueryRequest,
+    ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
+):
+    """Run an advanced nested AND/OR filter tree against the leads list. Same
+    role-scoping and response shape as GET /leads; the tree is validated and
+    translated by leadFilterService (422 on a malformed tree)."""
+    try:
+        clause = leadFilterService.build_filter_clause(body.filter)
+    except leadFilterService.FilterValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    scope_owner_id, scope_uids = None, None
+    if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+        scope_owner_id = ctx.user_id
+        scope_uids = await assignmentService.call_access_lead_ids(engine, ctx.user_id)
+
+    limit = max(1, min(body.limit or 25, 200))
+    offset = max(0, body.offset or 0)
+    items, total = await lead_manager.search_leads(
+        q=body.q, filters={"deleted_at": None}, sorts=body.sorts, limit=limit, offset=offset,
+        scope_owner_id=scope_owner_id, scope_uids=scope_uids, extra_clause=clause,
+    )
+    responses = await _leads_to_responses(items)
     return LeadListResponse(items=responses, count=len(responses), total=total, limit=limit, offset=offset)
 
 
@@ -177,13 +222,14 @@ def _report_scope_owner(ctx) -> Optional[str]:
 
 
 async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
-                        source, lead_numbers, limit, offset):
+                        source, lead_numbers, limit, offset, extra_clause=None):
     nums = [n.strip() for n in lead_numbers.split(",")] if lead_numbers else None
     nums = [n for n in nums if n] if nums else None
     return await crmReportService.prospect_report(
         engine, from_date=from_date, to_date=to_date, region=region,
         owner_id=owner_id, stage=stage, source=source, lead_numbers=nums,
         scope_owner_id=_report_scope_owner(ctx), limit=limit, offset=offset,
+        extra_clause=extra_clause,
     )
 
 
@@ -205,6 +251,47 @@ async def prospect_report(
     rows, total = await _build_report(
         ctx, from_date=from_date, to_date=to_date, region=region, owner_id=owner_id,
         stage=stage, source=source, lead_numbers=lead_numbers, limit=limit, offset=offset,
+    )
+    return {"items": rows, "total": total, "limit": limit, "offset": offset}
+
+
+class ReportQueryRequest(BaseModel):
+    """POST body for the advanced-filter variant of the prospect report. `filter`
+    is the same nested AND/OR tree the /leads/query builder uses (validated and
+    translated by leadFilterService); the scalar fields mirror GET /leads/report.
+    `lead_numbers` is a comma-separated list of prospect ids (same as the GET)."""
+    filter: Optional[dict] = None
+    from_date: Optional[date] = None
+    to_date: Optional[date] = None
+    region: Optional[str] = None
+    owner_id: Optional[str] = None
+    stage: Optional[str] = None
+    source: Optional[str] = None
+    lead_numbers: Optional[str] = None
+    limit: int = 50
+    offset: int = 0
+
+
+@router.post("/report/query")
+async def prospect_report_query(
+    body: ReportQueryRequest,
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
+):
+    """Advanced-filter variant of the prospect report: same rows/scoping as
+    GET /leads/report, but with a nested AND/OR filter tree (LSQ-style query
+    builder) AND-ed onto the scalar filters. Pass `limit=0` for the full filtered
+    set (capped) used by the client-side Excel export. 422 on a malformed tree."""
+    try:
+        clause = leadFilterService.build_filter_clause(body.filter)
+    except leadFilterService.FilterValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    limit = max(0, min(body.limit or 0, 200))
+    offset = max(0, body.offset or 0)
+    rows, total = await _build_report(
+        ctx, from_date=body.from_date, to_date=body.to_date, region=body.region,
+        owner_id=body.owner_id, stage=body.stage, source=body.source,
+        lead_numbers=body.lead_numbers, limit=limit, offset=offset, extra_clause=clause,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
 

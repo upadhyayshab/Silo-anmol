@@ -8,6 +8,7 @@ from .smartping_campaigns import SmartpingCampaignConfigService, smartping_campa
 from .smartping_job_service import SmartpingJobService, smartping_job_service
 from . import assignmentService  # noqa: F401  (imported before leadService — leadService depends on it)
 from . import leadService  # noqa: F401
+from . import stateLaneService  # noqa: F401  (imported after leadService — depends on it)
 from . import facebook_leads  # noqa: F401  (imported after leadService — depends on it)
 from . import facebook_service  # noqa: F401  (multi-page tokens, sync, backfill)
 from . import facebook_capi  # noqa: F401  (lead-stage events -> Meta CAPI)
@@ -28,6 +29,7 @@ __all__ = [
     "smartping_job_service",
     "assignmentService",
     "leadService",
+    "stateLaneService",
     "facebook_leads",
     "facebook_service",
     "facebook_capi",

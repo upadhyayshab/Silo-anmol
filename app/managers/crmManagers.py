@@ -118,7 +118,7 @@ class LeadManager(ERPGenericManager[LeadSchema]):
     async def search_leads(self, *, q: str = None, filters: NESTED_FILTERS = None,
                            sorts: list = None, limit: int = 25, offset: int = 0,
                            scope_owner_id: str = None, scope_uids: list = None,
-                           fb_page_id: str = None):
+                           fb_page_id: str = None, extra_clause=None):
         """Paginated list with optional free-text OR-search across name/mobile/email/lead_number.
 
         Returns (items, total). `filters` are ANDed (stage, deleted_at, etc.);
@@ -148,6 +148,11 @@ class LeadManager(ERPGenericManager[LeadSchema]):
                 fb_cond = self.Schema.campaign_data["page_id"].as_string() == fb_page_id
                 base = base.where(fb_cond)
                 count_q = count_q.where(fb_cond)
+
+            # Advanced query-builder tree, pre-compiled to one boolean clause.
+            if extra_clause is not None:
+                base = base.where(extra_clause)
+                count_q = count_q.where(extra_clause)
 
             if scope_owner_id is not None:
                 conds = [self.Schema.owner_id == scope_owner_id]
@@ -322,6 +327,40 @@ class FbFieldMappingManager(ERPGenericManager[FbFieldMappingSchema]):
     pass
 
 
+# ============================================================================
+# SAVED SEGMENTS — named, reusable advanced-filter trees
+# ============================================================================
+
+class LeadSegmentSchema(BaseSchema):
+    """A saved advanced-filter tree ("segment") — a named, reusable query the CRM
+    can re-run. Owned by the user who created it (`owner_user_id`); `is_shared`
+    exposes it to everyone. `surface` marks where it applies (e.g. the leads list,
+    the report, or "both")."""
+    __tablename__ = "lead_segments"
+
+    name = db.Column(db.String(255), nullable=False)
+    filter = db.Column(db.JSON, nullable=False)   # the advanced-filter tree
+    owner_user_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True, index=True)
+    is_shared = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    surface = db.Column(db.String(16), nullable=False, default="both", server_default="both")
+
+
+class LeadSegmentManager(ERPGenericManager[LeadSegmentSchema]):
+    async def list_visible(self, user_id: str):
+        """Live segments visible to `user_id`: their own OR any shared segment.
+        Soft-deleted rows are excluded. Newest first."""
+        async with self.session_factory() as session:
+            query = (
+                db.select(self.Schema)
+                .where(self.Schema.deleted_at.is_(None))
+                .where(db.or_(self.Schema.owner_user_id == user_id,
+                              self.Schema.is_shared.is_(True)))
+                .order_by(self.Schema.created_at.desc())
+            )
+            rows = list((await session.execute(query)).unique().scalars().all())
+            return rows
+
+
 __all__ = [
     "LeadSchema", "LeadManager",
     "LeadActivitySchema", "LeadActivityManager",
@@ -329,4 +368,5 @@ __all__ = [
     "TelecallerStatusSchema", "TelecallerStatusManager",
     "FbLeadgenFormSchema", "FbLeadgenFormManager",
     "FbFieldMappingSchema", "FbFieldMappingManager",
+    "LeadSegmentSchema", "LeadSegmentManager",
 ]

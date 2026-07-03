@@ -43,6 +43,17 @@ class LeadCreateRequest(BaseModel):
     owner_id: Optional[str] = None
 
 
+class LeadQueryRequest(BaseModel):
+    """Advanced query-builder request: a nested AND/OR filter tree plus the usual
+    free-text search, sort and pagination. `filter` is the recursive tree the
+    frontend builds; leadFilterService validates and translates it."""
+    filter: Optional[Dict[str, Any]] = None
+    q: Optional[str] = None
+    sorts: Optional[List[str]] = None
+    limit: int = 25
+    offset: int = 0
+
+
 class LeadUpdateRequest(BaseModel):
     """All-optional patch. Stage changes go through /stage, owner through /assign."""
     first_name: Optional[str] = None
@@ -222,11 +233,42 @@ class TodayQueueResponse(BaseModel):
     generated_at: datetime
 
 
+# --------------------------------------------------------------------------
+# Saved segments (named, reusable advanced-filter trees)
+# --------------------------------------------------------------------------
+
+class LeadSegmentCreate(BaseModel):
+    name: str
+    filter: Dict[str, Any]                  # the advanced-filter tree
+    is_shared: Optional[bool] = None        # default False server-side
+    surface: Optional[str] = None           # default "both" server-side
+
+
+class LeadSegmentUpdate(BaseModel):
+    """All-optional patch; only the segment owner may apply it."""
+    name: Optional[str] = None
+    filter: Optional[Dict[str, Any]] = None
+    is_shared: Optional[bool] = None
+
+
+class LeadSegmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    uid: str
+    name: str
+    filter: Dict[str, Any]
+    is_shared: bool
+    owner_user_id: Optional[str] = None
+    surface: str
+    created_at: Optional[datetime] = None
+
+
 __all__ = [
-    "LeadCreateRequest", "LeadUpdateRequest", "StageChangeRequest",
+    "LeadCreateRequest", "LeadQueryRequest", "LeadUpdateRequest", "StageChangeRequest",
     "NoteRequest", "CallLogRequest", "AssignRequest",
     "DistributeRequest", "DistributeResponse",
     "LeadActivityResponse", "LeadResponse", "LeadDetailResponse", "LeadListResponse",
     "LeadImportError", "LeadImportSummary",
     "TodayQueueBucket", "TodayQueueResponse",
+    "LeadSegmentCreate", "LeadSegmentUpdate", "LeadSegmentResponse",
 ]

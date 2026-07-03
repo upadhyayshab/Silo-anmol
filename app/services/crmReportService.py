@@ -93,12 +93,15 @@ async def prospect_report(
     source: Optional[str] = None,
     lead_numbers: Optional[List[str]] = None,
     scope_owner_id: Optional[str] = None,
+    extra_clause=None,
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Return (rows, total). `limit=0` means "all matched rows" (capped at
     MAX_EXPORT_ROWS) — used by the CSV export. `scope_owner_id` restricts to one
-    owner's leads (non-global callers); None = all leads (superadmin)."""
+    owner's leads (non-global callers); None = all leads (superadmin).
+    `extra_clause` is an optional pre-built SQLAlchemy boolean clause (from the
+    advanced filter engine) AND-ed into the same `conds` used by both queries."""
     lm = LeadManager(engine)
     async with lm.session_factory() as session:
         conds = [LeadSchema.deleted_at.is_(None)]
@@ -119,6 +122,8 @@ async def prospect_report(
             conds.append(LeadSchema.lead_number.in_(lead_numbers))
         if scope_owner_id is not None:
             conds.append(LeadSchema.owner_id == scope_owner_id)
+        if extra_clause is not None:
+            conds.append(extra_clause)
 
         total = int((await session.execute(
             db.select(db.func.count()).select_from(LeadSchema).where(*conds)
