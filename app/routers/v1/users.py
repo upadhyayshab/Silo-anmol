@@ -262,23 +262,30 @@ async def change_user_password(
     payload: UserPasswordChangeRequest,
     ctx: AuthContext = Depends(get_auth_context)
 ):
-    """Change user password"""
+    """Change user password.
+
+    Self-service: a user changing their OWN password must prove the old one.
+    Admin reset: a user with USERS_MANAGE resetting SOMEONE ELSE's password doesn't
+    have the old one, so old_password is not required (and is ignored) on that path.
+    """
     try:
-        # Self-service (own password) OR an admin with USERS_MANAGE may change any user's.
-        if not (ctx.user_id == user_id or ctx.has(Permission.USERS_MANAGE)):
+        is_self = ctx.user_id == user_id
+        is_admin = ctx.has(Permission.USERS_MANAGE)
+        if not (is_self or is_admin):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Can only change your own password"
             )
 
-        # Verify old password
         user = await user_manager.fetch(user_id)
-        if not verify_password(payload.old_password, user.password_hash):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid old password"
-            )
-        
+        # Only the self-service path verifies the old password; an admin reset skips it.
+        if is_self:
+            if not payload.old_password or not verify_password(payload.old_password, user.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid old password"
+                )
+
         # Update password
         new_password_hash = get_password_hash(payload.new_password)
         await user_manager.update(user_id, {"password_hash": new_password_hash})
@@ -372,12 +379,13 @@ async def list_users(
     role: UserRole = None,
     outlet_id: str = None,
     is_active: bool = None,
+    q: str = None,
     limit: int = 50,
     offset: int = 0,
     ctx: AuthContext = Depends(require_permission(Permission.USERS_READ)),
 ):
     """
-    List all users with optional filters
+    List all users with optional filters. `q` free-text searches name / phone / email / id.
     Requires: users:read permission
     """
     try:
@@ -392,11 +400,14 @@ async def list_users(
         if ctx.role == "AGENCY_ADMIN":
             filters["agency_id"] = ctx.agency_ids or ["__none__"]
 
-        users = await user_manager.fetch_all(
-            limit=limit,
-            offset=offset,
-            filters=filters if filters else None
-        )
+        if q and q.strip():
+            # Server-side search across the whole roster (count = total matches).
+            items, count = await user_manager.search_users(
+                q=q.strip(), filters=filters or None, limit=limit, offset=offset)
+        else:
+            page = await user_manager.fetch_all(
+                limit=limit, offset=offset, filters=filters or None)
+            items, count = page.items, len(page.items)
         
         user_responses = [
             UserResponse(
@@ -415,10 +426,10 @@ async def list_users(
                 created_at=user.created_at,
                 updated_at=user.updated_at
             )
-            for user in users.items
+            for user in items
         ]
-        
-        return ListResponse(items=user_responses, count=len(user_responses))
+
+        return ListResponse(items=user_responses, count=count)
     
     except Exception as e:
         raise HTTPException(

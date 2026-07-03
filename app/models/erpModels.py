@@ -46,7 +46,10 @@ class UserUpdateRequest(BaseModel):
 
 
 class UserPasswordChangeRequest(BaseModel):
-    old_password: str
+    # Required for self-service (prove you own the account). An admin with USERS_MANAGE
+    # resetting someone else's password doesn't have it, so it's optional here and the
+    # router enforces it only on the self-service path.
+    old_password: Optional[str] = None
     new_password: str = Field(..., min_length=8)
 
 

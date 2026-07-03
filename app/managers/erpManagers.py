@@ -362,6 +362,36 @@ class UserSchema(BasePassSchema):
 
 
 class UserManager(ERPBasePassManager[UserSchema]):
+    async def search_users(self, *, q: str = None, filters: NESTED_FILTERS = None,
+                           limit: int = 50, offset: int = 0):
+        """Paginated list with optional free-text OR-search across name / phone / email / uid.
+
+        `filters` are ANDed (role, is_active, agency_id, ...); `q` is ORed across the
+        identity columns. Returns (items, total). Mirrors LeadManager.search_leads so the
+        roster stays searchable server-side once it outgrows a single page."""
+        async with self.session_factory() as session:
+            base = db.select(self.Schema)
+            count_q = db.select(db.func.count()).select_from(self.Schema)
+            if filters:
+                base = await self._filter(base, dict(filters), self.Schema)
+                count_q = await self._filter(count_q, dict(filters), self.Schema)
+            if q:
+                like = f"%{q}%"
+                cond = db.or_(
+                    self.Schema.full_name.ilike(like),
+                    self.Schema.phone.ilike(like),
+                    self.Schema.email.ilike(like),
+                    self.Schema.uid.ilike(like),
+                )
+                base = base.where(cond)
+                count_q = count_q.where(cond)
+            total = int((await session.execute(count_q)).scalar_one())
+            base = base.order_by(self.Schema.created_at.desc()).offset(offset)
+            if limit:
+                base = base.limit(limit)
+            rows = list((await session.execute(base)).unique().scalars().all())
+            return rows, total
+
     async def update(
             self,
             uid: str,
