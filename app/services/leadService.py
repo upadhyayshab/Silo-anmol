@@ -24,7 +24,7 @@ from models import (
     LeadResponse, LeadDetailResponse, LeadActivityResponse,
     TodayQueueBucket, TodayQueueResponse,
 )
-from utils.constants import UserRole, TELECALLER_ROLES
+from utils.constants import UserRole, TELECALLER_ROLES, OWNER_ROLES
 from utils.crm_enums import (LeadStage, LeadActivityType, AssignmentReason,
                              DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS,
                              DISPOSITION_STAGE, PROTECTED_STAGES)
@@ -652,7 +652,9 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         )
 
     async def add_to_pool(u):
-        if u.role not in TELECALLER_ROLES or not u.is_active:
+        # Auto/sweep round-robin is telecallers only; an explicit admin pick (Change
+        # Owner popup, auto=False) may also land on an agency admin — they can own leads.
+        if u.role not in (OWNER_ROLES if not auto else TELECALLER_ROLES) or not u.is_active:
             return
         active_count = await get_active_count(u.uid)
         # Explicit admin pick (Change Owner / chosen pool, auto=False): honor it regardless

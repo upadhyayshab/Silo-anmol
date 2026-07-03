@@ -43,6 +43,11 @@ class UserRole(str, Enum):
 # tuple) so it drops straight into manager `.in_()` filters.
 TELECALLER_ROLES = [UserRole.TELECALLER, UserRole.AGENCY_TELECALLER]
 
+# Roles a lead's owner may hold. Superset of TELECALLER_ROLES: a super admin may
+# also hand leads to AGENCY_ADMINs (they oversee/close leads for their agency) via
+# the Change Owner popup. Agency admins are never in the *auto* round-robin pool.
+OWNER_ROLES = TELECALLER_ROLES + [UserRole.AGENCY_ADMIN]
+
 
 class OrderStatus(str, Enum):
     PENDING = "pending"
