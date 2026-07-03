@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 from typing import Any
+from bg_tasks import spawn
 
 
 class LeadSquaredClient:
@@ -54,7 +55,7 @@ class LeadSquaredClient:
         """Dispatch a request in the background (non-blocking)."""
         url = f"{self._base_url}{endpoint}"
         params = {**self._auth_params(), **kwargs.pop("params", {})}
-        asyncio.create_task(self._execute_with_retry(method, url, params, **kwargs))
+        spawn(self._execute_with_retry(method, url, params, **kwargs))
         return {"status": "queued", "message": "Request is being processed in the background."}
 
     async def request(self, method: str, endpoint: str, **kwargs) -> Any:

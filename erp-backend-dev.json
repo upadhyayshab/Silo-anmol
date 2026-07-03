@@ -15,6 +15,7 @@
                 }
             ],
             "essential": true,
+            "stopTimeout": 120,
             "environment": [],
             "mountPoints": [],
             "volumesFrom": [],

@@ -44,6 +44,7 @@ from config import get_settings, get_engine
 from routers import v1_router, auth_router, admin_router
 import asyncio
 from jobs.scheduler import scheduler_app
+from bg_tasks import drain
 
 # Get settings
 settings = get_settings()
@@ -77,6 +78,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print(f"🛑 Shutting down {settings.name} API Server")
     scheduler_app.shutdown()
+    # Wait for detached fire-and-forget tasks before the event loop stops, so a
+    # deploy/SIGTERM doesn't kill in-flight background work. Bounded so it always
+    # completes inside the container's stopTimeout.
+    await drain()
 
 # Create FastAPI app
 app = FastAPI(

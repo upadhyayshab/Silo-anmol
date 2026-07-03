@@ -6,6 +6,7 @@ consistently from one place. Routers stay thin and just translate HTTP.
 import asyncio
 import logging
 import uuid
+from bg_tasks import spawn
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional, Dict, Any, List, Tuple
@@ -102,7 +103,7 @@ def _fire_capi(lead, stage) -> None:
     """Best-effort: report a lead stage event to Meta CAPI without blocking the caller."""
     try:
         from services import facebook_capi
-        asyncio.create_task(facebook_capi.send_stage_event(lead, stage))
+        spawn(facebook_capi.send_stage_event(lead, stage))
     except RuntimeError:
         pass  # no running event loop (e.g. a sync script) — skip
     except Exception as e:

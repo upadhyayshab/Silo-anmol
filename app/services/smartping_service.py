@@ -2,6 +2,7 @@ import httpx
 import asyncio
 from typing import Dict, Any, Optional, List
 from config import get_settings
+from bg_tasks import spawn
 
 class SmartpingService:
     def __init__(self):
@@ -102,7 +103,7 @@ class SmartpingService:
     ):
         """Triggers a message send in the background (fire and forget)."""
         try:
-            asyncio.create_task(
+            spawn(
                 self.send_campaign_message(
                     campaign_name=campaign_name,
                     destination=destination,

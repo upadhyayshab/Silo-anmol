@@ -2,6 +2,7 @@ import httpx
 import asyncio
 from typing import Dict, Any, Optional
 from config import get_settings
+from bg_tasks import spawn
 
 
 class storeService:
@@ -30,7 +31,7 @@ class storeService:
     def _fire_and_forget(self, method: str, endpoint: str, **kwargs):
         """Triggers a request in the background (fire and forget)."""
         try:
-            asyncio.create_task(self._await_request(method, endpoint, **kwargs))
+            spawn(self._await_request(method, endpoint, **kwargs))
         except Exception as e:
             print(f"Failed to create background task for store service: {e}")
 
