@@ -126,6 +126,7 @@ async def list_outlets(
     is_active: bool = None,
     city: str = None,
     state: str = None,
+    pincode: str = None,
     outlet_type: Optional[OutletType] = None,
     limit: int = 150,
     offset: int = 0,
@@ -143,6 +144,8 @@ async def list_outlets(
             filters["city"] = city
         if state:
             filters["state"] = state
+        if pincode:
+            filters["pincode"] = pincode
         if outlet_type is not None:
             filters["outlet_type"] = outlet_type
 

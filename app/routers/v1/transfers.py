@@ -174,6 +174,7 @@ async def create_transfer_request(
         
         # Validate products and check availability
         validated_items = []
+        warnings = []  # non-blocking source-stock shortfalls; approval enforces
         for item in payload.items:
             # Verify product exists
             try:
@@ -209,19 +210,14 @@ async def create_transfer_request(
                 )
 
                 if not source_inventory.items:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"No stock available for {product.product_name} at source location"
-                    )
-
-                inventory_item = source_inventory.items[0]
-                available_stock = inventory_item.quantity
-
-                if available_stock < item.quantity_requested:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Insufficient stock for {product.product_name}. Available: {available_stock}, Requested: {item.quantity_requested}"
-                    )
+                    warnings.append(f"No stock available for {product.product_name} at source location")
+                else:
+                    available_stock = source_inventory.items[0].quantity
+                    if available_stock < item.quantity_requested:
+                        warnings.append(
+                            f"Insufficient stock for {product.product_name}. "
+                            f"Available: {available_stock}, Requested: {item.quantity_requested}"
+                        )
             
             validated_items.append({
                 "product": product,
@@ -251,8 +247,10 @@ async def create_transfer_request(
             )
             await transfer_item_manager.create(transfer_item)
         
-        return await get_transfer_response(created_transfer.uid)
-    
+        resp = await get_transfer_response(created_transfer.uid)
+        resp.warnings = warnings or None
+        return resp
+
     except HTTPException:
         raise
     except Exception as e:
@@ -736,7 +734,10 @@ async def approve_transfer(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only pending transfers can be approved"
             )
-        
+
+        # Block approval if source can't cover the transfer
+        await assert_source_stock_available(transfer_id)
+
         # Update transfer status
         updates = {
             "status": TransferStatus.APPROVED,
@@ -784,6 +785,7 @@ async def update_transfer_status(
 
         # Handle status-specific logic (no reservation)
         if payload.status == TransferStatus.APPROVED:
+            await assert_source_stock_available(transfer_id)
             updates["approved_by"] = current_user_id
 
         elif payload.status == TransferStatus.IN_TRANSIT:
@@ -902,7 +904,10 @@ async def approve_transfer_with_quantities(
 
         # Map item modifications
         items_dict = {item.product_id: item.approved_quantity for item in payload.items}
-        
+
+        # Block approval if source can't cover the approved quantities
+        await assert_source_stock_available(transfer_id, quantities=items_dict)
+
         # Update quantities
         import sqlalchemy as db
         async with transfer_manager.session_factory() as session:
@@ -1055,6 +1060,41 @@ def is_valid_transfer_status_transition(current_status: TransferStatus, new_stat
     }
     
     return new_status in valid_transitions.get(current_status, [])
+
+
+async def assert_source_stock_available(transfer_id: str, quantities: dict = None):
+    """
+    Read-only guard: raise 400 if the source can't cover the transfer.
+    Approval calls this so shortfalls (allowed through at request time as warnings)
+    can't be approved. `quantities` optionally overrides per-product qty (approve-with-quantities).
+    Factory sources have infinite supply and always pass.
+    """
+    transfer = await transfer_manager.fetch(transfer_id)
+    source_outlet_id = transfer.from_outlet_id or await get_default_warehouse_id(engine)
+
+    if source_outlet_id:
+        try:
+            if (await outlet_manager.fetch(source_outlet_id)).outlet_type == OutletType.FACTORY:
+                return
+        except Exception:
+            pass
+
+    transfer_items = await transfer_item_manager.fetch_all(filters={"transfer_id": transfer_id})
+    for item in transfer_items.items:
+        needed = (quantities or {}).get(item.product_id, item.quantity_requested)
+        source_inventory = await inventory_manager.fetch_all(
+            filters={"product_id": item.product_id, "outlet_id": source_outlet_id}
+        )
+        available = source_inventory.items[0].quantity if source_inventory.items else 0
+        if available < needed:
+            try:
+                name = (await product_manager.fetch(item.product_id)).product_name
+            except Exception:
+                name = item.product_id
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot approve: insufficient stock for {name} at source. Available: {available}, Requested: {needed}"
+            )
 
 
 async def deduct_stock_from_source(transfer_id: str):

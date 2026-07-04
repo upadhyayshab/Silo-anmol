@@ -750,6 +750,8 @@ class StockTransferResponse(BaseModel):
     notes: Optional[str] = None
     items: List[TransferItemResponse] = []
     created_at: datetime
+    # Non-blocking stock warnings surfaced on create (source short/empty). Approval enforces.
+    warnings: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
