@@ -297,6 +297,15 @@ def test_handovers_read_own_is_delivery_guy_only():
         "DELIVERY_GUY must not hold broad handovers:read (would leak colleagues' cash)"
 
 
+def test_handovers_write_own_is_delivery_guy_only():
+    # Delivery-captain app: DELIVERY_GUY records its OWN handover (create->PENDING) via the
+    # self-scoped write perm, but must NOT hold broad handovers:write — that also gates
+    # confirm/reject, which would let a rider self-approve and skip accountant verification.
+    assert has_permission("DELIVERY_GUY", "handovers:write:own")
+    assert not has_permission("DELIVERY_GUY", "handovers:write"), \
+        "DELIVERY_GUY must not hold broad handovers:write (would self-confirm handovers)"
+
+
 def test_notifications_write_holders():
     for role in NOTIFICATIONS_WRITE_HOLDERS:
         assert has_permission(role, "notifications:write"), f"{role} should hold notifications:write"
@@ -533,6 +542,7 @@ if __name__ == "__main__":
     test_delivery_write_holders()
     test_handovers_read_holders()
     test_handovers_write_holders()
+    test_handovers_write_own_is_delivery_guy_only()
     test_notifications_write_holders()
     test_finance_read_holders()
     test_reports_read_operational_no_regression()

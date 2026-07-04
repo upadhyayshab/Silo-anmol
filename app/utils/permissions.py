@@ -65,6 +65,7 @@ class Permission(str, Enum):
     HANDOVERS_READ = "handovers:read"
     HANDOVERS_WRITE = "handovers:write"
     HANDOVERS_READ_OWN = "handovers:read:own"  # delivery guy: OWN cash balance + handover history only
+    HANDOVERS_WRITE_OWN = "handovers:write:own"  # delivery guy: record OWN handover (create->PENDING only; NOT confirm/reject)
     NOTIFICATIONS_WRITE = "notifications:write"
     # Marketing / CRM
     CAMPAIGNS_READ = "campaigns:read"
@@ -138,8 +139,9 @@ ROLE_DEFINITIONS = {
     # ----- L1: ground (read + own tasks) -----
     UserRole.DELIVERY_GUY: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
         P.ORDERS_READ, P.TRANSFERS_READ, P.PAYOUTS_READ_OWN,
-        # Delivery-captain app: view OWN cash balance + handover history (self-scoped, not the outlet's).
-        P.HANDOVERS_READ_OWN,
+        # Delivery-captain app: view OWN cash balance + handover history AND record OWN handover
+        # (self-scoped, not the outlet's). write:own creates a PENDING record; it can't confirm/reject.
+        P.HANDOVERS_READ_OWN, P.HANDOVERS_WRITE_OWN,
     }),
     UserRole.VIEWER: dict(scope=ScopeLevel.OUTLET, location_type=None, perms={
         P.ORDERS_READ, P.INVENTORY_READ, P.PRODUCTS_READ,

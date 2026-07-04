@@ -46,6 +46,22 @@ def _own_confinement(ctx: AuthContext) -> Optional[str]:
     )
 
 
+def _own_write_confinement(ctx: AuthContext) -> Optional[str]:
+    """Create gate (mirror of _own_confinement): broad `handovers:write` (outlet mgr /
+    accountant / admin / microservice) records for anyone in scope; a delivery guy's
+    `handovers:write:own` may only record their OWN handover. Returns the delivery_guy_id
+    the caller is locked to, or None for broad write. 403 if neither. Deliberately does NOT
+    grant confirm/reject — that stays on broad `handovers:write` so riders can't self-approve."""
+    if ctx.has(Permission.HANDOVERS_WRITE):
+        return None
+    if ctx.has(Permission.HANDOVERS_WRITE_OWN):
+        return ctx.user_id
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Missing permission: {Permission.HANDOVERS_WRITE.value}",
+    )
+
+
 @router.get("/delivery-guys/{delivery_guy_id}/cash-balance", response_model=DeliveryGuyCashBalanceResponse)
 async def get_cash_balance(
     delivery_guy_id: str,
@@ -111,14 +127,20 @@ async def get_cash_balance(
 @router.post("", response_model=DeliveryHandoverResponse)
 async def create_handover(
     payload: DeliveryHandoverCreateRequest,
-    ctx: AuthContext = Depends(require_permission(Permission.HANDOVERS_WRITE))
+    ctx: AuthContext = Depends(get_auth_context)
 ):
     """
     Create a new cash handover record
     """
     try:
-        # Scope fence: a non-GLOBAL caller (outlet mgr) may only record a handover
-        # for an outlet they cover. GLOBAL/microservice -> unrestricted.
+        # A delivery guy (handovers:write:own) may only record their OWN handover — force the
+        # delivery_guy_id to self, ignoring whatever the client sent. Broad handovers:write
+        # (outlet mgr / accountant / admin / microservice) records for anyone in scope.
+        own = _own_write_confinement(ctx)
+        dg_id = own if own is not None else payload.delivery_guy_id
+
+        # Scope fence: a non-GLOBAL caller (outlet mgr, or a delivery guy) may only record a
+        # handover for an outlet they cover. GLOBAL/microservice -> unrestricted.
         if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
             scope_outlet = (await apply_scope({}, ctx)).get("outlet_id")
             allowed = scope_outlet if isinstance(scope_outlet, list) else [scope_outlet]
@@ -130,7 +152,7 @@ async def create_handover(
 
         # Validate delivery guy exists
         try:
-            await user_manager.fetch(payload.delivery_guy_id)
+            await user_manager.fetch(dg_id)
         except Exception:
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Delivery guy not found")
 
@@ -141,7 +163,7 @@ async def create_handover(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
 
         handover_data = DeliveryGuyHandoverSchema(
-            delivery_guy_id=payload.delivery_guy_id,
+            delivery_guy_id=dg_id,
             outlet_id=payload.outlet_id,
             amount=payload.amount,
             handover_date=payload.handover_date,
