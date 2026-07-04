@@ -115,6 +115,13 @@ class TelephonyProvider(ABC):
         call flow so unrelated numbers don't show. Default: none."""
         return []
 
+    async def softphone_sips(self, emails: list) -> dict:
+        """Map each agent email -> their SIP id (or None). A SIP means the agent is
+        softphone-capable (in-browser WebRTC); no SIP means they fall back to a
+        server-side call. Display-only helper for the admin 'who gets what' view.
+        Default: none (all server-side)."""
+        return {}
+
     async def softphone_auth(self, email: str, name: str = "", agent_number: str = "") -> Optional[dict]:
         """Credentials for an in-browser softphone SDK: `{accessToken, userId}` for
         the given agent, or None if the vendor has no embeddable softphone / it isn't

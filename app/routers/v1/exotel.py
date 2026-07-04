@@ -20,7 +20,9 @@ from core.telephony import CallRequest, TelephonyProvider
 from dependencies.telephony_dep import get_telephony_provider
 from managers import UserManager
 from services import telephonyService, presenceService
-from utils.auth import get_current_user_id
+from utils.auth import get_current_user_id, require_permission, AuthContext
+from utils.constants import TELECALLER_ROLES
+from utils.permissions import Permission
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,35 @@ async def list_exophones(
     """ExoPhones the CRM can dial out from (scoped to the CRM call flow), for the
     caller-ID picker on the lead screen. Each item is `{number, label}`."""
     return await provider.list_caller_ids()
+
+
+@router.get("/agent-modes")
+async def agent_modes(
+    _: AuthContext = Depends(require_permission(Permission.LEADS_MANAGE)),
+    provider: TelephonyProvider = Depends(get_telephony_provider),
+):
+    """Each active telecaller's call mode (admin 'who gets what' view):
+      - `softphone` — Exotel has a SIP for them, so inbound/outbound uses the in-browser
+                      WebRTC softphone.
+      - `ssc`       — no SIP, so calls fall back to a Server-Side Call that rings their
+                      Exotel/PSTN leg.
+    Display-only: routing already auto-detects this per agent at call time."""
+    res = await UserManager(engine).fetch_all(filters={"role": TELECALLER_ROLES, "is_active": True})
+    agents = list(res.items)
+    sips = await provider.softphone_sips([getattr(a, "email", "") or "" for a in agents])
+    out = []
+    for a in agents:
+        email = getattr(a, "email", "") or ""
+        sip = sips.get(email.strip().lower())
+        out.append({
+            "uid": a.uid,
+            "name": getattr(a, "full_name", "") or email or a.uid,
+            "email": email,
+            "sip": sip,
+            "mode": "softphone" if sip else "ssc",
+        })
+    out.sort(key=lambda r: (r["mode"] != "softphone", (r["name"] or "").lower()))
+    return out
 
 
 @router.get("/softphone-token")

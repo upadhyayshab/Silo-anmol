@@ -18,6 +18,7 @@ identify the agent by `user_id` (which it does expose, keyed by email). That als
 means we can't map an inbound webhook's SIP id back to an agent — see
 `resolve_agent_email`.
 """
+import asyncio
 import logging
 import re
 import time
@@ -66,15 +67,12 @@ def _norm_status(raw: Optional[str]) -> CallStatus:
 
 
 def _e164_in(num: Optional[str]) -> str:
-    """Indian number -> E.164 (`+91XXXXXXXXXX`), which the CCM call API requires."""
+    """Indian number -> E.164 (`+91XXXXXXXXXX`), which the CCM call API requires. Dials the
+    LAST 10 digits: bare 10-digit as-is, and strips any leading prefix — 0 (trunk), 91
+    (country code), or a stray extra digit from ingestion (some leads came in as 11 digits).
+    India-only. Fewer than 10 digits -> can't normalize; return as-is so Exotel rejects it."""
     digits = re.sub(r"\D", "", str(num or ""))
-    if len(digits) == 10:
-        return "+91" + digits
-    if len(digits) == 11 and digits.startswith("0"):
-        return "+91" + digits[1:]
-    if len(digits) == 12 and digits.startswith("91"):
-        return "+" + digits
-    return ("+" + digits) if digits else str(num or "")
+    return ("+91" + digits[-10:]) if len(digits) >= 10 else str(num or "")
 
 
 def _resp_data(body: Any) -> dict:
@@ -355,6 +353,23 @@ class ExotelAdapter(TelephonyProvider):
         self._sip_cache[exotel_email] = (sip, now)
         return sip
 
+    async def softphone_sips(self, emails: List[str]) -> dict:
+        """{crm_email_lower: sip_id_or_None} — 'has SIP' = softphone-capable (WebRTC),
+        else server-side call. Reuses resolve_agent_sip (cached per email), fanned out
+        with a bounded concurrency so a large team doesn't hammer Exotel's usermapping."""
+        uniq = sorted({(e or "").strip().lower() for e in emails if (e or "").strip()})
+        sem = asyncio.Semaphore(8)   # ponytail: cap fan-out; raise if the team dwarfs it
+
+        async def _one(email: str):
+            async with sem:
+                try:
+                    return await self.resolve_agent_sip(email)
+                except Exception:
+                    return None
+
+        results = await asyncio.gather(*[_one(e) for e in uniq])
+        return {e: (r if isinstance(r, str) else None) for e, r in zip(uniq, results)}
+
     async def list_caller_ids(self) -> List[dict]:
         """ExoPhones on the account, scoped to the CRM flow (`crm_flow_id`). Cached
         (TTL) and serves the last good copy on failure — the list rarely changes."""
@@ -609,6 +624,8 @@ if __name__ == "__main__":
     assert _e164_in("9535328180") == "+919535328180"
     assert _e164_in("09535328180") == "+919535328180"
     assert _e164_in("+918068875264") == "+918068875264"
+    assert _e164_in("99535328180") == "+919535328180"    # 11-digit ingestion junk -> last 10
+    assert _e164_in("919535328180") == "+919535328180"   # 12-digit 91-prefixed -> last 10
 
     a = ExotelAdapter("sid", "key", "token", caller_id="08047", status_callback="https://cb/exotel/call")
     assert a._device_url.endswith("/v2/integrations/device")   # device-status PUT target wired
