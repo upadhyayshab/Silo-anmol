@@ -18,7 +18,6 @@ identify the agent by `user_id` (which it does expose, keyed by email). That als
 means we can't map an inbound webhook's SIP id back to an agent — see
 `resolve_agent_email`.
 """
-import asyncio
 import logging
 import re
 import time
@@ -228,6 +227,9 @@ class ExotelAdapter(TelephonyProvider):
         # ExoPhone list, cached too (read on every lead-page open otherwise).
         self._exo: Optional[List[dict]] = None
         self._exo_ts = 0.0
+        # Per-agent devices (CCM Users ?fields=devices), cached — softphone capability + verified.
+        self._dev: Optional[dict] = None
+        self._dev_ts = 0.0
 
     async def connect_call(self, request: CallRequest) -> CallResponse:
         """CCM Make Call: ring the agent's softphone (by user_id), then bridge the lead."""
@@ -353,22 +355,76 @@ class ExotelAdapter(TelephonyProvider):
         self._sip_cache[exotel_email] = (sip, now)
         return sip
 
-    async def softphone_sips(self, emails: List[str]) -> dict:
-        """{crm_email_lower: sip_id_or_None} — 'has SIP' = softphone-capable (WebRTC),
-        else server-side call. Reuses resolve_agent_sip (cached per email), fanned out
-        with a bounded concurrency so a large team doesn't hammer Exotel's usermapping."""
-        uniq = sorted({(e or "").strip().lower() for e in emails if (e or "").strip()})
-        sem = asyncio.Semaphore(8)   # ponytail: cap fan-out; raise if the team dwarfs it
+    async def agent_device_status(self, emails: List[str]) -> dict:
+        """{crm_email_lower: {'sip', 'mode', 'verified'}} from ONE paged CCM Users
+        `?fields=devices` call (cached) — replaces the per-agent usermapping fan-out.
+          mode     'softphone' if the agent has a SIP device, else 'ssc' (server-side call).
+          verified softphone outbound health: False = the unverified-`tel` Primary-device
+                   pattern that keeps an unusable device active outbound (10725); True =
+                   healthy; None for ssc (n/a).
+        """
+        devmap = await self._agent_devices()
+        out: dict = {}
+        for e in {(x or "").strip().lower() for x in emails if (x or "").strip()}:
+            exo = self._email_overrides.get(e, e)
+            d = devmap.get(exo) or devmap.get(e)
+            if not d or not d.get("has_sip"):   # mode keyed on SIP-device presence, not its uri
+                out[e] = {"sip": None, "mode": "ssc", "verified": None}
+            else:
+                # broken = an unverified tel device stays active outbound -> 10725.
+                verified = (not d.get("has_tel")) or bool(d.get("tel_verified"))
+                out[e] = {"sip": d.get("sip"), "mode": "softphone", "verified": verified}
+        return out
 
-        async def _one(email: str):
-            async with sem:
-                try:
-                    return await self.resolve_agent_sip(email)
-                except Exception:
-                    return None
+    async def _agent_devices(self) -> dict:
+        """Cached {exotel_email -> {sip, has_tel, tel_verified, sip_verified}} from the CCM
+        Users API. Serves the last good copy if a refresh fails, like the agent directory."""
+        now = time.time()
+        if self._dev is not None and now - self._dev_ts < self._dir_ttl:
+            return self._dev
+        try:
+            self._dev = await self._fetch_agent_devices()
+            self._dev_ts = now
+        except Exception as e:
+            logger.warning(f"[exotel] agent devices fetch failed: {e}")
+            if self._dev is None:
+                self._dev, self._dev_ts = {}, now
+        return self._dev
 
-        results = await asyncio.gather(*[_one(e) for e in uniq])
-        return {e: (r if isinstance(r, str) else None) for e, r in zip(uniq, results)}
+    async def _fetch_agent_devices(self) -> dict:
+        """Page GET /users?fields=devices and pull each agent's sip/tel device state
+        (type, verified, contact_uri). One bulk read for the whole team — same shape the
+        exotel_unverified_report.py audit uses."""
+        out: dict = {}
+        offset = 0
+        async with httpx.AsyncClient(timeout=self._timeout, auth=self._auth) as client:
+            while True:
+                resp = await client.get(
+                    f"{self._ccm_base}/users?fields=devices&limit=50&offset={offset}")
+                resp.raise_for_status()
+                body = resp.json()
+                rows = body.get("response") or []
+                for row in rows:
+                    d = (row or {}).get("data") or {}
+                    email = (d.get("email") or "").strip().lower()
+                    if not email:
+                        continue
+                    devs = d.get("devices") or []
+                    tel = next((x for x in devs if x.get("type") == "tel"), None)
+                    sipd = next((x for x in devs if x.get("type") == "sip"), None)
+                    out[email] = {
+                        "has_sip": sipd is not None,
+                        "sip": (sipd or {}).get("contact_uri"),
+                        "has_tel": tel is not None,
+                        "tel_verified": bool(tel and tel.get("verified")),
+                        "sip_verified": bool(sipd and sipd.get("verified")),
+                    }
+                total = (body.get("metadata") or {}).get("total")
+                offset += len(rows)
+                if not rows or (isinstance(total, int) and offset >= total) or offset > 5000:
+                    break
+        logger.info(f"[exotel] agent devices loaded: {len(out)} users")
+        return out
 
     async def list_caller_ids(self) -> List[dict]:
         """ExoPhones on the account, scoped to the CRM flow (`crm_flow_id`). Cached

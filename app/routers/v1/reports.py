@@ -1085,10 +1085,13 @@ FILTER_CLASSIFICATION_SQL = """
                CASE 
                    WHEN co.uid LIKE 'order_%' THEN 'D2C'
                    WHEN (co.uid LIKE 'customer_orders_%' OR co.uid LIKE 'customer_user_%') AND u.role = 'OUTLET_MANAGER' THEN 'Organic'
-                   WHEN LOWER(lsq.lead_source) IN (
-                        'referral sites', 'direct traffic', 'social media', 'inbound email', 
-                        'inbound phone call', 'outbound phone call', 'pay per click ads', 
-                        'fb lead ads', 'web visit/login', 'whatsapp inbound', 'app sign up', 
+                   -- In-house CRM orders (ORD-CRM- prefix or lead-linked) are Lead Gen,
+                   -- never Organic, even when lead_source is null/unmapped.
+                   WHEN co.order_number LIKE 'ORD-CRM%' OR co.lead_id IS NOT NULL
+                     OR LOWER(lsq.lead_source) IN (
+                        'referral sites', 'direct traffic', 'social media', 'inbound email',
+                        'inbound phone call', 'outbound phone call', 'pay per click ads',
+                        'fb lead ads', 'web visit/login', 'whatsapp inbound', 'app sign up',
                         'gau swasth subscriber', 'add to cart', 'browsed 3 pages'
                    ) THEN 'Lead Gen'
                    ELSE 'Organic'

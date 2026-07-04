@@ -87,8 +87,11 @@ async def prospect_report(
     engine, *,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
+    order_from_date: Optional[date] = None,
+    order_to_date: Optional[date] = None,
     region: Optional[str] = None,
     owner_id: Optional[str] = None,
+    owner_ids: Optional[List[str]] = None,
     stage: Optional[str] = None,
     source: Optional[str] = None,
     lead_numbers: Optional[List[str]] = None,
@@ -110,9 +113,28 @@ async def prospect_report(
             conds.append(LeadSchema.created_at >= gte)
         if lte is not None:
             conds.append(LeadSchema.created_at <= lte)
+
+        # Order-date scope (order_date = order created_at): gate to prospects with
+        # >=1 order in the window, and restrict the order rollup below to those same
+        # in-window orders so the counts/amounts reflect the period, not lifetime.
+        o_gte, o_lte = _day_bounds(order_from_date, order_to_date)
+        order_date_conds = []
+        if o_gte is not None:
+            order_date_conds.append(CustomerOrderSchema.order_date >= o_gte)
+        if o_lte is not None:
+            order_date_conds.append(CustomerOrderSchema.order_date <= o_lte)
+        if order_date_conds:
+            conds.append(
+                db.exists().where(CustomerOrderSchema.lead_id == LeadSchema.uid, *order_date_conds)
+            )
         if region:
-            conds.append(LeadSchema.state == region)
-        if owner_id:
+            # lead.state is stored lowercase-canonical; canonicalize the incoming filter
+            # so any casing matches and Telangana folds to the AP team (canon_state alias).
+            from services.leadService import canon_state
+            conds.append(LeadSchema.state == canon_state(region))
+        if owner_ids:
+            conds.append(LeadSchema.owner_id.in_(owner_ids))
+        elif owner_id:
             conds.append(LeadSchema.owner_id == owner_id)
         if stage:
             conds.append(LeadSchema.stage == _enum_or_raw(LeadStage, stage))
@@ -169,7 +191,7 @@ async def prospect_report(
         order_agg: Dict[str, Dict[str, Any]] = {}
         orders = (await session.execute(
             db.select(CustomerOrderSchema)
-              .where(CustomerOrderSchema.lead_id.in_(lead_ids))
+              .where(CustomerOrderSchema.lead_id.in_(lead_ids), *order_date_conds)
               .order_by(CustomerOrderSchema.order_date.desc())
         )).scalars().all()
         for o in orders:
@@ -210,7 +232,7 @@ async def prospect_report(
         for lead_id, total_qty in (await session.execute(
             db.select(CustomerOrderSchema.lead_id, db.func.sum(OrderItemSchema.quantity))
               .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
-              .where(CustomerOrderSchema.lead_id.in_(lead_ids))
+              .where(CustomerOrderSchema.lead_id.in_(lead_ids), *order_date_conds)
               .group_by(CustomerOrderSchema.lead_id)
         )).all():
             qty[lead_id] = int(total_qty or 0)
@@ -242,6 +264,6 @@ async def prospect_report(
                 "order_status": agg.get("status") or "",
                 "mode_of_payment": agg.get("payment") or "",
                 "call_attempts": call_count.get(l.uid, 0),
-                "region": l.state or "",
+                "region": (l.state or "").title(),   # stored lowercase-canonical; Title Case for display
             })
         return rows, total

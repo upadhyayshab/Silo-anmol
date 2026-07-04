@@ -57,27 +57,30 @@ async def agent_modes(
     _: AuthContext = Depends(require_permission(Permission.LEADS_MANAGE)),
     provider: TelephonyProvider = Depends(get_telephony_provider),
 ):
-    """Each active telecaller's call mode (admin 'who gets what' view):
-      - `softphone` — Exotel has a SIP for them, so inbound/outbound uses the in-browser
-                      WebRTC softphone.
-      - `ssc`       — no SIP, so calls fall back to a Server-Side Call that rings their
-                      Exotel/PSTN leg.
-    Display-only: routing already auto-detects this per agent at call time."""
+    """Each active telecaller's call mode + device health (admin 'who gets what' view):
+      - `mode`     `softphone` (Exotel has a SIP for them -> in-browser WebRTC) or `ssc`
+                   (no SIP -> Server-Side Call that rings their Exotel/PSTN leg).
+      - `verified` softphone outbound health: `false` = an unverified device is stuck
+                   active outbound (breaks calls, 10725); `true` = healthy; `null` for ssc.
+    Display-only: routing already auto-detects mode per agent at call time. One bulk
+    CCM `/users?fields=devices` read backs the whole list."""
     res = await UserManager(engine).fetch_all(filters={"role": TELECALLER_ROLES, "is_active": True})
     agents = list(res.items)
-    sips = await provider.softphone_sips([getattr(a, "email", "") or "" for a in agents])
+    status = await provider.agent_device_status([getattr(a, "email", "") or "" for a in agents])
     out = []
     for a in agents:
         email = getattr(a, "email", "") or ""
-        sip = sips.get(email.strip().lower())
+        st = status.get(email.strip().lower()) or {}
         out.append({
             "uid": a.uid,
             "name": getattr(a, "full_name", "") or email or a.uid,
             "email": email,
-            "sip": sip,
-            "mode": "softphone" if sip else "ssc",
+            "sip": st.get("sip"),
+            "mode": st.get("mode") or "ssc",
+            "verified": st.get("verified"),
         })
-    out.sort(key=lambda r: (r["mode"] != "softphone", (r["name"] or "").lower()))
+    # Softphone first, then unverified softphone flagged near the top of their group.
+    out.sort(key=lambda r: (r["mode"] != "softphone", r.get("verified") is not False, (r["name"] or "").lower()))
     return out
 
 

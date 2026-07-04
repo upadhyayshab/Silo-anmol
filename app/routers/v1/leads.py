@@ -197,12 +197,12 @@ async def get_today_queue(
     limit: int = Query(100, ge=1, le=500),
     ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
 ):
-    """New / engaged / not-reachable stage buckets for the caller's leads.
+    """Urgency-ordered working queue: overdue / new / not-reachable / engaged / ftu / rtu.
 
-    A lead leaves the queue once a call is logged today (IST) and rolls to the
-    next day if still in one of these stages. Telecallers are auto-scoped to
-    their own leads; admins see everyone (or one telecaller via `owner_id`).
-    Soft-deleted leads are excluded.
+    Overdue (any stage with a past-due follow-up) surfaces first. Only the New
+    bucket clears once a call is logged today (IST); other stages stay until their
+    stage advances. Telecallers are auto-scoped to their own leads; admins see
+    everyone (or one telecaller via `owner_id`). Soft-deleted leads are excluded.
     """
     actor = await _crm_actor(ctx)
     return await leadService.today_queue(engine, actor, owner_id=owner_id, limit=limit)
@@ -222,12 +222,14 @@ def _report_scope_owner(ctx) -> Optional[str]:
 
 
 async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
-                        source, lead_numbers, limit, offset, extra_clause=None):
+                        source, lead_numbers, limit, offset, extra_clause=None,
+                        order_from_date=None, order_to_date=None, owner_ids=None):
     nums = [n.strip() for n in lead_numbers.split(",")] if lead_numbers else None
     nums = [n for n in nums if n] if nums else None
     return await crmReportService.prospect_report(
-        engine, from_date=from_date, to_date=to_date, region=region,
-        owner_id=owner_id, stage=stage, source=source, lead_numbers=nums,
+        engine, from_date=from_date, to_date=to_date,
+        order_from_date=order_from_date, order_to_date=order_to_date, region=region,
+        owner_id=owner_id, owner_ids=owner_ids, stage=stage, source=source, lead_numbers=nums,
         scope_owner_id=_report_scope_owner(ctx), limit=limit, offset=offset,
         extra_clause=extra_clause,
     )
@@ -237,8 +239,11 @@ async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
 async def prospect_report(
     from_date: Optional[date] = Query(None, description="Lead created on/after (inclusive)"),
     to_date: Optional[date] = Query(None, description="Lead created on/before (inclusive)"),
+    order_from_date: Optional[date] = Query(None, description="Has an order created on/after (inclusive)"),
+    order_to_date: Optional[date] = Query(None, description="Has an order created on/before (inclusive)"),
     region: Optional[str] = Query(None, description="Lead Inflow Region (lead.state)"),
     owner_id: Optional[str] = Query(None),
+    owner_ids: Optional[List[str]] = Query(None, description="Scope to these owners (repeatable); overrides owner_id"),
     stage: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     lead_numbers: Optional[str] = Query(None, description="Comma-separated prospect ids"),
@@ -249,7 +254,9 @@ async def prospect_report(
     """Prospect report rows. Paginated for the table; pass limit=0 to fetch the
     full filtered set (capped) for the client-side Excel export."""
     rows, total = await _build_report(
-        ctx, from_date=from_date, to_date=to_date, region=region, owner_id=owner_id,
+        ctx, from_date=from_date, to_date=to_date,
+        order_from_date=order_from_date, order_to_date=order_to_date,
+        region=region, owner_id=owner_id, owner_ids=owner_ids,
         stage=stage, source=source, lead_numbers=lead_numbers, limit=limit, offset=offset,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
@@ -263,8 +270,11 @@ class ReportQueryRequest(BaseModel):
     filter: Optional[dict] = None
     from_date: Optional[date] = None
     to_date: Optional[date] = None
+    order_from_date: Optional[date] = None
+    order_to_date: Optional[date] = None
     region: Optional[str] = None
     owner_id: Optional[str] = None
+    owner_ids: Optional[List[str]] = None
     stage: Optional[str] = None
     source: Optional[str] = None
     lead_numbers: Optional[str] = None
@@ -289,8 +299,10 @@ async def prospect_report_query(
     limit = max(0, min(body.limit or 0, 200))
     offset = max(0, body.offset or 0)
     rows, total = await _build_report(
-        ctx, from_date=body.from_date, to_date=body.to_date, region=body.region,
-        owner_id=body.owner_id, stage=body.stage, source=body.source,
+        ctx, from_date=body.from_date, to_date=body.to_date,
+        order_from_date=body.order_from_date, order_to_date=body.order_to_date,
+        region=body.region, owner_id=body.owner_id, owner_ids=body.owner_ids,
+        stage=body.stage, source=body.source,
         lead_numbers=body.lead_numbers, limit=limit, offset=offset, extra_clause=clause,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}

@@ -4,7 +4,9 @@ Centralizes every lead mutation so that the activity timeline is written
 consistently from one place. Routers stay thin and just translate HTTP.
 """
 import asyncio
+import difflib
 import logging
+import re
 import uuid
 from bg_tasks import spawn
 from datetime import datetime, timezone, timedelta
@@ -19,6 +21,7 @@ from managers import (
     LeadManager, LeadSchema,
     LeadActivityManager, LeadActivitySchema,
     UserManager, OutletManager,
+    LSQOrderAdManager, LSQOrderAdSchema,
 )
 from models import (
     LeadResponse, LeadDetailResponse, LeadActivityResponse,
@@ -80,6 +83,44 @@ def canon_geo(value):
     if not isinstance(value, str):
         return value
     return value.strip().lower() or None
+
+
+# Canonical Indian states (title-case for readability; canon_state returns them
+# lowercased — the DB convention, matching canon_geo / outlet_mappings).
+INDIAN_STATES = (
+    "Karnataka", "Andhra Pradesh", "Telangana", "Punjab", "Tamil Nadu", "Kerala",
+    "Maharashtra", "Gujarat", "Rajasthan", "Madhya Pradesh", "Uttar Pradesh",
+    "Haryana", "Bihar", "West Bengal", "Odisha", "Assam", "Jharkhand",
+    "Chhattisgarh", "Uttarakhand", "Himachal Pradesh", "Goa", "Delhi",
+)
+_STATE_LC = [s.lower() for s in INDIAN_STATES]
+
+# Operational aliases: a state served by another state's team, applied after
+# canonicalization. Telangana has no telecallers of its own — its (Telugu-speaking)
+# leads are worked by the Andhra Pradesh team, mirroring the LSQ backfill's
+# Telugu-campaign -> Andhra Pradesh rule. So all Telangana variants fold to AP.
+STATE_ALIASES = {"telangana": "andhra pradesh"}
+
+
+def canon_state(value):
+    """Canonical LOWERCASE state for lead/user/page state fields. Casing AND
+    misspellings fold to a real state ('Karnataka'/'karnatka'/'ಕರ್ನಾಟಕ' -> 'karnataka');
+    an operational alias then routes served-elsewhere states (Telangana -> andhra pradesh);
+    a real word that isn't a state passes through lowercased (a district like 'Tumkur'
+    -> 'tumkur', still surfaced for manual mapping); pure garbage ('...', pincodes, 'NA')
+    -> None. Pure (no I/O), unit-testable. Twin of scripts/lsq/lsq_backfill_leads.
+    derive_state (that one returns title-case for its own display) — keep in sync."""
+    if not isinstance(value, str):
+        return value
+    v = value.strip()
+    if not v:
+        return None
+    if v == "ಕರ್ನಾಟಕ":  # Karnataka in Kannada script
+        return "karnataka"
+    hit = difflib.get_close_matches(v.lower(), _STATE_LC, n=1, cutoff=0.75)
+    if hit:
+        return STATE_ALIASES.get(hit[0], hit[0])  # canonical lowercase, aliased if served elsewhere
+    return v.lower() if re.fullmatch(r"[A-Za-z][A-Za-z ]{2,}", v) else None
 
 
 def _now() -> datetime:
@@ -182,7 +223,9 @@ async def create_lead(engine, payload, by_user_id: str,
 
     # Canonicalize geography to lowercase before any branch (matches
     # outlet_mappings / cluster_districts). Display layers title-case it back.
-    for _f in GEO_FIELDS:
+    # State additionally folds casing + misspellings to a canonical state (canon_state).
+    payload.state = canon_state(getattr(payload, "state", None))
+    for _f in ("district", "taluk"):
         setattr(payload, _f, canon_geo(getattr(payload, _f, None)))
 
     creator = _real_user(by_user_id)  # None for system/webhook/microservice
@@ -409,7 +452,7 @@ async def update_lead(engine, lead: LeadSchema, changes: Dict[str, Any],
     # the form matches the stored lowercase and produces no spurious update.
     for _f in GEO_FIELDS:
         if _f in changes:
-            changes[_f] = canon_geo(changes[_f])
+            changes[_f] = canon_state(changes[_f]) if _f == "state" else canon_geo(changes[_f])
 
     applied: Dict[str, Any] = {}
     diff: Dict[str, Any] = {}
@@ -476,10 +519,74 @@ async def handle_post_order(engine, lead_id: str, order_value: Decimal) -> None:
     elif new_count > 1:
         target_stage = LeadStage.RTU
 
-    # Auto-advance if it implies a change (and only if the lead is not in a terminal state maybe? 
+    # Auto-advance if it implies a change (and only if the lead is not in a terminal state maybe?
     # For now, always push to FTU/RTU as requested).
     if target_stage and lead.stage != target_stage:
         await change_stage(engine, lead, target_stage, by_user_id=None, note=f"Auto-advanced to {target_stage.value} on order #{new_count}")
+
+
+def attribution_values(lead: LeadSchema, order_id: str) -> Dict[str, Any]:
+    """Map a lead's source/campaign fields to order_attribution columns (pure).
+
+    Uses LAST-touch: campaign_data holds first-touch in its flat top-level keys and
+    each later touch appended to `touches[]` (see dedup_utils.compute_backfill), so the
+    latest ad/campaign is `touches[-1]`. Each field falls back to the flat first-touch
+    key when the latest touch omits it. ad_set_id maps from the `adset_id` key
+    (Facebook/LSQ import naming). Enums are stored as their .value to match what reports
+    LOWER()-compare against.
+    """
+    cd = lead.campaign_data or {}
+    touches = cd.get("touches") or []
+    latest = touches[-1] if touches and isinstance(touches[-1], dict) else cd
+
+    def pick(key):
+        val = latest.get(key)
+        return val if val is not None else cd.get(key)
+
+    return {
+        "lead_id": lead.uid,
+        "order_id": order_id,
+        "lead_source": getattr(lead.source, "value", lead.source),
+        "source_campaign": pick("source_campaign"),
+        "ad_id": pick("ad_id"),
+        "ad_set_id": pick("adset_id") or pick("ad_set_id"),
+        "campaign_id": pick("campaign_id"),
+        "lead_stage": getattr(lead.stage, "value", lead.stage),
+        "utm_param": cd or None,
+    }
+
+
+async def attribute_order(engine, lead_id: str, order_id: str, *, overwrite: bool = False) -> bool:
+    """Write the lead's source/campaign attribution into order_attribution for one order.
+
+    Reports LEFT JOIN order_attribution on order_id; without this row an in-house CRM
+    order (telecaller/proxy create) shows as unattributed. LSQ and Medusa orders get
+    their row on their own ingest paths — this covers the in-house path and the backfill.
+
+    Idempotent on order_id: an existing row is left untouched unless overwrite=True.
+    Returns True when a row was created or updated. Best-effort at call sites — never
+    let a failure here block order creation.
+    """
+    lead = await LeadManager(engine).fetch(lead_id)
+    if not lead:
+        return False
+
+    values = attribution_values(lead, order_id)
+
+    attr_manager = LSQOrderAdManager(engine)
+    existing = await attr_manager.fetch_all(filters={"order_id": order_id})
+    if existing.items:
+        if not overwrite:
+            return False
+        row = existing.items[0]
+        await attr_manager.update(
+            row.uid,
+            {k: v for k, v in values.items() if k not in ("lead_id", "order_id")},
+        )
+        return True
+
+    await attr_manager.create(LSQOrderAdSchema(**values))
+    return True
 
 
 async def log_order_status_change(engine, order, new_status, by_user_id,
@@ -762,18 +869,24 @@ async def sweep_unassigned():
 
 async def today_queue(engine, user, *, owner_id: Optional[str] = None,
                       limit: int = 100) -> TodayQueueResponse:
-    """The telecaller's working queue, split into three stage buckets.
+    """The telecaller's working queue, ordered by urgency.
 
+    - **overdue**        — a contacted lead (Engaged / Not Reachable / FTU / RTU)
+                           whose follow-up is past-due AND not yet actioned today;
+                           most-overdue first, top of the queue. Acting on it (a call
+                           today) moves it back into its stage bucket, so it shows in
+                           exactly one place.
     - **new**            — stage New Lead, newest first
-    - **engaged**        — stage Engaged, earliest follow-up first
     - **not_reachable**  — stage Not Reachable, oldest-touched first
+    - **engaged**        — stage Engaged, earliest follow-up first
     - **ftu** / **rtu**  — converted (first-time / repeat), oldest-touched first
 
-    A lead drops out of every bucket once a call is logged *today* (IST calendar
-    day), and reappears the next day if it is still in one of these stages — so
-    working a lead clears it for the day, while unreached leads roll to tomorrow.
-    Logging a call also auto-advances the stage via the disposition map, so a
-    connected lead naturally leaves "new"/"not_reachable" on its own.
+    A lead stays in the queue through its whole life and only leaves when it reaches a
+    terminal stage (Lapsed / Not Qualified) — those have no bucket. The **new** bucket
+    clears a fresh lead once it's called today; the contacted-stage buckets stay
+    visible after a call (worked down by advancing the stage). An unhandled past-due
+    callback surfaces in **overdue** until actioned today, then drops into its stage
+    bucket.
 
     Role-scoped: a telecaller sees only their own leads; an admin sees all, or a
     single telecaller's via ``owner_id``. Soft-deleted leads are excluded from
@@ -790,23 +903,42 @@ async def today_queue(engine, user, *, owner_id: Optional[str] = None,
     now = _now()
     today_start = _start_of_ist_day(now)
 
-    # Leads already worked today: a call logged at/after IST midnight. An
-    # IN-subquery (not a JOIN) keeps the select one-row-per-lead so bucket counts
-    # stay exact even when a lead has several call logs.
+    def _scoped():
+        q = db.select(LeadSchema).where(LeadSchema.deleted_at.is_(None))
+        if scope_owner:
+            q = q.where(LeadSchema.owner_id == scope_owner)
+        return q
+
+    # A lead leaves the queue ONLY when it reaches a terminal stage (Lapsed / Not
+    # Qualified) — those have no bucket. Until then it rides New -> Engaged ->
+    # Not Reachable -> FTU/RTU and stays visible. Overdue is therefore scoped to the
+    # in-queue *contacted* stages, so a Lapsed/Not-Qualified lead carrying a stale
+    # follow_up_at is NOT dragged back in.
+    OVERDUE_STAGES = [s.value for s in (LeadStage.ENGAGED, LeadStage.NOT_REACHABLE,
+                                        LeadStage.FTU, LeadStage.RTU)]
+    # A past-due follow-up on such a lead makes it "overdue". NULL follow-ups never
+    # satisfy `<= now`, so they're excluded. `not_overdue` is the complement (no
+    # follow-up, or one still ahead).
+    is_overdue = db.and_(LeadSchema.stage.in_(OVERDUE_STAGES), LeadSchema.follow_up_at <= now)
+    not_overdue = db.or_(LeadSchema.follow_up_at.is_(None), LeadSchema.follow_up_at > now)
+
+    # "Worked today" = a call logged today (IST). Two uses:
+    #   • New Lead clears once worked (a fresh lead you've actioned drops off).
+    #   • An overdue callback worked today is HANDLED — it leaves Overdue and drops back
+    #     into its stage bucket, even if a new follow-up time wasn't set. So acting on an
+    #     overdue lead moves it to its respective stage.
+    # IN-subquery (not a JOIN) keeps one row per lead so counts stay exact.
     worked_today = db.select(LeadActivitySchema.lead_id).where(
         LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG,
         LeadActivitySchema.created_at >= today_start,
     )
+    worked = LeadSchema.uid.in_(worked_today)
 
-    def _bucket_base(stage):
-        q = db.select(LeadSchema).where(
-            LeadSchema.deleted_at.is_(None),
-            LeadSchema.stage == stage.value,
-            LeadSchema.uid.not_in(worked_today),
-        )
-        if scope_owner:
-            q = q.where(LeadSchema.owner_id == scope_owner)
-        return q
+    def _stage_base(stage):
+        # A contacted-stage lead shows in its stage bucket unless it's an UNHANDLED
+        # overdue callback (past-due AND not worked today) — those sit in Overdue.
+        # `not_overdue OR worked` = "not an unhandled overdue callback".
+        return _scoped().where(LeadSchema.stage == stage.value, db.or_(not_overdue, worked))
 
     user_cache, outlet_cache = {}, {}
 
@@ -823,19 +955,27 @@ async def today_queue(engine, user, *, owner_id: Optional[str] = None,
         ]
         return TodayQueueBucket(count=total, items=items)
 
-    # Postgres orders NULLs last on ASC, so engaged leads without a scheduled
-    # follow-up naturally sort after those with one.
-    new = await _materialize(_bucket_base(LeadStage.NEW_LEAD), LeadSchema.created_at.desc())
-    engaged = await _materialize(_bucket_base(LeadStage.ENGAGED), LeadSchema.follow_up_at.asc())
-    not_reachable = await _materialize(_bucket_base(LeadStage.NOT_REACHABLE), LeadSchema.updated_at.asc())
-    # Converted leads (first-time / repeat) surfaced for follow-up/re-order calls,
-    # oldest-touched first, and cleared for the day once called (same worked-today rule).
-    ftu = await _materialize(_bucket_base(LeadStage.FTU), LeadSchema.updated_at.asc())
-    rtu = await _materialize(_bucket_base(LeadStage.RTU), LeadSchema.updated_at.asc())
+    # Overdue = unhandled past-due callbacks (not worked today), most-overdue on top;
+    # acting on one moves it into its stage bucket. Then the stage buckets — Postgres
+    # orders NULLs last on ASC, so engaged leads without a scheduled follow-up sort after
+    # those with one. New Lead additionally hides anything already called today.
+    overdue = await _materialize(
+        _scoped().where(is_overdue, LeadSchema.uid.not_in(worked_today)),
+        LeadSchema.follow_up_at.asc())
+    # New Lead is untouched (no callback) so it's never overdue — it doesn't use
+    # not_overdue, it just hides anything already called today.
+    new = await _materialize(
+        _scoped().where(LeadSchema.stage == LeadStage.NEW_LEAD.value,
+                        LeadSchema.uid.not_in(worked_today)),
+        LeadSchema.created_at.desc())
+    not_reachable = await _materialize(_stage_base(LeadStage.NOT_REACHABLE), LeadSchema.updated_at.asc())
+    engaged = await _materialize(_stage_base(LeadStage.ENGAGED), LeadSchema.follow_up_at.asc())
+    ftu = await _materialize(_stage_base(LeadStage.FTU), LeadSchema.updated_at.asc())
+    rtu = await _materialize(_stage_base(LeadStage.RTU), LeadSchema.updated_at.asc())
 
     return TodayQueueResponse(
-        new=new, engaged=engaged, not_reachable=not_reachable,
-        ftu=ftu, rtu=rtu,
+        overdue=overdue, new=new, not_reachable=not_reachable,
+        engaged=engaged, ftu=ftu, rtu=rtu,
         generated_at=now,
     )
 

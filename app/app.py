@@ -15,9 +15,9 @@ from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager, Gen
 try:
     from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
     MIDDLEWARES_AVAILABLE = True
-    print("✅ SharedBackend middlewares imported successfully")
+    print("SharedBackend middlewares imported successfully")
 except Exception as e:
-    print(f"⚠️  SharedBackend middlewares import failed: {e}")
+    print(f"SharedBackend middlewares import failed: {e}")
     MIDDLEWARES_AVAILABLE = False
     
     # Create fallback middleware classes
@@ -60,9 +60,9 @@ logging.basicConfig(level=getattr(logging, str(settings.log_level).upper(), logg
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     # Startup
-    print(f"🚀 Starting {settings.name} API Server")
-    print(f"📊 Database: {settings.engine_str}")
-    print(f"🔧 Environment: {settings.env}")
+    print(f"Starting {settings.name} API Server")
+    print(f"Database: {settings.engine_str}")
+    print(f"Environment: {settings.env}")
     
     # Seed the default RBAC roles into the DB and load them into the resolver cache
     # (DB-backed roles; code dict is the seed + fallback). Best-effort — won't block boot.
@@ -71,12 +71,12 @@ async def lifespan(app: FastAPI):
 
     # Start the async scheduler
     scheduler_app.start()
-    print(f"🚀 Scheduler Started with {len(scheduler_app.get_jobs())} jobs loaded.")
+    print(f"Scheduler Started with {len(scheduler_app.get_jobs())} jobs loaded.")
 
     yield
     
     # Shutdown
-    print(f"🛑 Shutting down {settings.name} API Server")
+    print(f"Shutting down {settings.name} API Server")
     scheduler_app.shutdown()
     # Wait for detached fire-and-forget tasks before the event loop stops, so a
     # deploy/SIGTERM doesn't kill in-flight background work. Bounded so it always
@@ -110,10 +110,10 @@ entity_manager = EntityManager(engine)
 try:
     app.add_middleware(SDKMiddleware, key_manager=key_manager)
     app.add_middleware(EntityMiddleware, entity_manager=entity_manager)
-    print("✅ Middlewares added successfully")
+    print("Middlewares added successfully")
 except Exception as e:
-    print(f"⚠️  Middleware setup failed: {e}")
-    print("🔄 Continuing without middlewares...")
+    print(f"Middleware setup failed: {e}")
+    print("Continuing without middlewares...")
 
 # Include routers
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])

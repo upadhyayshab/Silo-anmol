@@ -51,10 +51,17 @@ delivery_service = deliveryService()
 router = APIRouter(prefix="/orders", tags=["Order Management"])
 
 
-def generate_order_number() -> str:
-    """Generate unique order number"""
+def generate_order_number(is_crm: bool = False) -> str:
+    """Generate unique order number.
+
+    is_crm=True (order placed from a CRM lead — telecaller/proxy) gets the
+    ``ORD-CRM-`` prefix so the daily-rev split (CRM vs outlet manager) works;
+    outlet-manager/direct orders stay ``ORD-``. Mirrors the legacy LSQ webhook
+    prefix (crm.py) so both CRM origins share ``ORD-CRM-``.
+    """
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"ORD-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
+    prefix = "ORD-CRM" if is_crm else "ORD"
+    return f"{prefix}-{timestamp}-{str(uuid.uuid4())[:8].upper()}"
 
 
 def _assert_discount_within_selling_price(product_name: str, per_unit_discount: Decimal, cost_price: Decimal) -> None:
@@ -240,9 +247,10 @@ async def create_order(
                 detail="Final order amount cannot be negative"
             )
         
-        # Create order
-        order_number = generate_order_number()
-        
+        # Create order. A lead_id means the order was placed from a CRM lead
+        # (telecaller page) -> ORD-CRM- prefix; outlet-manager orders have none -> ORD-.
+        order_number = generate_order_number(is_crm=bool(payload.lead_id))
+
         # Auto-assign to the caller's outlet for outlet-scoped managers (not telecaller/
         # delivery/agency, who create unassigned orders that are auto-routed later).
         assigned_outlet_id = None
@@ -398,7 +406,11 @@ async def create_order(
                 
                 # Auto-advance FTU/RTU and update counts (checkpoint 3.3)
                 await leadService.handle_post_order(engine, payload.lead_id, final_total_amount)
-                
+
+                # Attribution: copy the lead's source/campaign onto the order so reports
+                # (which JOIN order_attribution) attribute in-house CRM orders too.
+                await leadService.attribute_order(engine, payload.lead_id, created_order.uid)
+
             except Exception as activity_err:
                 print(f"⚠️ Failed to log CRM order activity for lead {payload.lead_id}: {activity_err}")
 
@@ -698,9 +710,10 @@ async def create_proxy_order(
                 detail="Final order amount cannot be negative"
             )
         
-        # Step 6: Create order (attributed to telecaller, not admin)
-        order_number = generate_order_number()
-        
+        # Step 6: Create order (attributed to telecaller, not admin). Proxy orders
+        # placed from a CRM lead -> ORD-CRM- prefix, same as the telecaller page.
+        order_number = generate_order_number(is_crm=bool(payload.lead_id))
+
         # IMPORTANT: For proxy orders, NEVER auto-assign to outlet
         # Always use Google API assignment (assigned_outlet_id = None initially)
         assigned_outlet_id = None
@@ -823,7 +836,10 @@ async def create_proxy_order(
                 
                 # Auto-advance FTU/RTU and update counts (checkpoint 3.3)
                 await leadService.handle_post_order(engine, payload.lead_id, final_total_amount)
-                
+
+                # Attribution: copy the lead's source/campaign onto the order (see create path).
+                await leadService.attribute_order(engine, payload.lead_id, created_order.uid)
+
             except Exception as activity_err:
                 print(f"⚠️ Failed to log CRM proxy order activity for lead {payload.lead_id}: {activity_err}")
         

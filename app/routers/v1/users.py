@@ -10,6 +10,7 @@ from managers import (UserManager, LSQTelecallerMappingManager, UserSchema,
                       LSQTelecallerMappingSchema, UserScopeAssignmentManager,
                       UserScopeAssignmentSchema)
 from services import CRMService
+from services.leadService import canon_state
 from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
     UserResponse, ListResponse, StatusResponse
@@ -467,7 +468,7 @@ async def create_user(
             phone=payload.phone,
             outlet_id=payload.outlet_id,
             agency_id=payload.agency_id,
-            state=payload.state,
+            state=canon_state(payload.state),
             assignment_quota=payload.assignment_quota,
             is_active=True
         )
@@ -513,6 +514,8 @@ async def update_user(
     try:
         target = await user_manager.fetch(user_id)
         updates = payload.dict(exclude_unset=True)
+        if "state" in updates:
+            updates["state"] = canon_state(updates["state"])
         enforce_agency_update_fence(ctx, target.role, getattr(target, "agency_id", None), updates)
 
         if not updates:

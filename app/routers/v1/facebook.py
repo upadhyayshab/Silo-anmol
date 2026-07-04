@@ -20,6 +20,7 @@ from managers import (
     FbFieldMappingManager, FbFieldMappingSchema, FbLeadgenFormManager,
 )
 from services import facebook_leads, facebook_service, facebook_mapping
+from services.leadService import canon_state
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission
 
@@ -105,6 +106,8 @@ async def update_page(page_id: str, patch: PagePatch, _: AuthContext = Depends(r
     if not rows.items:
         raise HTTPException(status_code=404, detail="Page not found")
     changes = {k: v for k, v in patch.model_dump().items() if v is not None}
+    if "routing_state" in changes:
+        changes["routing_state"] = canon_state(changes["routing_state"])
     return await FacebookPageManager(engine).update(rows.items[0].uid, changes)
 
 
