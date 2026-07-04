@@ -1258,7 +1258,7 @@ async def fetch_logistics_order_summary(
         SELECT generate_series(CAST(:start_date AS DATE), CAST(:end_date AS DATE), '1 day'::interval)::date AS d
     ),
     order_stats AS (
-        SELECT co.uid, co.created_at, co.updated_at, co.order_status,
+        SELECT co.uid, co.created_at, co.updated_at, co.actual_delivery_date, co.order_status,
                co.gross_amount - co.discount_applied AS net_amount, ot.total_qty,
 {FILTER_CLASSIFICATION_SQL}
         FROM customer_orders co
@@ -1294,13 +1294,16 @@ async def fetch_logistics_order_summary(
         GROUP BY 1
     ),
     delivered AS (
-        SELECT DATE(updated_at AT TIME ZONE 'Asia/Kolkata') AS d,
+        -- ponytail: actual_delivery_date is a plain DATE set from utcnow() at delivery,
+        -- so it's UTC-dated (no IST shift possible from a date-only column). Placed/pending/
+        -- cancelled still bucket by IST; store a timestamptz delivery ts if same-tz matters.
+        SELECT actual_delivery_date AS d,
                COUNT(uid) AS delivered_orders,
                COALESCE(SUM(net_amount), 0) AS delivered_revenue,
                COALESCE(SUM(total_qty), 0) AS delivered_quantity
         FROM filtered_stats
         WHERE order_status = 'DELIVERED'
-          AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date BETWEEN :start_date AND :end_date
+          AND actual_delivery_date BETWEEN :start_date AND :end_date
         GROUP BY 1
     ),
     cancelled AS (
