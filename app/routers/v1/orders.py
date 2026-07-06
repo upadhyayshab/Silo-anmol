@@ -1811,6 +1811,17 @@ async def update_order(
         )
 
 
+def _transition_allowed(current: OrderStatus, new: OrderStatus, *, allow_uncancel: bool = False) -> bool:
+    """Transition gate for status changes.
+
+    allow_uncancel is the bulk super-admin extra: a CANCELLED order may be
+    revived to PENDING. DELIVERED stays final everywhere.
+    """
+    if allow_uncancel and current == OrderStatus.CANCELLED and new == OrderStatus.PENDING:
+        return True
+    return is_valid_status_transition(current, new)
+
+
 @router.put("/{order_id}/status", response_model=StatusResponse)
 async def update_order_status(
     order_id: str,
