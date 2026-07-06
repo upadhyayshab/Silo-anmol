@@ -120,11 +120,9 @@ class Settings(BaseSettings):
     exotel_api_key: str = os.getenv("DAILER_API_KEY", "")        # dialer key
     exotel_api_token: str = os.getenv("DAILER_TOKEN", "")        # dialer token
     exotel_sid: str = os.getenv("DAILER_SID", "")               # account SID
-    exotel_caller_id: str = os.getenv("DAILER_CALLER_ID", "")    # ExoPhone / DID (optional; per-call override wins)
     exotel_subdomain: str = os.getenv("DAILER_SUBDOMAIN", "api.exotel.com")
     exotel_ccm_subdomain: str = os.getenv("DAILER_CCM_SUBDOMAIN", "ccm-api.exotel.com")  # Users/agent dir (Mumbai: ccm-api.in.exotel.com)
-    exotel_status_callback: str = os.getenv("DAILER_STATUS_CALLBACK", "")  # public webhook URL
-    exotel_crm_flow_id: str = os.getenv("DAILER_CRM_FLOW_ID", "")  # call-flow id of the CRM app; scopes the ExoPhone list
+    exotel_crm_flow_id: str = os.getenv("DAILER_CRM_FLOW_ID", "")  # call-flow id of the CRM app; scopes the ExoPhone list (auto-map VirtualNumber)
     exotel_email_overrides: str = os.getenv("DAILER_EMAIL_OVERRIDES", "")  # crm_email:exotel_email pairs where they differ
     # exotel_email:sip pairs so inbound rings the agent's WebRTC softphone (Feature 3.2)
     # rather than their PSTN phone, e.g. "crm+1@silofortune.com:sip:naveenh37746fa6".
