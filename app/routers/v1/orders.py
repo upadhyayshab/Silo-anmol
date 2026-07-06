@@ -1822,6 +1822,156 @@ def _transition_allowed(current: OrderStatus, new: OrderStatus, *, allow_uncance
     return is_valid_status_transition(current, new)
 
 
+async def _apply_status_change(
+    order,
+    new_status: OrderStatus,
+    remarks: Optional[str],
+    postpone_date: Optional[date],
+    user_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    allow_uncancel: bool = False,
+) -> None:
+    """Status-change engine shared by the single and bulk endpoints.
+
+    Validates the transition, applies the status-specific side effects
+    (store sync, CRM push, stock, delivery tracking), persists the update and
+    logs the change on the linked lead's timeline. Raises HTTPException(400)
+    on an invalid transition or missing remarks.
+    """
+    old_status = order.order_status
+
+    # Validate status transition
+    if not _transition_allowed(order.order_status, new_status, allow_uncancel=allow_uncancel):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status transition from {order.order_status} to {new_status}"
+        )
+
+    # Handle status-specific logic
+    update_data = {
+        "order_status": new_status,
+        "status_remarks": remarks
+    }
+
+    update_order = lambda order_obj, update_dict: [setattr(order_obj, k, v) for k, v in update_dict.items()]
+
+    if new_status == OrderStatus.DELIVERED:
+        update_data["actual_delivery_date"] = datetime.utcnow()
+
+        # Update local object so model_dump() picks it up for CRM
+        update_order(order, update_data)
+
+        # push the order status to store
+        await store_service.order_delivered(order.uid)
+
+        # push activity to crm
+        background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.DELIVERY_STATUS)
+        background_tasks.add_task(trigger_smartping_event_bg, order.uid, "order_delivered")
+
+        # Consume stock from inventory
+        await consume_order_stock(order.uid)
+
+    elif new_status == OrderStatus.CANCELLED:
+        if not remarks:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Status remarks required for cancelled orders"
+            )
+
+        update_order(order, update_data)
+
+        # push the order status to store
+        await store_service.order_cancelled(order.uid)
+
+        # push activity to crm
+        background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.ORDER_STATUS)
+        # Stock reservation logic removed
+
+    elif new_status == OrderStatus.DELIVERY_ALLOTTED:
+        update_data["actual_delivery_date"] = datetime.utcnow()
+
+        # Update local object so model_dump() picks it up for CRM
+        update_order(order, update_data)
+
+        # push the order status to store
+        await store_service.order_fulfilled(order.uid)
+
+        # push activity to crm
+        background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.DELIVERY_STATUS)
+        background_tasks.add_task(trigger_smartping_event_bg, order.uid, "order_dispatched")
+
+    elif new_status == OrderStatus.PENDING:
+        if not remarks:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Status remarks required when reverting to pending"
+            )
+
+        update_data["delivery_person_id"] = None
+        update_data["actual_delivery_date"] = None
+
+        update_order(order, update_data)
+
+        # Create a tracking record for the unassignment
+        existing_tracking = await tracking_manager.fetch_all(
+            filters={"order_id": order.uid}, sorts=["created_at"]
+        )
+        unassign_remark = f"Order unassigned. Reason: {remarks}"
+        tracking_record = DeliveryTrackingSchema(
+            order_id=order.uid,
+            outlet_id=order.assigned_outlet_id,
+            telecaller_id=order.telecaller_id,
+            delivery_person_id=None,
+            status_changed_to=OrderStatus.PENDING,
+            remarks=build_cumulative_remarks(
+                existing_tracking.items, OrderStatus.PENDING, unassign_remark
+            ),
+            changed_by=user_id
+        )
+        await tracking_manager.create(tracking_record)
+
+        # Notify CRM that status is back to Pending
+        # background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.ORDER_STATUS)
+
+    elif new_status in [
+        OrderStatus.POSTPONED,
+        OrderStatus.ATTEMPTED,
+        OrderStatus.CUSTOMER_NOT_AVAILABLE,
+        OrderStatus.UNABLE_TO_CONTACT,
+        OrderStatus.UNABLE_TO_LOCATE,
+        OrderStatus.PAYMENT_NOT_READY
+    ]:
+        if not remarks:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Status remarks required for {new_status.value}"
+            )
+
+        update_data["priority_level"] = (order.priority_level or 0) + 10
+
+        if new_status in [OrderStatus.POSTPONED, OrderStatus.PAYMENT_NOT_READY] and postpone_date:
+            update_data["expected_delivery_date"] = postpone_date
+        else:
+            update_data["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)
+
+        update_order(order, update_data)
+
+        # push activity to crm
+        background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.DELIVERY_STATUS)
+
+    await order_manager.update(order.uid, update_data)
+
+    # Internal CRM: log the status change on the lead timeline, attributed
+    # to the user who made the change.
+    from services import leadService
+    background_tasks.add_task(
+        leadService.log_order_status_change, engine, order,
+        new_status, user_id,
+        old_status=old_status, remarks=remarks,
+    )
+
+
 @router.put("/{order_id}/status", response_model=StatusResponse)
 async def update_order_status(
     order_id: str,
@@ -1836,146 +1986,17 @@ async def update_order_status(
             (CustomerOrderSchema.items, OrderItemSchema.product)
         ])
         await _assert_order_in_scope(ctx, order)
-        current_user_id = ctx.user_id
 
-        old_status = order.order_status
-
-        # Validate status transition
-        if not is_valid_status_transition(order.order_status, payload.order_status):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status transition from {order.order_status} to {payload.order_status}"
-            )
-        
-        # Handle status-specific logic
-        update_data = {
-            "order_status": payload.order_status,
-            "status_remarks": payload.status_remarks
-        }
-
-        update_order = lambda order_obj, update_dict: [setattr(order_obj, k, v) for k, v in update_dict.items()]
-
-        if payload.order_status == OrderStatus.DELIVERED:
-            update_data["actual_delivery_date"] = datetime.utcnow()
-            
-            # Update local object so model_dump() picks it up for CRM
-            update_order(order, update_data)
-            
-            # push the order status to store 
-            await store_service.order_delivered(order_id)
-
-            # push activity to crm           
-            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
-            background_tasks.add_task(trigger_smartping_event_bg, order_id, "order_delivered")
-            
-            # Consume stock from inventory
-            await consume_order_stock(order_id)
-        
-        elif payload.order_status == OrderStatus.CANCELLED:
-            if not payload.status_remarks:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Status remarks required for cancelled orders"
-                )
-
-            update_order(order, update_data)
-            
-            # push the order status to store 
-            await store_service.order_cancelled(order_id)
-
-            # push activity to crm           
-            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.ORDER_STATUS)
-            # Stock reservation logic removed
-
-        elif payload.order_status == OrderStatus.DELIVERY_ALLOTTED:
-            update_data["actual_delivery_date"] = datetime.utcnow()
-            
-            # Update local object so model_dump() picks it up for CRM
-            update_order(order, update_data)
-
-            # push the order status to store 
-            await store_service.order_fulfilled(order_id)
-
-            # push activity to crm           
-            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
-            background_tasks.add_task(trigger_smartping_event_bg, order_id, "order_dispatched")
-
-        elif payload.order_status == OrderStatus.PENDING:
-            if not payload.status_remarks:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Status remarks required when reverting to pending"
-                )
-            
-            update_data["delivery_person_id"] = None
-            update_data["actual_delivery_date"] = None
-            
-            update_order(order, update_data)
-            
-            # Create a tracking record for the unassignment
-            existing_tracking = await tracking_manager.fetch_all(
-                filters={"order_id": order_id}, sorts=["created_at"]
-            )
-            unassign_remark = f"Order unassigned. Reason: {payload.status_remarks}"
-            tracking_record = DeliveryTrackingSchema(
-                order_id=order_id,
-                outlet_id=order.assigned_outlet_id,
-                telecaller_id=order.telecaller_id,
-                delivery_person_id=None,
-                status_changed_to=OrderStatus.PENDING,
-                remarks=build_cumulative_remarks(
-                    existing_tracking.items, OrderStatus.PENDING, unassign_remark
-                ),
-                changed_by=current_user_id
-            )
-            await tracking_manager.create(tracking_record)
-
-            # Notify CRM that status is back to Pending
-            # background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.ORDER_STATUS)
-
-
-        elif payload.order_status in [
-            OrderStatus.POSTPONED,
-            OrderStatus.ATTEMPTED,
-            OrderStatus.CUSTOMER_NOT_AVAILABLE,
-            OrderStatus.UNABLE_TO_CONTACT,
-            OrderStatus.UNABLE_TO_LOCATE,
-            OrderStatus.PAYMENT_NOT_READY
-        ]:
-            if not payload.status_remarks:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Status remarks required for {payload.order_status.value}"
-                )
-            
-            update_data["priority_level"] = (order.priority_level or 0) + 10
-            
-            if payload.order_status in [OrderStatus.POSTPONED, OrderStatus.PAYMENT_NOT_READY] and payload.postpone_date:
-                update_data["expected_delivery_date"] = payload.postpone_date
-            else:
-                update_data["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)
-            
-            update_order(order, update_data)
-            
-            # push activity to crm           
-            background_tasks.add_task(sync_order_to_crm, engine, order_id, ActivityType.DELIVERY_STATUS)
-        
-        await order_manager.update(order_id, update_data)
-
-        # Internal CRM: log the status change on the lead timeline, attributed
-        # to the user who made the change.
-        from services import leadService
-        background_tasks.add_task(
-            leadService.log_order_status_change, engine, order,
-            payload.order_status, current_user_id,
-            old_status=old_status, remarks=payload.status_remarks,
+        await _apply_status_change(
+            order, payload.order_status, payload.status_remarks,
+            payload.postpone_date, ctx.user_id, background_tasks,
         )
 
         return StatusResponse(
             status="ok",
             message=f"Order status updated to {payload.order_status.value}"
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
