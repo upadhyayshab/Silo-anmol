@@ -1,32 +1,31 @@
 """ExotelAdapter — the only place Exotel-specific HTTP/field logic lives.
 
-Implements the `TelephonyProvider` port:
-  - `connect_call`     -> CCM Make Call API (POST /v2/accounts/{sid}/calls): rings
-                          the agent's softphone by `user_id`, then bridges the lead.
-  - `resolve_agent_dial` -> telecaller email -> Exotel `user_id` (via the Users API).
-  - `list_caller_ids`  -> ExoPhones scoped to the CRM call flow.
-  - `parse_event`      -> normalize the call webhook (Passthru / StatusCallback).
+Implements the `TelephonyProvider` port for the WebRTC-softphone-only setup:
+  - `softphone_auth`      -> mint SDK credentials + lazy auto-map (/usermapping).
+  - `resolve_agent_sip`   -> agent email -> SIP id (inbound rings the softphone).
+  - `resolve_agent_email` -> reverse mapping, for webhook agent attribution.
+  - `agent_device_status` -> bulk softphone health for the admin view.
+  - `fetch_call_details`  -> Voice CDR (softphone calls fire no webhook).
+  - `parse_event`         -> normalize the call webhook (Passthru / StatusCallback).
 
-Auth is HTTP Basic (api_key:api_token). The CCM APIs (users, calls) live on the
-`ccm-api.*` host; voice/ExoPhone APIs on the `api.*` host. Docs:
-  https://developer.exotel.com/api/ccm-make-call-agent-connecting-to-a-number
+Auth is HTTP Basic (api_key:api_token). The CCM APIs (users) live on the
+`ccm-api.*` host; voice/ExoPhone APIs on the `api.*` host. ExoPhones are still
+listed (`list_caller_ids`, internal) solely as the VirtualNumber for auto-map.
+Docs:
   https://developer.exotel.com/api/users
   https://support.exotel.com/support/solutions/articles/48283-working-with-passthru-applet
 
-Note: this account's Users API does NOT expose agents' SIP/device ids, so we
-identify the agent by `user_id` (which it does expose, keyed by email). That also
-means we can't map an inbound webhook's SIP id back to an agent — see
-`resolve_agent_email`.
+Note: this account's Users API does NOT expose agents' SIP/device ids in the
+address book, so SIP ids come from /usermapping — see `resolve_agent_sip`.
 """
 import logging
-import re
 import time
 from typing import Any, List, Mapping, Optional
 
 import httpx
 
 from core.telephony import (
-    CallDirection, CallEvent, CallEventKind, CallRequest, CallResponse, CallStatus,
+    CallDirection, CallEvent, CallEventKind, CallStatus,
     TelephonyProvider,
 )
 
@@ -63,28 +62,6 @@ _TERMINAL = {CallStatus.COMPLETED, CallStatus.BUSY, CallStatus.NO_ANSWER,
 def _norm_status(raw: Optional[str]) -> CallStatus:
     key = (raw or "").strip().lower().replace("_", "-").replace(" ", "-")
     return _STATUS_MAP.get(key, CallStatus.FAILED)
-
-
-def _e164_in(num: Optional[str]) -> str:
-    """Indian number -> E.164 (`+91XXXXXXXXXX`), which the CCM call API requires. Dials the
-    LAST 10 digits: bare 10-digit as-is, and strips any leading prefix — 0 (trunk), 91
-    (country code), or a stray extra digit from ingestion (some leads came in as 11 digits).
-    India-only. Fewer than 10 digits -> can't normalize; return as-is so Exotel rejects it."""
-    digits = re.sub(r"\D", "", str(num or ""))
-    return ("+91" + digits[-10:]) if len(digits) >= 10 else str(num or "")
-
-
-def _resp_data(body: Any) -> dict:
-    """The single `data` object from Exotel's `{response: [{data: {...}}]}` envelope."""
-    if isinstance(body, dict):
-        resp = body.get("response")
-        if isinstance(resp, list) and resp and isinstance(resp[0], dict):
-            return resp[0].get("data") or {}
-        if isinstance(resp, dict):
-            return resp.get("data") or {}
-        if isinstance(body.get("data"), dict):
-            return body["data"]
-    return {}
 
 
 def _extract_users(body: Any) -> List[dict]:
@@ -152,27 +129,6 @@ def _exophones_from_body(body: Any, flow_id: str = "") -> List[dict]:
     return out
 
 
-def _make_call_body(request: CallRequest, default_caller: str, status_callback: str) -> dict:
-    """Build the CCM Make Call request body. `agent_number` carries the agent's
-    Exotel `user_id` (or a `sip:` contact uri); the API rings that agent's device."""
-    agent = request.agent_number or ""
-    frm = ({"user_contact_uri": agent} if agent.lower().startswith("sip:")
-           else {"user_id": agent})
-    body = {
-        "from": frm,
-        "to": {"customer_contact_uri": _e164_in(request.lead_number)},   # NB: key is customer_contact_uri (Exotel's error mislabels it "to.contact_uri")
-        "virtual_number": _e164_in(request.caller_id or default_caller),
-    }
-    if status_callback:
-        body["status_callback"] = [
-            {"event": "terminal", "url": status_callback},
-            {"event": "answered", "url": status_callback},
-        ]
-    if request.reference:
-        body["custom_field"] = request.reference
-    return body
-
-
 def _first(payload: Mapping[str, Any], *keys: str) -> Optional[str]:
     """First real value among `keys`. Exotel's Passthru sends the literal string
     "null" for empty fields (RecordingUrl, DialCallStatus, ...) — treat that, and
@@ -189,15 +145,13 @@ def _first(payload: Mapping[str, Any], *keys: str) -> Optional[str]:
 
 class ExotelAdapter(TelephonyProvider):
     def __init__(self, sid: str, api_key: str, api_token: str,
-                 caller_id: str = "", subdomain: str = "api.exotel.com",
-                 status_callback: str = "", ccm_subdomain: str = "ccm-api.exotel.com",
+                 subdomain: str = "api.exotel.com",
+                 ccm_subdomain: str = "ccm-api.exotel.com",
                  crm_flow_id: str = "", email_overrides: str = "", sip_map: str = "",
                  app_id: str = "", app_secret: str = "", app_entity: str = "app",
                  integrations_host: str = "integrationscore.mum1.exotel.com"):
         self._sid = sid
         self._auth = (api_key, api_token)
-        self._caller_id = caller_id           # ExoPhone / virtual DID shown to the lead
-        self._status_callback = status_callback  # public URL Exotel posts call events to
         self._exophones_url = f"https://{subdomain}/v2_beta/Accounts/{sid}/IncomingPhoneNumbers"
         self._calls_base = f"https://{subdomain}/v1/Accounts/{sid}/Calls"  # Voice CDR (call details)
         self._ccm_base = f"https://{ccm_subdomain}/v2/accounts/{sid}"  # Users + Calls (CCM) APIs
@@ -230,29 +184,6 @@ class ExotelAdapter(TelephonyProvider):
         # Per-agent devices (CCM Users ?fields=devices), cached — softphone capability + verified.
         self._dev: Optional[dict] = None
         self._dev_ts = 0.0
-
-    async def connect_call(self, request: CallRequest) -> CallResponse:
-        """CCM Make Call: ring the agent's softphone (by user_id), then bridge the lead."""
-        body = _make_call_body(request, self._caller_id, self._status_callback)
-        print(f"[exotel] make-call POST {self._ccm_base}/calls body={body}")
-        async with httpx.AsyncClient(timeout=self._timeout, auth=self._auth) as client:
-            try:
-                resp = await client.post(f"{self._ccm_base}/calls", json=body)
-                resp.raise_for_status()
-                rbody = resp.json()
-            except httpx.HTTPStatusError as e:
-                detail = e.response.text or str(e)
-                return CallResponse(ok=False, error=f"exotel {e.response.status_code}: {detail}")
-            except Exception as e:  # network / JSON
-                return CallResponse(ok=False, error=str(e))
-
-        data = _resp_data(rbody)
-        return CallResponse(
-            call_id=data.get("call_sid") or data.get("CallSid"),
-            status=_STATUS_MAP.get((data.get("call_state") or "").strip().lower()),
-            ok=True,
-            provider_raw=rbody,
-        )
 
     async def fetch_call_details(self, call_sid: str) -> Optional[dict]:
         """GET the Voice CDR by CallSid -> normalized `{status, duration_seconds,
@@ -304,16 +235,6 @@ class ExotelAdapter(TelephonyProvider):
         # reverse the CRM->Exotel override so the returned email is the agent's CRM login.
         return reverse_override.get(email, email)
 
-    async def resolve_agent_dial(self, email: str) -> Optional[str]:
-        """Telecaller email -> their Exotel `user_id`, which the CCM call API uses to
-        ring that agent's softphone. Applies the CRM->Exotel email override for agents
-        whose two emails differ. None if still unmatched."""
-        if not email:
-            return None
-        e = email.strip().lower()
-        e = self._email_overrides.get(e, e)
-        return (await self._agent_directory()).get(e)
-
     async def resolve_agent_sip(self, email: str) -> Optional[str]:
         """Telecaller email -> their Exotel SIP id (e.g. `sip:naveenh37746fa6`), so an
         inbound call rings that agent's WebRTC softphone. Resolution order: CRM->Exotel
@@ -356,24 +277,22 @@ class ExotelAdapter(TelephonyProvider):
         return sip
 
     async def agent_device_status(self, emails: List[str]) -> dict:
-        """{crm_email_lower: {'sip', 'mode', 'verified'}} from ONE paged CCM Users
-        `?fields=devices` call (cached) — replaces the per-agent usermapping fan-out.
-          mode     'softphone' if the agent has a SIP device, else 'ssc' (server-side call).
-          verified softphone outbound health: False = the unverified-`tel` Primary-device
-                   pattern that keeps an unusable device active outbound (10725); True =
-                   healthy; None for ssc (n/a).
-        """
+        """{crm_email_lower: {'sip', 'verified'}} from ONE paged CCM Users
+        `?fields=devices` call (cached). `sip` None = no softphone (the agent cannot
+        call — the WebRTC softphone is the only path). `verified` False = the
+        unverified-`tel` Primary-device pattern that keeps an unusable device active
+        outbound (10725); True = healthy; None when no SIP."""
         devmap = await self._agent_devices()
         out: dict = {}
         for e in {(x or "").strip().lower() for x in emails if (x or "").strip()}:
             exo = self._email_overrides.get(e, e)
             d = devmap.get(exo) or devmap.get(e)
-            if not d or not d.get("has_sip"):   # mode keyed on SIP-device presence, not its uri
-                out[e] = {"sip": None, "mode": "ssc", "verified": None}
+            if not d or not d.get("has_sip"):
+                out[e] = {"sip": None, "verified": None}
             else:
                 # broken = an unverified tel device stays active outbound -> 10725.
                 verified = (not d.get("has_tel")) or bool(d.get("tel_verified"))
-                out[e] = {"sip": d.get("sip"), "mode": "softphone", "verified": verified}
+                out[e] = {"sip": d.get("sip"), "verified": verified}
         return out
 
     async def _agent_devices(self) -> dict:
@@ -674,16 +593,11 @@ class ExotelAdapter(TelephonyProvider):
 
 if __name__ == "__main__":
     # ponytail: smoke check the pure paths — status, webhook normalization, parsing,
-    # email->user_id, and the make-call body builder (the money path).
+    # and the email->user_id / email->SIP mappings.
     assert _norm_status("No Answer") == CallStatus.NO_ANSWER
     assert _norm_status("completed") == CallStatus.COMPLETED
-    assert _e164_in("9535328180") == "+919535328180"
-    assert _e164_in("09535328180") == "+919535328180"
-    assert _e164_in("+918068875264") == "+918068875264"
-    assert _e164_in("99535328180") == "+919535328180"    # 11-digit ingestion junk -> last 10
-    assert _e164_in("919535328180") == "+919535328180"   # 12-digit 91-prefixed -> last 10
 
-    a = ExotelAdapter("sid", "key", "token", caller_id="08047", status_callback="https://cb/exotel/call")
+    a = ExotelAdapter("sid", "key", "token")
     assert a._device_url.endswith("/v2/integrations/device")   # device-status PUT target wired
 
     # Real Passthru shapes seen in prod (contact-centre flow):
@@ -737,9 +651,6 @@ if __name__ == "__main__":
     import asyncio
     a._dir, a._dir_ts = dir_, time.time()
     a._email_overrides = _parse_overrides("Naveen.H@silofortune.com:CRM@silofortune.com")
-    assert asyncio.run(a.resolve_agent_dial("crm@silofortune.com")) == "b240c0"   # direct email -> user_id
-    assert asyncio.run(a.resolve_agent_dial("naveen.h@silofortune.com")) == "b240c0"  # via override
-    assert asyncio.run(a.resolve_agent_dial("nobody@x.com")) is None
     # email -> SIP for inbound softphone routing (via the configured map + override).
     a._sip_map = _parse_overrides("crm@silofortune.com:sip:naveenh37746fa6")
     assert asyncio.run(a.resolve_agent_sip("crm@silofortune.com")) == "sip:naveenh37746fa6"
@@ -752,17 +663,7 @@ if __name__ == "__main__":
     assert asyncio.run(a.resolve_agent_email("b240c0")) == "naveen.h@silofortune.com"
     assert asyncio.run(a.resolve_agent_email("nope")) is None
 
-    # Make-call body: from=user_id, E.164 to/virtual, status_callback array.
-    body = _make_call_body(
-        CallRequest(agent_number="b240c0", lead_number="9535328180",
-                    caller_id="+918068875264", reference="leads_x"),
-        "08047", "https://cb/exotel/call")
-    assert body["from"] == {"user_id": "b240c0"}
-    assert body["to"] == {"customer_contact_uri": "+919535328180"} and body["virtual_number"] == "+918068875264"
-    assert body["custom_field"] == "leads_x"
-    assert {e["event"] for e in body["status_callback"]} == {"terminal", "answered"}
-
-    # ExoPhone list, scoped to the CRM flow via voice_url.
+    # ExoPhone list, scoped to the CRM flow via voice_url (auto-map VirtualNumber source).
     phones_body = {"incoming_phone_numbers": [
         {"phone_number": "08068875264", "friendly_name": "CRM-1",
          "voice_url": "http://my.exotel.in/Exotel/exoml/start_voice/45195"},
