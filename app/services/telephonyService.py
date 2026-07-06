@@ -1,9 +1,9 @@
 """Telephony service (Feature 3) — application logic over the telephony port.
 
-Radical Minds owns outbound dialing (their iframe), inbound routing (their
-campaign rules), and agent presence. So the only backend job left is: when RM's
-call webhook arrives, log the call (status, duration, recording) onto the
-matching lead's activity timeline, attributed to the agent who took it.
+The in-browser WebRTC softphone is the only call path. This service owns what the
+softphone can't do itself: logging finished calls onto the matching lead's timeline
+(webhook + CDR enrichment) and routing inbound calls to an available agent's SIP
+softphone (owner-first, else round-robin over presence, else Exotel's queue).
 
 Called from a thin webhook router with a `provider` injected via
 `Depends(get_telephony_provider)`.
@@ -40,7 +40,7 @@ def _status_to_outcome(status: CallStatus) -> CallOutcome:
 async def handle_event(engine, provider: TelephonyProvider,
                        payload: Mapping[str, Any]) -> CallEvent:
     """Process a dialer call webhook. We act on call-end (log the outcome);
-    call-start is a no-op now that RM tracks agent presence."""
+    call-start is a no-op (agent presence comes from the frontend heartbeat)."""
     event = provider.parse_event(payload)
     if event.kind == CallEventKind.ENDED:
         telecaller = await _resolve_telecaller(engine, provider, event)
@@ -200,8 +200,8 @@ async def _resolve_telecaller(engine, provider, event: CallEvent):
 
 @dataclass
 class InboundRoute:
-    """The routing answer for an inbound call. `dial_number` is None when no agent
-    is available — the caller (Exotel applet) then sends the call to its queue."""
+    """The routing answer for an inbound call. `dial_number` is the agent's SIP id,
+    or None (no agent / no softphone) — the Exotel applet then queues the call."""
     telecaller_id: Optional[str]
     dial_number: Optional[str]
     reason: str                       # "owner" | "round_robin" | "no_agent"
@@ -220,22 +220,15 @@ def _decide_inbound(owner_id: Optional[str], owner_available: bool,
     return None, "no_agent"
 
 
-def _to_e164(number: Optional[str]) -> Optional[str]:
-    """Indian phone -> E.164 (+91XXXXXXXXXX) — the format Exotel's Connect dynamic-URL
-    requires. None if we can't derive a 10-digit national number (Exotel then dials
-    nobody). ponytail: India-only; generalize if non-+91 agents ever take calls."""
-    national = dedup_utils.normalize_mobile(number)
-    return f"+91{national}" if national and len(national) == 10 else None
-
-
 async def resolve_inbound_agent(engine, caller_number: str, provider=None) -> InboundRoute:
     """Decide who an inbound call should ring. Owner-first (if the caller matches a
     lead whose owner is available), else the least-loaded available telecaller scoped
     to the lead's outlet/state, else no agent (NO_AGENT -> Exotel queue applet).
 
     `dial_number` is the chosen agent's **SIP id** (rings their in-browser softphone)
-    when `provider` can resolve one, else their **PSTN phone** in E.164. Pass the
-    telephony provider so inbound reaches the softphone; omit it (tests) to dial phones.
+    or None — there is no PSTN fallback; an agent without a softphone mapping is
+    treated like no agent and Exotel's queue takes the call. `provider=None` (tests)
+    therefore always yields dial_number=None.
 
     ponytail: queue/retry on NO_AGENT is delegated to Exotel's Queue applet for now;
     this function is the seam where a backend call-queue would hook in later.
@@ -268,14 +261,14 @@ async def resolve_inbound_agent(engine, caller_number: str, provider=None) -> In
     dial_number = None
     if chosen_id:
         agent = await UserManager(engine).fetch(chosen_id)
-        # Prefer the agent's SIP softphone (rings inside the CRM); fall back to PSTN.
+        # SIP-only: ring the in-browser softphone. No PSTN fallback — if the agent has
+        # no softphone mapping we return None and the empty destination sends the call
+        # to Exotel's queue, same as no_agent.
         if provider is not None and getattr(agent, "email", None):
             try:
                 dial_number = await provider.resolve_agent_sip(agent.email)
             except Exception:
                 dial_number = None
-        if not dial_number:
-            dial_number = _to_e164(getattr(agent, "phone", None))
 
     return InboundRoute(
         telecaller_id=chosen_id, dial_number=dial_number, reason=reason,
@@ -303,10 +296,4 @@ if __name__ == "__main__":
     assert _decide_inbound(None, False, "u2") == ("u2", "round_robin") # no owner -> pick
     assert _decide_inbound("u1", False, None) == (None, "no_agent")    # owner offline, none free
     assert _decide_inbound(None, False, None) == (None, "no_agent")    # nobody at all
-
-    # E.164 normalization (Exotel requires +91…)
-    assert _to_e164("9876543210") == "+919876543210"
-    assert _to_e164("09876543210") == "+919876543210"
-    assert _to_e164("+91 98765-43210") == "+919876543210"
-    assert _to_e164(None) is None and _to_e164("") is None and _to_e164("123") is None
-    print("telephony service mapping + inbound routing + e164 OK")
+    print("telephony service mapping + inbound routing OK")
