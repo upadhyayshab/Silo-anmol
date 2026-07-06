@@ -15,7 +15,8 @@ from models import (
     OrderAssignRequest, OrderRevokeRequest, OrderTransactionCreateRequest, PaymentStatusUpdateRequest,OrderTransactionUpdateRequest,
     OrderFullUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
-    ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult
+    ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult,
+    BulkOrderStatusUpdateRequest, BulkOrderStatusUpdateResult, BulkOrderStatusUpdateResponse
 )
 from utils.auth import require_permission, apply_scope, apply_field_mask, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
@@ -1086,6 +1087,83 @@ async def bulk_assign_delivery_guy_to_orders(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to bulk assign delivery guy: {str(e)}"
         )
+
+MAX_BULK_STATUS_ROWS = 1000  # ponytail: sync loop; move to a background job if real batches outgrow this
+
+
+@router.post("/bulk/status-update", response_model=BulkOrderStatusUpdateResponse)
+async def bulk_update_order_status(
+    payload: BulkOrderStatusUpdateRequest,
+    background_tasks: BackgroundTasks,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_REVOKE)),
+):
+    """Guarded bulk status update (SUPER_ADMIN via orders:revoke).
+
+    File is parsed client-side; body carries the order numbers. confirm_text
+    must equal the target status name — the typed guard is enforced server-side.
+    Transitions follow the single-endpoint rules plus CANCELLED -> PENDING
+    (un-cancel). DELIVERED orders are never modified. Bad rows are skipped with
+    a reason; the batch never aborts. Each applied change also lands on the
+    linked lead's activity timeline via _apply_status_change.
+    """
+    if payload.confirm_text.strip().lower() != payload.order_status.value.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Confirmation text must match the status name '{payload.order_status.value}'"
+        )
+    if payload.order_status not in (OrderStatus.DELIVERED, OrderStatus.DELIVERY_ALLOTTED) \
+            and not payload.status_remarks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Status remarks required for {payload.order_status.value}"
+        )
+
+    # normalize + dedupe, preserving file order
+    numbers, seen = [], set()
+    for raw in payload.order_numbers:
+        n = (raw or "").strip().upper()
+        if n and n not in seen:
+            seen.add(n)
+            numbers.append(n)
+    if not numbers:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No order numbers provided")
+    if len(numbers) > MAX_BULK_STATUS_ROWS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many rows: {len(numbers)} (max {MAX_BULK_STATUS_ROWS})"
+        )
+
+    found = await order_manager.fetch_all(
+        filters={"order_number": numbers},
+        joins=[
+            (CustomerOrderSchema.assigned_outlet, OutletSchema.manager),
+            (CustomerOrderSchema.items, OrderItemSchema.product)
+        ],
+    )
+    by_number = {o.order_number: o for o in found.items}
+
+    updated, skipped = 0, []
+    for n in numbers:
+        order = by_number.get(n)
+        if order is None:
+            skipped.append(BulkOrderStatusUpdateResult(order_number=n, reason="order not found"))
+            continue
+        if order.order_status == OrderStatus.DELIVERED:
+            skipped.append(BulkOrderStatusUpdateResult(
+                order_number=n, reason="already delivered — bulk cannot modify delivered orders"))
+            continue
+        try:
+            await _apply_status_change(
+                order, payload.order_status, payload.status_remarks,
+                None, ctx.user_id, background_tasks, allow_uncancel=True,
+            )
+            updated += 1
+        except HTTPException as row_err:
+            skipped.append(BulkOrderStatusUpdateResult(order_number=n, reason=str(row_err.detail)))
+        except Exception as row_err:
+            skipped.append(BulkOrderStatusUpdateResult(order_number=n, reason=f"failed: {row_err}"))
+
+    return BulkOrderStatusUpdateResponse(total=len(numbers), updated=updated, skipped=skipped)
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 

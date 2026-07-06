@@ -963,6 +963,24 @@ class BulkAssignmentResponse(BaseModel):
     results: List[BulkAssignmentResult]
 
 
+class BulkOrderStatusUpdateRequest(BaseModel):
+    order_numbers: List[str]
+    order_status: OrderStatus
+    status_remarks: Optional[str] = None
+    confirm_text: str = Field(..., description="Typed guard — must equal the target status name")
+
+
+class BulkOrderStatusUpdateResult(BaseModel):
+    order_number: str
+    reason: str
+
+
+class BulkOrderStatusUpdateResponse(BaseModel):
+    total: int
+    updated: int
+    skipped: List[BulkOrderStatusUpdateResult]
+
+
 # ============================================================================
 # DELIVERY GUY HANDOVER MODELS
 # ============================================================================
@@ -1289,7 +1307,8 @@ __all__ = [
     # Delivery Guy
     "DeliveryGuyCreateRequest", "DeliveryGuyUpdateRequest", "DeliveryGuyResponse",
     "BulkOrderDeliveryAssignmentRequest", "BulkAssignmentResult", "BulkAssignmentResponse",
-    
+    "BulkOrderStatusUpdateRequest", "BulkOrderStatusUpdateResult", "BulkOrderStatusUpdateResponse",
+
     # Delivery Guy Handovers
     "DeliveryHandoverCreateRequest", "DeliveryHandoverStatusUpdateRequest", 
     "DeliveryHandoverResponse", "DeliveryGuyCashBalanceResponse",
