@@ -1112,6 +1112,11 @@ async def bulk_update_order_status(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Confirmation text must match the status name '{payload.order_status.value}'"
             )
+        if payload.order_status == OrderStatus.DELIVERED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Bulk update cannot mark orders delivered; use the single-order flow."
+            )
         if payload.order_status not in (OrderStatus.DELIVERED, OrderStatus.DELIVERY_ALLOTTED) \
                 and not payload.status_remarks:
             raise HTTPException(

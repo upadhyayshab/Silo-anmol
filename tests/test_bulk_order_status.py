@@ -226,6 +226,13 @@ def test_lead_activity_task_scheduled():
     assert any(t.func is leadService.log_order_status_change for t in bt.tasks)
 
 
+def test_delivered_target_rejected():
+    # Bulk cannot mark orders delivered — out of scope, heavy inventory side effects.
+    _expect_400(lambda: _run_bulk(
+        [], order_numbers=["ORD-1"], order_status="delivered",
+        status_remarks=None, confirm_text="delivered"))
+
+
 if __name__ == "__main__":
     for _name in sorted(list(globals())):
         if _name.startswith("test_") and callable(globals()[_name]):
