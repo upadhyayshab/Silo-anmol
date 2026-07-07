@@ -64,7 +64,7 @@ class Permission(str, Enum):
     DELIVERY_WRITE = "delivery:write"
     HANDOVERS_READ = "handovers:read"
     HANDOVERS_WRITE = "handovers:write"
-    HANDOVERS_READ_OWN = "handovers:read:own"  # delivery guy: OWN cash balance + handover history only
+    HANDOVERS_READ_OWN = "handovers:read:own"    # delivery guy: view OWN cash balance + handover history only
     HANDOVERS_WRITE_OWN = "handovers:write:own"  # delivery guy: record OWN handover (create->PENDING only; NOT confirm/reject)
     NOTIFICATIONS_WRITE = "notifications:write"
     # Marketing / CRM
