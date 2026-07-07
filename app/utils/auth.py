@@ -265,9 +265,20 @@ async def outlet_ids_for_state(state: Optional[str]) -> list:
     """
     if not state or not str(state).strip():
         return []
+    # Fold in states that operationally serve the requested one: Telangana leads are
+    # worked by the AP team (STATE_ALIASES), but their warehouse outlets are still tagged
+    # 'Telangana' — so an explicit "Andhra Pradesh" filter must also match those, else it
+    # under-counts (they'd only show under "All Regions"). Reverse the alias map so the
+    # served-elsewhere state's outlets are included with the serving state.
+    from services.leadService import STATE_ALIASES  # lazy: avoid utils<->services import cycle
+    canon = str(state).strip().lower()
+    names = {canon} | {src for src, dst in STATE_ALIASES.items() if dst == canon}
     mgr = _get_outlet_mgr()
-    res = await mgr.fetch_all(filters={"state": {"$ieq": str(state).strip()}}, limit=0)
-    return [o.uid for o in res.items]
+    ids = []
+    for name in names:  # ≤2 states; $ieq is case-insensitive so lowercase matches stored casing
+        res = await mgr.fetch_all(filters={"state": {"$ieq": name}}, limit=0)
+        ids.extend(o.uid for o in res.items)
+    return ids
 
 
 _user_mgr = None
