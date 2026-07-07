@@ -1,12 +1,13 @@
 """Exotel telephony routes (Feature 3). Depends only on the `TelephonyProvider`
 port — no Exotel imports here; the adapter is injected via `get_telephony_provider`.
 
-The in-browser WebRTC softphone is the ONLY call path — the backend never places
-calls (no server-side click-to-call):
+The in-browser WebRTC softphone is the primary call path:
   GET  /exotel/softphone-token    — mint the softphone SDK credentials (3.1)
   GET|POST /exotel/inbound        — Programmable-Connect dynamic URL: who to ring (3.2)
   POST /exotel/presence/heartbeat — agent presence for inbound routing (3.3)
   GET|POST /exotel/call           — StatusCallback/Passthru webhook -> timeline (3.4/3.5)
+  POST /exotel/connect            — SSC click-to-call fallback (gated: DAILER_SSC_FALLBACK)
+  GET  /exotel/exophones          — caller-ID picker for SSC ([] when the toggle is off)
 
 Mounted under /api/v1, so the webhook URL to configure in Exotel is:
     https://<host>/api/v1/exotel/call
@@ -17,7 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from config import get_settings, get_engine
-from core.telephony import TelephonyProvider
+from core.telephony import CallRequest, TelephonyProvider
 from dependencies.telephony_dep import get_telephony_provider
 from managers import UserManager
 from services import telephonyService, presenceService
@@ -33,8 +34,27 @@ engine = get_engine(settings.name)
 router = APIRouter(prefix="/exotel", tags=["CRM - Exotel Telephony"])
 
 
+class ConnectRequest(BaseModel):
+    lead_number: str
+    lead_uid: str | None = None        # echoed back on the webhook to correlate the call
+    caller_id: str | None = None       # which ExoPhone to dial out from; falls back to the env default
+
+
 class HeartbeatRequest(BaseModel):
     status: str = "available"          # available | on_call | away
+
+
+@router.get("/exophones")
+async def list_exophones(
+    _: str = Depends(get_current_user_id),
+    provider: TelephonyProvider = Depends(get_telephony_provider),
+):
+    """ExoPhones the CRM can dial out from (scoped to the CRM call flow), for the SSC
+    caller-ID picker. Returns [] when the SSC fallback is disabled — the frontend keys
+    its fallback UI off a non-empty list, so the toggle needs no client-side flag."""
+    if not settings.exotel_ssc_fallback:
+        return []
+    return await provider.list_caller_ids()
 
 
 @router.get("/agent-modes")
@@ -99,6 +119,45 @@ async def call_outcome(
     (the picker then stays blank)."""
     connected = await telephonyService.probe_call_connected(provider, call_sid)
     return {"connected": connected}
+
+
+@router.post("/connect")
+async def click_to_call(
+    body: ConnectRequest,
+    user_id: str = Depends(get_current_user_id),
+    provider: TelephonyProvider = Depends(get_telephony_provider),
+):
+    """SSC fallback: Exotel rings the agent's device first, then bridges the lead.
+    Gated by DAILER_SSC_FALLBACK — 403 when off (WebRTC softphone is the only path)."""
+    if not settings.exotel_ssc_fallback:
+        raise HTTPException(status_code=403, detail="SSC fallback is disabled (DAILER_SSC_FALLBACK)")
+
+    agent = await UserManager(engine).fetch(user_id)
+    agent_dial = await provider.resolve_agent_dial(getattr(agent, "email", "") or "")
+    if not agent_dial:
+        raise HTTPException(status_code=400,
+                            detail=f"No Exotel agent found for your email ({getattr(agent, 'email', '')}). "
+                                   "Ask admin to add you as an Exotel user with this email.")
+
+    caller_id = body.caller_id or settings.exotel_caller_id
+    if not caller_id:
+        raise HTTPException(status_code=400, detail="No ExoPhone (caller_id) supplied and no default configured")
+
+    resp = await provider.connect_call(CallRequest(
+        agent_number=agent_dial,
+        lead_number=body.lead_number,
+        caller_id=caller_id,
+        reference=body.lead_uid,
+    ))
+    if not resp.ok:
+        err = resp.error or "Dialer call failed"
+        # 10708/10709 = the agent has no online device -> actionable message, not a raw 502.
+        if "10708" in err or "10709" in err or "available device" in err.lower():
+            raise HTTPException(
+                status_code=409,
+                detail="You're offline on the dialer. Open the Exotel softphone and set yourself Available, then call again.")
+        raise HTTPException(status_code=502, detail=err)
+    return resp
 
 
 @router.post("/presence/heartbeat")
