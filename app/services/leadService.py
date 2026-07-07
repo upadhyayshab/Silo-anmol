@@ -846,6 +846,28 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     return {"assigned": assigned, "skipped": skipped, "by_telecaller": by_tc}
 
 
+async def release_leads_of_users(engine, user_ids: List[str]) -> int:
+    """Unassign every non-deleted lead owned by these users (owner_id -> NULL) and return
+    how many were released. Call this when telecallers are deactivated: otherwise their
+    leads stay stranded on a dead owner — sweep_unassigned only picks up owner_id IS NULL,
+    so an inactive agent's book is never worked or redistributed. The next 5-min sweep
+    then hands the freed leads to active in-region telecallers.
+    ponytail: single bulk UPDATE; the stale lead_assignments rows are harmless (record_
+    assignment deactivates them on the next reassign) — clean them up only if they ever
+    skew a report."""
+    if not user_ids:
+        return 0
+    mgr = LeadManager(engine)
+    async with mgr.session_factory() as session:
+        result = await session.execute(
+            db.update(LeadSchema)
+            .where(LeadSchema.owner_id.in_(user_ids), LeadSchema.deleted_at.is_(None))
+            .values(owner_id=None)
+        )
+        await session.commit()
+        return result.rowcount or 0
+
+
 async def sweep_unassigned():
     """Scheduled sweep: hand any leads sitting unassigned (e.g. created overnight while
     everyone was offline) to online telecallers. Reuses distribute_leads, so the

@@ -190,6 +190,9 @@ async def sync_lsq_telecallers(
                     updates={"is_active": False},
                     limit=len(uids_to_deactivate)
                 )
+                # Free their leads so the sweep redistributes them (else stranded on a dead owner).
+                from services.leadService import release_leads_of_users
+                await release_leads_of_users(engine, uids_to_deactivate)
                 deactivated = len(uids_to_deactivate)
             except Exception as e:
                 errors.append({"email": "Bulk Deactivate", "error": str(e)})
@@ -565,6 +568,10 @@ async def deactivate_user(
         target = await user_manager.fetch(user_id)
         enforce_agency_roster_fence(ctx, target.role, getattr(target, "agency_id", None))
         await user_manager.update(user_id, {"is_active": False})
+        # Release the deactivated user's leads so the 5-min sweep redistributes them
+        # (else they sit stranded on a dead owner).
+        from services.leadService import release_leads_of_users
+        await release_leads_of_users(engine, [user_id])
         return StatusResponse(status="ok", message="User deactivated successfully")
 
     except HTTPException:
