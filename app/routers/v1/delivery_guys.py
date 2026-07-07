@@ -405,7 +405,8 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                 attempt_number=new_attempt_number,
                 priority_level=updates.get("priority_level", order.priority_level or 0),
                 remarks=build_cumulative_remarks(all_tracking.items, new_status, item.remarks),
-                changed_by=item.delivery_person_id or order.telecaller_id
+                changed_by=item.delivery_person_id or order.telecaller_id,
+                source="rider_app",
             )
             await tracking_manager.create(tracking_record)
             

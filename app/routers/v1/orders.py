@@ -55,10 +55,12 @@ router = APIRouter(prefix="/orders", tags=["Order Management"])
 def generate_order_number(is_crm: bool = False) -> str:
     """Generate unique order number.
 
-    is_crm=True (order placed from a CRM lead — telecaller/proxy) gets the
-    ``ORD-CRM-`` prefix so the daily-rev split (CRM vs outlet manager) works;
-    outlet-manager/direct orders stay ``ORD-``. Mirrors the legacy LSQ webhook
-    prefix (crm.py) so both CRM origins share ``ORD-CRM-``.
+    is_crm=True (order created by a telecaller/proxy) gets the ``ORD-CRM-``
+    prefix so the daily-rev split (CRM vs outlet manager) works; outlet-manager
+    orders stay ``ORD-``. Callers decide is_crm from the creator's role, NOT
+    lead_id — every order hangs off a lead now, so lead_id can't tell them apart.
+    Mirrors the legacy LSQ webhook prefix (crm.py) so both CRM origins share
+    ``ORD-CRM-``.
     """
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     prefix = "ORD-CRM" if is_crm else "ORD"
@@ -248,9 +250,10 @@ async def create_order(
                 detail="Final order amount cannot be negative"
             )
         
-        # Create order. A lead_id means the order was placed from a CRM lead
-        # (telecaller page) -> ORD-CRM- prefix; outlet-manager orders have none -> ORD-.
-        order_number = generate_order_number(is_crm=bool(payload.lead_id))
+        # ORD-CRM- for telecaller-created (CRM) orders, plain ORD- for outlet-manager
+        # (outlet-sales) orders. Every order now hangs off a lead, so lead_id no longer
+        # tells them apart — key on the creator's role instead.
+        order_number = generate_order_number(is_crm=ctx.role in _ORDER_OWN_CREATED_ROLES)
 
         # Auto-assign to the caller's outlet for outlet-scoped managers (not telecaller/
         # delivery/agency, who create unassigned orders that are auto-routed later).
@@ -711,9 +714,9 @@ async def create_proxy_order(
                 detail="Final order amount cannot be negative"
             )
         
-        # Step 6: Create order (attributed to telecaller, not admin). Proxy orders
-        # placed from a CRM lead -> ORD-CRM- prefix, same as the telecaller page.
-        order_number = generate_order_number(is_crm=bool(payload.lead_id))
+        # Step 6: Create order (attributed to telecaller, not admin). Proxy orders are
+        # always telecaller-attributed CRM orders -> ORD-CRM- prefix.
+        order_number = generate_order_number(is_crm=True)
 
         # IMPORTANT: For proxy orders, NEVER auto-assign to outlet
         # Always use Google API assignment (assigned_outlet_id = None initially)
@@ -1018,7 +1021,8 @@ async def bulk_assign_delivery_guy_to_orders(
                     remarks=build_cumulative_remarks(
                         existing_tracking.items, OrderStatus.DELIVERY_ALLOTTED, allotment_remark
                     ),
-                    changed_by=current_user_id
+                    changed_by=current_user_id,
+                    source="erp",
                 )
                 await tracking_manager.create(tracking_record)
                 
@@ -1577,9 +1581,23 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         )
 
         result = orders.model_dump()
-        result["items"] = apply_field_mask("orders", ctx, result.get("items", []))
+        items = apply_field_mask("orders", ctx, result.get("items", []))
+
+        # Attach who/from-where each order's status was last changed — the report
+        # export's rider/actor + ERP-vs-rider-app columns. Blank until an order gets
+        # its first tracking row (older orders fill in on their next status change).
+        latest = await tracking_manager.latest_by_order(
+            [it.get("uid") for it in items if it.get("uid")]
+        )
+        for it in items:
+            info = latest.get(it.get("uid")) or {}
+            it["last_status_source"] = info.get("source")
+            it["last_status_changed_by_id"] = info.get("changed_by")
+            it["last_status_changed_by_name"] = info.get("changed_by_name")
+
+        result["items"] = items
         return result
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -2004,27 +2022,7 @@ async def _apply_status_change(
         update_data["actual_delivery_date"] = None
 
         update_order(order, update_data)
-
-        # Create a tracking record for the unassignment
-        existing_tracking = await tracking_manager.fetch_all(
-            filters={"order_id": order.uid}, sorts=["created_at"]
-        )
-        unassign_remark = f"Order unassigned. Reason: {remarks}"
-        tracking_record = DeliveryTrackingSchema(
-            order_id=order.uid,
-            outlet_id=order.assigned_outlet_id,
-            telecaller_id=order.telecaller_id,
-            delivery_person_id=None,
-            status_changed_to=OrderStatus.PENDING,
-            remarks=build_cumulative_remarks(
-                existing_tracking.items, OrderStatus.PENDING, unassign_remark
-            ),
-            changed_by=user_id
-        )
-        await tracking_manager.create(tracking_record)
-
-        # Notify CRM that status is back to Pending
-        # background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.ORDER_STATUS)
+        # Tracking row + lead activity are written once, below, for every transition.
 
     elif new_status in [
         OrderStatus.POSTPONED,
@@ -2053,6 +2051,34 @@ async def _apply_status_change(
         background_tasks.add_task(sync_order_to_crm, engine, order.uid, ActivityType.DELIVERY_STATUS)
 
     await order_manager.update(order.uid, update_data)
+
+    # Audit EVERY transition in delivery_tracking (source='erp'). Best-effort: the
+    # status update is already committed, so a tracking-write failure must never 500
+    # the request. Skipped when the order lacks the NOT NULL outlet/telecaller.
+    # ponytail: one row per change; the daily revert job reads the latest to time out.
+    if order.assigned_outlet_id and order.telecaller_id:
+        try:
+            existing_tracking = await tracking_manager.fetch_all(
+                filters={"order_id": order.uid}, sorts=["created_at"]
+            )
+            base_remark = (f"Order unassigned. Reason: {remarks}"
+                           if new_status == OrderStatus.PENDING else remarks)
+            await tracking_manager.create(DeliveryTrackingSchema(
+                order_id=order.uid,
+                outlet_id=order.assigned_outlet_id,
+                telecaller_id=order.telecaller_id,
+                delivery_person_id=(None if new_status == OrderStatus.PENDING
+                                    else order.delivery_person_id),
+                status_changed_to=new_status,
+                postpone_date=postpone_date,
+                priority_level=order.priority_level or 0,
+                remarks=build_cumulative_remarks(existing_tracking.items, new_status, base_remark),
+                changed_by=user_id,
+                source="erp",
+            ))
+        except Exception as track_err:
+            print(f"WARNING: tracking row not written for {order.uid}: "
+                  f"{type(track_err).__name__}: {track_err}")
 
     # Internal CRM: log the status change on the lead timeline, attributed
     # to the user who made the change.
@@ -2249,7 +2275,8 @@ async def assign_order_to_outlet(
                     remarks=build_cumulative_remarks(
                         existing_tracking.items, OrderStatus.PENDING, reassign_remark
                     ),
-                    changed_by=current_user_id
+                    changed_by=current_user_id,
+                    source="erp",
                 )
                 await tracking_manager.create(tracking_record)
             except Exception as track_err:

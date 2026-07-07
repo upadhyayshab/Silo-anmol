@@ -63,6 +63,28 @@ class OrderStatus(str, Enum):
     PAYMENT_NOT_READY = "payment_not_ready"
 
 
+# Dead-end states — an order here is done and never auto-reverted.
+TERMINAL_ORDER_STATUSES = (OrderStatus.DELIVERED, OrderStatus.CANCELLED)
+
+
+def is_revertible_status(order_status: OrderStatus) -> bool:
+    """True for a non-terminal, non-pending status — these auto-revert to PENDING
+    after 24h untouched (see the daily revert job). Defined by exclusion so any
+    status added later is covered automatically."""
+    return order_status not in (OrderStatus.PENDING, *TERMINAL_ORDER_STATUSES)
+
+
+# Seeded inactive account used as `changed_by` for automated (non-human) status
+# changes — the daily revert job. See scripts/seed/seed_system_user.py.
+SYSTEM_USER_UID = "users_system_autorevert"
+
+
+# app_settings keys (one row per setting) backing the daily order auto-revert.
+SETTING_AUTO_REVERT_ENABLED = "auto_revert_enabled"
+SETTING_AUTO_REVERT_FLUSH = "auto_revert_flush_existing"
+SETTING_AUTO_REVERT_BASELINE_AT = "auto_revert_baseline_at"  # ISO-8601 string
+
+
 class CollectionType(str, Enum):
     DOORSTEP = "doorstep"
     OUTLET_PICKUP = "outlet_pickup"

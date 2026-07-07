@@ -1,24 +1,44 @@
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
 from typing import Optional
+from datetime import datetime, timezone
 import os
 import uuid
 from pathlib import Path
 
 from config import get_settings, get_engine
-from managers import SystemConfigurationManager, SystemConfigurationSchema
+from managers import SystemConfigurationManager, SystemConfigurationSchema, AppSettingManager
 from models import SystemConfigurationUpdateRequest, SystemConfigurationResponse, StatusResponse
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission
+from utils.constants import (
+    SETTING_AUTO_REVERT_ENABLED, SETTING_AUTO_REVERT_FLUSH, SETTING_AUTO_REVERT_BASELINE_AT,
+)
 
 settings = get_settings()
 engine = get_engine(settings.name)
 config_manager = SystemConfigurationManager(engine)
+app_setting_manager = AppSettingManager(engine)
 
 router = APIRouter(prefix="/config", tags=["System Configuration"])
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = Path("app/assets/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+_AUTO_REVERT_KEYS = [SETTING_AUTO_REVERT_ENABLED, SETTING_AUTO_REVERT_FLUSH,
+                     SETTING_AUTO_REVERT_BASELINE_AT]
+
+
+async def _config_response(config) -> SystemConfigurationResponse:
+    """Company/GST fields from the system_configuration row, merged with the
+    auto-revert toggles which live as app_settings rows (not columns)."""
+    resp = SystemConfigurationResponse.model_validate(config)
+    kv = await app_setting_manager.get_map(_AUTO_REVERT_KEYS)
+    resp.auto_revert_enabled = bool(kv.get(SETTING_AUTO_REVERT_ENABLED, False))
+    resp.auto_revert_flush_existing = bool(kv.get(SETTING_AUTO_REVERT_FLUSH, False))
+    baseline = kv.get(SETTING_AUTO_REVERT_BASELINE_AT)
+    resp.auto_revert_baseline_at = datetime.fromisoformat(baseline) if baseline else None
+    return resp
 
 
 @router.get("", response_model=SystemConfigurationResponse)
@@ -46,31 +66,16 @@ async def get_system_configuration(
                 cgst_default_rate=9.00,
                 sgst_default_rate=9.00,
                 igst_default_rate=18.00,
-                price_includes_tax=False
+                price_includes_tax=False,
             )
-            
+
             created_config = await config_manager.create(default_config)
             config = created_config
         else:
             config = configs.items[0]
-        
-        return SystemConfigurationResponse(
-            uid=config.uid,
-            company_name=config.company_name,
-            company_address=config.company_address,
-            company_gstin=config.company_gstin,
-            company_pan=config.company_pan,
-            company_logo_url=config.company_logo_url,
-            invoice_terms=config.invoice_terms,
-            invoice_footer=config.invoice_footer,
-            cgst_default_rate=config.cgst_default_rate,
-            sgst_default_rate=config.sgst_default_rate,
-            igst_default_rate=config.igst_default_rate,
-            price_includes_tax=config.price_includes_tax,
-            created_at=config.created_at,
-            updated_at=config.updated_at
-        )
-    
+
+        return await _config_response(config)
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -98,35 +103,38 @@ async def update_system_configuration(
             )
         
         config = configs.items[0]
-        
-        # Update only provided fields
+
         updates = payload.dict(exclude_unset=True)
-        
         if not updates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No fields to update"
             )
-        
-        updated_config = await config_manager.update(config.uid, updates)
-        
-        return SystemConfigurationResponse(
-            uid=updated_config.uid,
-            company_name=updated_config.company_name,
-            company_address=updated_config.company_address,
-            company_gstin=updated_config.company_gstin,
-            company_pan=updated_config.company_pan,
-            company_logo_url=updated_config.company_logo_url,
-            invoice_terms=updated_config.invoice_terms,
-            invoice_footer=updated_config.invoice_footer,
-            cgst_default_rate=updated_config.cgst_default_rate,
-            sgst_default_rate=updated_config.sgst_default_rate,
-            igst_default_rate=updated_config.igst_default_rate,
-            price_includes_tax=updated_config.price_includes_tax,
-            created_at=updated_config.created_at,
-            updated_at=updated_config.updated_at
-        )
-    
+
+        # Split the auto-revert toggles (stored as app_settings rows) out of the
+        # company/GST column updates.
+        new_enabled = updates.pop("auto_revert_enabled", None)
+        new_flush = updates.pop("auto_revert_flush_existing", None)
+
+        if updates:
+            config = await config_manager.update(config.uid, updates)
+
+        kv = await app_setting_manager.get_map(_AUTO_REVERT_KEYS)
+        if new_enabled is not None:
+            await app_setting_manager.set(SETTING_AUTO_REVERT_ENABLED, bool(new_enabled))
+        if new_flush is not None:
+            await app_setting_manager.set(SETTING_AUTO_REVERT_FLUSH, bool(new_flush))
+
+        # Stamp the grace anchor the first time auto-revert ends up enabled without
+        # flush, so the pre-existing backlog gets 24h before it reverts.
+        result_enabled = bool(new_enabled) if new_enabled is not None else bool(kv.get(SETTING_AUTO_REVERT_ENABLED, False))
+        result_flush = bool(new_flush) if new_flush is not None else bool(kv.get(SETTING_AUTO_REVERT_FLUSH, False))
+        if result_enabled and not result_flush and not kv.get(SETTING_AUTO_REVERT_BASELINE_AT):
+            await app_setting_manager.set(SETTING_AUTO_REVERT_BASELINE_AT,
+                                          datetime.now(timezone.utc).isoformat())
+
+        return await _config_response(config)
+
     except HTTPException:
         raise
     except Exception as e:

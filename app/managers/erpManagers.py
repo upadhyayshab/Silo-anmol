@@ -552,6 +552,9 @@ class ProductSchema(BaseSchema):
     tax_rate = db.Column(db.Numeric(5, 2), nullable=False)  # e.g., 18.00 for 18%
     unit_price = db.Column(db.Numeric(10, 2), nullable=False)
     cost_price = db.Column(db.Numeric(10, 2), nullable=False)
+    # Display-only sell price: 0 < selling_price <= cost_price (the MRP). Drives the
+    # order drawer's pre-filled discount (MRP - selling_price); not in commission math.
+    selling_price = db.Column(db.Numeric(10, 2), nullable=False)
     unit_of_measure = db.Column(db.Enum(UnitOfMeasure), nullable=False)
     barcode = db.Column(db.String(100), unique=True, nullable=True, index=True)
     image_url = db.Column(db.String(500))
@@ -1262,12 +1265,15 @@ class DeliveryTrackingSchema(BaseSchema):
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
     delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     status_changed_to = db.Column(db.String(50), nullable=False)
-    
+    # Which app drove the change: 'erp' | 'rider_app' | 'system' (daily revert job).
+    # Nullable so legacy rows stay valid; changed_by alone can't tell ERP from rider.
+    source = db.Column(db.String(20), nullable=True)
+
     # New delivery specific fields
     postpone_date = db.Column(db.Date, nullable=True)
     attempt_number = db.Column(db.Integer, default=1, nullable=False)
     priority_level = db.Column(db.Integer, default=0, nullable=False, index=True)
-    
+
     remarks = db.Column(db.Text)
     changed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
 
@@ -1279,7 +1285,40 @@ class DeliveryTrackingSchema(BaseSchema):
 
 
 class DeliveryTrackingManager(ERPGenericManager[DeliveryTrackingSchema]):
-    pass
+    async def latest_by_order(self, order_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Latest tracking row per order → {order_id: {source, changed_by, changed_by_name}}.
+        One DISTINCT ON query (no N+1) for the report export's 'who/from-where last changed
+        the status' columns."""
+        if not order_ids:
+            return {}
+        dt, u = DeliveryTrackingSchema, UserSchema
+        query = (
+            db.select(dt.order_id, dt.source, dt.changed_by, u.full_name)
+            .outerjoin(u, u.uid == dt.changed_by)
+            .where(dt.order_id.in_(order_ids))
+            .order_by(dt.order_id, dt.created_at.desc())
+            .distinct(dt.order_id)
+        )
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).all()
+        return {
+            r.order_id: {"source": r.source, "changed_by": r.changed_by,
+                         "changed_by_name": r.full_name}
+            for r in rows
+        }
+
+    async def last_change_at(self, order_ids: List[str]) -> Dict[str, Any]:
+        """{order_id: max(created_at)} — when each order's status last changed. Drives
+        the daily revert clock (caller falls back to order.updated_at/created_at when an
+        order has no tracking row yet)."""
+        if not order_ids:
+            return {}
+        dt = DeliveryTrackingSchema
+        query = (db.select(dt.order_id, db.func.max(dt.created_at))
+                 .where(dt.order_id.in_(order_ids)).group_by(dt.order_id))
+        async with self.session_factory() as session:
+            rows = (await session.execute(query)).all()
+        return {r[0]: r[1] for r in rows}
 
 
 # ============================================================================
@@ -1350,6 +1389,32 @@ class SystemConfigurationSchema(BaseSchema):
 
 class SystemConfigurationManager(ERPGenericManager[SystemConfigurationSchema]):
     pass
+
+
+class AppSettingSchema(BaseSchema):
+    """Generic key/value app settings — one row per setting. Add a new operational
+    flag by inserting a row (no migration). Currently holds the auto-revert toggles."""
+    __tablename__ = "app_settings"
+
+    key = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    value = db.Column(db.JSON, nullable=True)
+
+
+class AppSettingManager(ERPGenericManager[AppSettingSchema]):
+    async def get_map(self, keys: List[str]) -> Dict[str, Any]:
+        """{key: value} for the given keys (missing keys simply absent)."""
+        if not keys:
+            return {}
+        rows = (await self.fetch_all(filters={"key": keys})).items
+        return {r.key: r.value for r in rows}
+
+    async def set(self, key: str, value: Any) -> None:
+        """Upsert one setting row."""
+        existing = (await self.fetch_all(filters={"key": key}, limit=1)).items
+        if existing:
+            await self.update(existing[0].uid, {"value": value})
+        else:
+            await self.create(AppSettingSchema(key=key, value=value))
 
 
 # ============================================================================
@@ -1789,7 +1854,8 @@ __all__ = [
     "ActivityLogSchema", "ActivityLogManager",
     "NotificationSchema", "NotificationManager",
     "SystemConfigurationSchema", "SystemConfigurationManager",
-    
+    "AppSettingSchema", "AppSettingManager",
+
     # Outlet Collections
     "OutletDailyCollectionSchema", "OutletDailyCollectionManager",
     
