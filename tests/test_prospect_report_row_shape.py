@@ -16,6 +16,7 @@ tests/test_orders_scope.py. Run::
 import os
 import sys
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
@@ -37,6 +38,7 @@ def _lead():
         stage=None,
         source=None,
         state="Karnataka",
+        created_at=datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc),
     )
 
 
@@ -132,8 +134,14 @@ def test_email_key_no_longer_present():
     assert "email" not in row, "the bare 'email' key must be renamed to owner_email"
 
 
+def test_row_has_created_at_iso():
+    rows, _ = _run_report(_lead())
+    assert rows[0]["created_at"] == "2026-07-04T12:00:00+00:00"  # raw UTC ISO; UI formats to IST
+
+
 if __name__ == "__main__":
     test_row_has_owner_and_owner_email_and_lead_name()
     test_phone_is_the_leads_mobile_not_the_owners()
     test_email_key_no_longer_present()
+    test_row_has_created_at_iso()
     print("OK")

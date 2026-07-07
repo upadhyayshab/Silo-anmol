@@ -996,10 +996,12 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
     outlet_cache = outlet_cache if outlet_cache is not None else {}
 
     owner_name = await _resolve_user_name(engine, lead.owner_id, user_cache)
+    owner_email = await _resolve_user_email(engine, lead.owner_id, user_cache)
     outlet_name = await _resolve_outlet_name(engine, lead.outlet_id, outlet_cache)
 
     data = lead.model_dump()
     data["owner_name"] = owner_name
+    data["owner_email"] = owner_email
     data["outlet_name"] = outlet_name
 
     if include_activities:
@@ -1044,6 +1046,48 @@ async def latest_dispositions(engine, lead_ids: List[str]) -> Dict[str, Dict[str
     return out
 
 
+async def call_counts(engine, lead_ids: List[str]) -> Dict[str, int]:
+    """Map lead_id -> number of CALL_LOG activities ("calls attempted"). One grouped
+    query, mirroring latest_dispositions so the list page stays two batched hits."""
+    if not lead_ids:
+        return {}
+    async with LeadActivityManager(engine).session_factory() as session:
+        rows = (await session.execute(
+            db.select(LeadActivitySchema.lead_id, db.func.count())
+              .where(LeadActivitySchema.lead_id.in_(lead_ids),
+                     LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG)
+              .group_by(LeadActivitySchema.lead_id)
+        )).all()
+    return {lead_id: int(n or 0) for lead_id, n in rows}
+
+
+async def order_rollups(engine, lead_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Per-lead lifetime order rollup -> {qty, gross, net}, computed fresh from orders
+    (net = sum(total_amount), same as the prospect report — not the lead's incremental
+    order_value). Two batched grouped queries; keep in sync with crmReportService."""
+    if not lead_ids:
+        return {}
+    from managers import CustomerOrderSchema, OrderItemSchema
+    out: Dict[str, Dict[str, Any]] = {}
+    async with LeadManager(engine).session_factory() as session:
+        for lead_id, gross, net in (await session.execute(
+            db.select(CustomerOrderSchema.lead_id,
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.gross_amount), 0),
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0))
+              .where(CustomerOrderSchema.lead_id.in_(lead_ids))
+              .group_by(CustomerOrderSchema.lead_id)
+        )).all():
+            out[lead_id] = {"qty": 0, "gross": round(float(gross or 0), 2), "net": round(float(net or 0), 2)}
+        for lead_id, total_qty in (await session.execute(
+            db.select(CustomerOrderSchema.lead_id, db.func.sum(OrderItemSchema.quantity))
+              .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
+              .where(CustomerOrderSchema.lead_id.in_(lead_ids))
+              .group_by(CustomerOrderSchema.lead_id)
+        )).all():
+            out.setdefault(lead_id, {"qty": 0, "gross": 0.0, "net": 0.0})["qty"] = int(total_qty or 0)
+    return out
+
+
 async def fetch_activities(engine, lead_id: str, *, limit: int = 100,
                             user_cache: dict = None) -> List[LeadActivityResponse]:
     user_cache = user_cache if user_cache is not None else {}
@@ -1069,17 +1113,29 @@ async def fetch_activities(engine, lead_id: str, *, limit: int = 100,
     return out
 
 
-async def _resolve_user_name(engine, user_id: Optional[str], cache: dict) -> Optional[str]:
+async def _resolve_user(engine, user_id: Optional[str], cache: dict):
+    """Fetch + cache a user as {name, email} — one DB hit per user per request,
+    shared by the name and email resolvers below."""
     if not user_id:
         return None
     if user_id in cache:
         return cache[user_id]
     try:
         user = await UserManager(engine).fetch(user_id)
-        cache[user_id] = user.full_name
+        cache[user_id] = {"name": user.full_name, "email": getattr(user, "email", None)}
     except Exception:
         cache[user_id] = None
     return cache[user_id]
+
+
+async def _resolve_user_name(engine, user_id: Optional[str], cache: dict) -> Optional[str]:
+    u = await _resolve_user(engine, user_id, cache)
+    return u["name"] if u else None
+
+
+async def _resolve_user_email(engine, user_id: Optional[str], cache: dict) -> Optional[str]:
+    u = await _resolve_user(engine, user_id, cache)
+    return u["email"] if u else None
 
 
 async def _resolve_outlet_name(engine, outlet_id: Optional[str], cache: dict) -> Optional[str]:

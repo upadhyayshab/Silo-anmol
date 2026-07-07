@@ -10,7 +10,7 @@ matched lead ids and rolled up in Python. Fine at page scale and for the bounded
 export below; if exports ever exceed MAX_EXPORT_ROWS, switch to a streamed,
 keyset-paginated cursor instead of one in-memory build.
 """
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from decimal import Decimal
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -72,10 +72,17 @@ def _disposition_label(details: dict, outcome: Optional[str]) -> str:
     return "Connected" if outcome in _CONNECTED_OUTCOMES else "Not Connected"
 
 
+# The business runs on IST; created_at/order_date are stored UTC timestamptz. Build
+# day bounds in IST so a picked calendar day means that day in IST, not UTC (else a
+# "to Jul 4" filter leaks in leads created early Jul 5 IST = late Jul 4 UTC).
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
 def _day_bounds(from_date: Optional[date], to_date: Optional[date]):
-    """Inclusive calendar-day bounds as UTC datetimes (lead created_at basis)."""
-    gte = datetime.combine(from_date, datetime.min.time(), tzinfo=timezone.utc) if from_date else None
-    lte = datetime.combine(to_date, datetime.max.time(), tzinfo=timezone.utc) if to_date else None
+    """Inclusive IST calendar-day bounds, tz-aware; the DB compares instants so the
+    IST offset resolves to the correct UTC window against the UTC-stored columns."""
+    gte = datetime.combine(from_date, datetime.min.time(), tzinfo=IST) if from_date else None
+    lte = datetime.combine(to_date, datetime.max.time(), tzinfo=IST) if to_date else None
     return gte, lte
 
 
@@ -102,7 +109,8 @@ async def prospect_report(
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Return (rows, total). `limit=0` means "all matched rows" (capped at
     MAX_EXPORT_ROWS) — used by the CSV export. `scope_owner_id` restricts to one
-    owner's leads (non-global callers); None = all leads (superadmin).
+    owner's leads, or a list of owner ids (agency admins — their agency roster);
+    None = all leads (superadmin).
     `extra_clause` is an optional pre-built SQLAlchemy boolean clause (from the
     advanced filter engine) AND-ed into the same `conds` used by both queries."""
     lm = LeadManager(engine)
@@ -143,7 +151,9 @@ async def prospect_report(
         if lead_numbers:
             conds.append(LeadSchema.lead_number.in_(lead_numbers))
         if scope_owner_id is not None:
-            conds.append(LeadSchema.owner_id == scope_owner_id)
+            conds.append(LeadSchema.owner_id.in_(scope_owner_id)
+                         if isinstance(scope_owner_id, (list, tuple, set))
+                         else LeadSchema.owner_id == scope_owner_id)
         if extra_clause is not None:
             conds.append(extra_clause)
 
@@ -246,6 +256,7 @@ async def prospect_report(
                 "uid": l.uid,   # for the table's "open lead" link; not in the Excel export
                 "prospect_id": l.lead_number,
                 "lead_name": " ".join(p for p in (l.first_name, l.last_name) if p),
+                "created_at": l.created_at.isoformat() if l.created_at else "",  # UTC ISO; UI formats to IST
                 "owner": owners.get(l.owner_id, ""),
                 "owner_email": owner_emails.get(l.owner_id, ""),
                 "phone": l.mobile or "",   # the lead's own mobile, not the owner's
