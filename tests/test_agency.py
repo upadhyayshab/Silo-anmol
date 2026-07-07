@@ -158,6 +158,30 @@ def test_create_user_telecaller_without_agency_returns_201_body(monkeypatch):
     assert response.agency_id is None
 
 
+def test_report_scope_owner(monkeypatch):
+    """Prospect-report scoping: global → None (all leads), agency admin → their
+    roster's owner ids (deny-by-default when empty), other scoped → own uid."""
+    from utils import auth as A
+    from routers.v1 import leads as leads_router
+
+    async def _fake_ids(ctx):
+        return ["t1", "t2"]
+    monkeypatch.setattr(A, "_scoped_telecaller_ids", _fake_ids)
+
+    sa = A.AuthContext(user_id="s", role="SUPER_ADMIN", scope_level="GLOBAL", perms={"*"})
+    assert _run(leads_router._report_scope_owner(sa)) is None
+    ad = A.AuthContext(user_id="ad", role="AGENCY_ADMIN", scope_level="AGENCY", agency_ids=["ag1"])
+    assert _run(leads_router._report_scope_owner(ad)) == ["t1", "t2"]
+    tc = A.AuthContext(user_id="tc1", role="TELECALLER", scope_level="OUTLET")
+    assert _run(leads_router._report_scope_owner(tc)) == "tc1"
+
+    async def _no_ids(ctx):
+        return []
+    monkeypatch.setattr(A, "_scoped_telecaller_ids", _no_ids)
+    ad0 = A.AuthContext(user_id="ad", role="AGENCY_ADMIN", scope_level="AGENCY", agency_ids=[])
+    assert _run(leads_router._report_scope_owner(ad0)) == ["__none__"]
+
+
 class _MinimalMonkeypatch:
     """Tiny stand-in for pytest's `monkeypatch` fixture, for the __main__ runner
     below (pytest itself injects the real fixture when run via `pytest`)."""

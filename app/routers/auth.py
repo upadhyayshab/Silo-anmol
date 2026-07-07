@@ -65,6 +65,10 @@ async def login(payload: LoginRequest):
         cluster_ids = [a.scope_value for a in assignments.items if a.scope_level == "CLUSTER"]
         states = [a.scope_value for a in assignments.items if a.scope_level == "STATE"]
         agency_ids = [a.scope_value for a in assignments.items if a.scope_level == "AGENCY"]
+        # No explicit AGENCY grants → default to the user's own agency (the common
+        # single-agency case; the assignments table is for multi-agency admins).
+        if not agency_ids and getattr(user, "agency_id", None):
+            agency_ids = [user.agency_id]
 
         # Scope claims ride along so require_permission/apply_scope filter rows
         # without a per-request DB hit (outlet expansion still queries on use).

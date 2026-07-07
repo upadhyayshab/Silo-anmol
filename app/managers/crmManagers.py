@@ -18,7 +18,7 @@ from sqlalchemy.orm import relationship
 
 from SharedBackend.managers import BaseSchema
 from SharedBackend.managers.base import NESTED_FILTERS
-from .erpManagers import ERPGenericManager
+from .erpManagers import ERPGenericManager, UserSchema
 from utils.crm_enums import LeadStage, LeadActivityType, CallOutcome, AssignmentReason
 from utils.crm_constants import LeadSource
 
@@ -118,7 +118,7 @@ class LeadManager(ERPGenericManager[LeadSchema]):
     async def search_leads(self, *, q: str = None, filters: NESTED_FILTERS = None,
                            sorts: list = None, limit: int = 25, offset: int = 0,
                            scope_owner_id: str = None, scope_uids: list = None,
-                           fb_page_id: str = None, extra_clause=None):
+                           fb_page_id: str = None, extra_clause=None, agency_id: str = None):
         """Paginated list with optional free-text OR-search across name/mobile/email/lead_number.
 
         Returns (items, total). `filters` are ANDed (stage, deleted_at, etc.);
@@ -153,6 +153,14 @@ class LeadManager(ERPGenericManager[LeadSchema]):
             if extra_clause is not None:
                 base = base.where(extra_clause)
                 count_q = count_q.where(extra_clause)
+
+            # Agency filter: leads whose owner belongs to the given agency (owner_id
+            # -> users.agency_id). Kept as a correlated IN-subquery so it composes
+            # with the other filters without a join changing the row cardinality.
+            if agency_id:
+                owner_subq = db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)
+                base = base.where(self.Schema.owner_id.in_(owner_subq))
+                count_q = count_q.where(self.Schema.owner_id.in_(owner_subq))
 
             if scope_owner_id is not None:
                 conds = [self.Schema.owner_id == scope_owner_id]

@@ -27,7 +27,7 @@ from models import (
 )
 from core.telephony import TelephonyProvider
 from dependencies.telephony_dep import get_telephony_provider
-from utils.auth import require_permission, AuthContext
+from utils.auth import require_permission, AuthContext, apply_scope
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import UserRole, TELECALLER_ROLES, OWNER_ROLES
 from utils.crm_constants import LeadSource
@@ -104,6 +104,7 @@ async def list_leads(
     offset: int = Query(0, ge=0),
     q: Optional[str] = Query(None, description="Free-text search: name / mobile / email / lead number"),
     fb_page_id: Optional[str] = Query(None, description="Filter to leads whose campaign_data.page_id matches this FB page"),
+    agency_id: Optional[str] = Query(None, description="Filter to leads whose owner belongs to this agency"),
     filters: dict = Depends(filtering_dependency),
     sorts: list = Depends(sorting_dependency),
     ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
@@ -124,6 +125,7 @@ async def list_leads(
     items, total = await lead_manager.search_leads(
         q=q, filters={**filters, "deleted_at": None}, sorts=sorts, limit=limit, offset=offset,
         scope_owner_id=scope_owner_id, scope_uids=scope_uids, fb_page_id=fb_page_id,
+        agency_id=agency_id,
     )
     responses = await _leads_to_responses(items)
     return LeadListResponse(items=responses, count=len(responses), total=total, limit=limit, offset=offset)
@@ -137,12 +139,21 @@ async def _leads_to_responses(items):
         await leadService.build_lead_response(engine, lead, user_cache=user_cache, outlet_cache=outlet_cache)
         for lead in items
     ]
-    dispositions = await leadService.latest_dispositions(engine, [lead.uid for lead in items])
+    lead_ids = [lead.uid for lead in items]
+    dispositions = await leadService.latest_dispositions(engine, lead_ids)
+    counts = await leadService.call_counts(engine, lead_ids)
+    rollups = await leadService.order_rollups(engine, lead_ids)
     for resp in responses:
         d = dispositions.get(resp.uid)
         if d:
             resp.disposition = d["disposition"]
             resp.sub_disposition = d["sub_disposition"]
+        resp.calls_attempted = counts.get(resp.uid, 0)
+        r = rollups.get(resp.uid)
+        if r:
+            resp.order_quantity = r["qty"]
+            resp.order_gross = r["gross"]
+            resp.order_net = r["net"]
     return responses
 
 
@@ -214,10 +225,14 @@ async def get_today_queue(
 # before /{lead_id} so "report" is not swallowed by the lead-detail route.
 # --------------------------------------------------------------------------
 
-def _report_scope_owner(ctx) -> Optional[str]:
-    """Superadmin/global sees all; a scoped caller is limited to leads they own."""
+async def _report_scope_owner(ctx):
+    """Superadmin/global sees all; an agency admin sees leads owned by anyone in
+    their agencies (deny-by-default when empty); any other scoped caller is
+    limited to leads they own. Returns None, a list of owner ids, or one id."""
     if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
         return None
+    if ctx.scope_level == ScopeLevel.AGENCY.value:
+        return (await apply_scope({}, ctx))["telecaller_id"]
     return ctx.user_id
 
 
@@ -230,7 +245,7 @@ async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
         engine, from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date, region=region,
         owner_id=owner_id, owner_ids=owner_ids, stage=stage, source=source, lead_numbers=nums,
-        scope_owner_id=_report_scope_owner(ctx), limit=limit, offset=offset,
+        scope_owner_id=await _report_scope_owner(ctx), limit=limit, offset=offset,
         extra_clause=extra_clause,
     )
 
