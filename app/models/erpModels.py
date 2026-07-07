@@ -177,6 +177,7 @@ class ProductCreateRequest(BaseModel):
     tax_rate: Decimal = Field(..., ge=0, le=100)
     unit_price: Decimal = Field(..., gt=0)
     cost_price: Decimal = Field(..., gt=0)
+    selling_price: Decimal = Field(..., gt=0, description="Sell price; must be <= cost_price (MRP)")
     unit_of_measure: UnitOfMeasure
     barcode: Optional[str] = None
     image_url: Optional[str] = None
@@ -185,6 +186,14 @@ class ProductCreateRequest(BaseModel):
     commission: Decimal = Field(default=0.00, ge=0, description="Commission in rupees")
     discount: Decimal = Field(default=0.00, ge=0, description="Discount in rupees")
     margin: Decimal = Field(default=Decimal("0.00"), ge=0, description="Margin for non-Silo Fortune products")
+
+    # cost_price is defined above, so it's already in `values` when this runs.
+    @validator('selling_price')
+    def selling_price_not_above_mrp(cls, v, values):
+        cost = values.get('cost_price')
+        if cost is not None and v > cost:
+            raise ValueError('selling_price cannot exceed cost_price (MRP)')
+        return v
 
 
 class ProductUpdateRequest(BaseModel):
@@ -195,6 +204,7 @@ class ProductUpdateRequest(BaseModel):
     tax_rate: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
     cost_price: Optional[Decimal] = None
+    selling_price: Optional[Decimal] = Field(None, gt=0, description="Sell price; must be <= cost_price (MRP)")
     unit_of_measure: Optional[UnitOfMeasure] = None
     barcode: Optional[str] = None
     image_url: Optional[str] = None
@@ -204,6 +214,17 @@ class ProductUpdateRequest(BaseModel):
     discount: Optional[Decimal] = Field(None, ge=0, description="Discount in rupees")
     margin: Optional[Decimal] = Field(None, ge=0, description="Margin for non-Silo Fortune products")
     is_active: Optional[bool] = None
+
+    # Only enforceable when both prices are in the payload. The Product Management
+    # edit form always sends cost_price alongside, so this covers the real path.
+    # ponytail: partial update of selling_price alone isn't cross-checked here; the
+    # router re-checks against the stored MRP for that case.
+    @validator('selling_price')
+    def selling_price_not_above_mrp(cls, v, values):
+        cost = values.get('cost_price')
+        if v is not None and cost is not None and v > cost:
+            raise ValueError('selling_price cannot exceed cost_price (MRP)')
+        return v
 
 
 class ProductResponse(BaseModel):
@@ -217,6 +238,7 @@ class ProductResponse(BaseModel):
     unit_price: Decimal
     # Masked (nulled) for roles without products:cost:read — see utils.permissions.MASKED_COLUMNS
     cost_price: Optional[Decimal] = None
+    selling_price: Decimal  # customer-facing, not masked (like cost_price/MRP)
     unit_of_measure: UnitOfMeasure
     barcode: Optional[str] = None
     image_url: Optional[str] = None
@@ -773,6 +795,8 @@ class SystemConfigurationUpdateRequest(BaseModel):
     sgst_default_rate: Optional[Decimal] = None
     igst_default_rate: Optional[Decimal] = None
     price_includes_tax: Optional[bool] = None
+    auto_revert_enabled: Optional[bool] = None
+    auto_revert_flush_existing: Optional[bool] = None
 
 
 class SystemConfigurationResponse(BaseModel):
@@ -788,6 +812,9 @@ class SystemConfigurationResponse(BaseModel):
     sgst_default_rate: Decimal
     igst_default_rate: Decimal
     price_includes_tax: bool
+    auto_revert_enabled: bool = False
+    auto_revert_flush_existing: bool = False
+    auto_revert_baseline_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

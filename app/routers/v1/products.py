@@ -152,6 +152,7 @@ async def list_products(
                 tax_rate=prod.tax_rate,
                 unit_price=prod.unit_price,
                 cost_price=prod.cost_price,
+                selling_price=prod.selling_price,
                 unit_of_measure=prod.unit_of_measure,
                 barcode=prod.barcode,
                 image_url=prod.image_url,
@@ -206,6 +207,7 @@ async def get_product_by_barcode(
             tax_rate=prod.tax_rate,
             unit_price=prod.unit_price,
             cost_price=prod.cost_price,
+            selling_price=prod.selling_price,
             unit_of_measure=prod.unit_of_measure,
             barcode=prod.barcode,
             image_url=prod.image_url,
@@ -249,6 +251,7 @@ async def get_product(
             tax_rate=prod.tax_rate,
             unit_price=prod.unit_price,
             cost_price=prod.cost_price,
+            selling_price=prod.selling_price,
             unit_of_measure=prod.unit_of_measure,
             barcode=prod.barcode,
             image_url=prod.image_url,
@@ -306,6 +309,7 @@ async def create_product(
             tax_rate=payload.tax_rate,
             unit_price=payload.unit_price,
             cost_price=payload.cost_price,
+            selling_price=payload.selling_price,
             unit_of_measure=payload.unit_of_measure,
             barcode=payload.barcode,
             image_url=payload.image_url,
@@ -329,6 +333,7 @@ async def create_product(
             tax_rate=created_product.tax_rate,
             unit_price=created_product.unit_price,
             cost_price=created_product.cost_price,
+            selling_price=created_product.selling_price,
             unit_of_measure=created_product.unit_of_measure,
             barcode=created_product.barcode,
             image_url=created_product.image_url,
@@ -362,13 +367,23 @@ async def update_product(
     """
     try:
         updates = payload.dict(exclude_unset=True)
-        
+
         if not updates:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No fields to update"
             )
-        
+
+        # selling_price <= cost_price (MRP). When cost_price isn't in the same
+        # payload the model validator can't see it, so compare against the stored MRP.
+        if updates.get("selling_price") is not None and "cost_price" not in updates:
+            existing = await product_manager.fetch(product_id)
+            if updates["selling_price"] > existing.cost_price:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="selling_price cannot exceed cost_price (MRP)"
+                )
+
         updated_product = await product_manager.update(product_id, updates)
         
         return ProductResponse(
@@ -381,6 +396,7 @@ async def update_product(
             tax_rate=updated_product.tax_rate,
             unit_price=updated_product.unit_price,
             cost_price=updated_product.cost_price,
+            selling_price=updated_product.selling_price,
             unit_of_measure=updated_product.unit_of_measure,
             barcode=updated_product.barcode,
             image_url=updated_product.image_url,
