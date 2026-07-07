@@ -120,11 +120,6 @@ class Settings(BaseSettings):
     exotel_api_key: str = os.getenv("DAILER_API_KEY", "")        # dialer key
     exotel_api_token: str = os.getenv("DAILER_TOKEN", "")        # dialer token
     exotel_sid: str = os.getenv("DAILER_SID", "")               # account SID
-    exotel_caller_id: str = os.getenv("DAILER_CALLER_ID", "")    # ExoPhone / DID for the SSC fallback (per-call override wins)
-    exotel_status_callback: str = os.getenv("DAILER_STATUS_CALLBACK", "")  # public webhook URL for SSC call events
-    # Dual-path toggle: on = SSC click-to-call + inbound-PSTN fallback for agents
-    # without a registered softphone; off (default) = WebRTC softphone only.
-    exotel_ssc_fallback: bool = os.getenv("DAILER_SSC_FALLBACK", "0").strip().lower() in ("1", "true", "yes")
     exotel_subdomain: str = os.getenv("DAILER_SUBDOMAIN", "api.exotel.com")
     exotel_ccm_subdomain: str = os.getenv("DAILER_CCM_SUBDOMAIN", "ccm-api.exotel.com")  # Users/agent dir (Mumbai: ccm-api.in.exotel.com)
     exotel_crm_flow_id: str = os.getenv("DAILER_CRM_FLOW_ID", "")  # call-flow id of the CRM app; scopes the ExoPhone list (auto-map VirtualNumber)

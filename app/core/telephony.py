@@ -1,14 +1,12 @@
 """Telephony port — the vendor-agnostic interface the CRM core depends on.
 
-The in-browser WebRTC softphone is the primary call path. The port covers what
-the CRM core needs from a vendor:
+The in-browser WebRTC softphone is the only call path; the backend never places
+calls. The port covers what the CRM core needs from a vendor:
   - `parse_event`        -> normalize a call webhook (start/end + recording) so the
                             CRM can log the call onto the lead's timeline.
   - `resolve_agent_sip`  -> agent email -> SIP id, so inbound rings the softphone.
   - `softphone_auth`     -> mint the in-browser softphone SDK credentials.
   - `fetch_call_details` -> CDR lookup for softphone calls (they fire no webhook).
-  - `connect_call`       -> server-side click-to-call (SSC). Only reachable when the
-                            `exotel_ssc_fallback` toggle is on — off = WebRTC-only.
 
 The concrete `ExotelAdapter(TelephonyProvider)` is wired by
 `dependencies/telephony_dep.py`; the webhook router calls
@@ -62,30 +60,8 @@ class CallEvent(BaseModel):
     provider_raw: Optional[dict] = None
 
 
-class CallRequest(BaseModel):
-    """Click-to-call: dial `agent_number` first, then bridge `lead_number`."""
-    agent_number: str
-    lead_number: str
-    caller_id: Optional[str] = None    # override the adapter's default DID, if needed
-    reference: Optional[str] = None    # echoed back on webhooks to correlate (e.g. lead uid)
-
-
-class CallResponse(BaseModel):
-    """What the dialer returned when we asked it to place the call."""
-    call_id: Optional[str] = None
-    status: Optional[CallStatus] = None
-    ok: bool = True
-    error: Optional[str] = None
-    provider_raw: Optional[dict] = None
-
-
 class TelephonyProvider(ABC):
     """Port: the only telephony contract the CRM core knows about."""
-
-    @abstractmethod
-    async def connect_call(self, request: CallRequest) -> CallResponse:
-        """Place an outbound click-to-call (agent-first, then bridge the lead).
-        SSC fallback path — the route calling this is gated by `exotel_ssc_fallback`."""
 
     @abstractmethod
     def parse_event(self, payload: Mapping[str, Any]) -> CallEvent:
@@ -97,23 +73,11 @@ class TelephonyProvider(ABC):
         None); adapters whose webhook agent id isn't a phone override this."""
         return None
 
-    async def resolve_agent_dial(self, email: str) -> Optional[str]:
-        """A telecaller's email -> the leg to dial them on for outbound SSC
-        click-to-call (e.g. their Exotel user_id). Default: unsupported (None)."""
-        return None
-
     async def resolve_agent_sip(self, email: str) -> Optional[str]:
         """A telecaller's email -> their SIP id (e.g. `sip:naveenh37746fa6`) so an
         INBOUND call can be routed to that agent's WebRTC softphone. None if the agent
-        isn't provisioned — inbound then skips them (PSTN fallback only when the
-        `exotel_ssc_fallback` toggle is on)."""
+        isn't provisioned — inbound then skips them (no PSTN fallback)."""
         return None
-
-    async def list_caller_ids(self) -> list:
-        """The caller-ID numbers (DIDs) the CRM may dial out from, each as
-        `{"number": ..., "label": ...}`, scoped to the CRM's own call flow.
-        Serves the SSC ExoPhone picker. Default: none."""
-        return []
 
     async def agent_device_status(self, emails: list) -> dict:
         """Map each agent email -> `{sip, verified}`: softphone provisioning + health.
@@ -143,9 +107,6 @@ class MockTelephonyProvider(TelephonyProvider):
     ponytail: 'null adapter' to unblock dev, not a vendor.
     """
 
-    async def connect_call(self, request: CallRequest) -> CallResponse:
-        return CallResponse(call_id="mock-call", status=CallStatus.RINGING)
-
     def parse_event(self, payload: Mapping[str, Any]) -> CallEvent:
         return CallEvent(
             kind=CallEventKind(payload.get("kind", "ended")),
@@ -163,8 +124,7 @@ class MockTelephonyProvider(TelephonyProvider):
 
 
 __all__ = [
-    "CallDirection", "CallStatus", "CallEventKind",
-    "CallEvent", "CallRequest", "CallResponse",
+    "CallDirection", "CallStatus", "CallEventKind", "CallEvent",
     "TelephonyProvider", "MockTelephonyProvider",
 ]
 
