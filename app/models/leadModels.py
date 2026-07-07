@@ -6,10 +6,20 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from utils.crm_enums import LeadStage, CallOutcome
 from utils.crm_constants import LeadSource
+from utils.dedup_utils import normalize_mobile
+
+
+def _mobile_10_digits(value: str) -> str:
+    """Normalize (strip +91/0/punctuation) and require exactly 10 digits so the
+    telecaller always has a clean, callable number. Stores the bare 10 digits."""
+    norm = normalize_mobile(value)
+    if not norm or len(norm) != 10:
+        raise ValueError("mobile must be exactly 10 digits")
+    return norm
 
 
 # --------------------------------------------------------------------------
@@ -41,6 +51,11 @@ class LeadCreateRequest(BaseModel):
     notes: Optional[str] = None
     # Admins may force a specific owner; otherwise round-robin assigns one.
     owner_id: Optional[str] = None
+
+    @field_validator("mobile")
+    @classmethod
+    def _check_mobile(cls, v: str) -> str:
+        return _mobile_10_digits(v)
 
 
 class LeadQueryRequest(BaseModel):
@@ -78,6 +93,11 @@ class LeadUpdateRequest(BaseModel):
     custom_fields: Optional[Dict[str, Any]] = None
     campaign_data: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
+
+    @field_validator("mobile")
+    @classmethod
+    def _check_mobile(cls, v: Optional[str]) -> Optional[str]:
+        return _mobile_10_digits(v) if v is not None else v
 
 
 class StageChangeRequest(BaseModel):
@@ -166,6 +186,7 @@ class LeadResponse(BaseModel):
     source: Optional[LeadSource] = None
     owner_id: Optional[str] = None
     owner_name: Optional[str] = None
+    owner_email: Optional[str] = None
     outlet_id: Optional[str] = None
     outlet_name: Optional[str] = None
     lead_score: Optional[int] = None
@@ -174,8 +195,14 @@ class LeadResponse(BaseModel):
     # Latest call disposition (from the most recent CALL_LOG); enriched at list-build time.
     disposition: Optional[str] = None
     sub_disposition: Optional[str] = None
+    calls_attempted: int = 0  # count of CALL_LOG activities; enriched at list-build time
     order_count: int = 0
     order_value: Decimal = Decimal("0")
+    # Lifetime order rollup, computed fresh from orders at list-build time (matches
+    # the prospect report's numbers, not the incremental order_value above).
+    order_quantity: int = 0
+    order_gross: float = 0.0
+    order_net: float = 0.0
     do_not_call: bool = False
     do_not_sms: bool = False
     do_not_email: bool = False
