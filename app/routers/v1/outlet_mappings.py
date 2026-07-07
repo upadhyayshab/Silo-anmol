@@ -172,10 +172,13 @@ async def lookup_pincode(pincode: str = Query(..., description="Pincode to looku
     """
     pin_str = str(pincode).strip()
     
-    # 1. Check direct pincode mapping in DB first
-    db_mapping = await outlet_mapping_manager.fetch_one(
-        filters={"pincode": pin_str, "is_active": True}
+    # 1. Check direct pincode mapping in DB first. Use fetch_all (not fetch_one, which
+    # raises on no match) — an unmapped pincode must fall through to the pypinindia
+    # fallback below, not 500.
+    records = await outlet_mapping_manager.fetch_all(
+        1, filters={"pincode": pin_str, "is_active": True}
     )
+    db_mapping = records.items[0] if records.items else None
     if db_mapping:
         outlet = await outlet_manager.fetch(db_mapping.outlet_id)
         if outlet and outlet.is_active:
