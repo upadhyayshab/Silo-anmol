@@ -680,6 +680,10 @@ async def log_call(engine, lead: LeadSchema, outcome: Optional[str], note: Optio
         details["duration_seconds"] = duration_seconds
     if sub_disposition:
         details.update({"disposition": disposition, "sub_disposition": sub_disposition})
+    if direction:
+        details["direction"] = direction   # so the call-end webhook can match this call's leg
+    if call_sid:
+        details["call_id"] = call_sid   # shared key so the call-end webhook dedups on this call
 
     # Inbound is already auto-logged by the webhook the moment it ends; fold this
     # disposition INTO that row (one call = one timeline entry) and re-attribute it to the
@@ -698,6 +702,59 @@ async def log_call(engine, lead: LeadSchema, outcome: Optional[str], note: Optio
     return await record_activity(engine, lead.uid, LeadActivityType.CALL_LOG,
                                  user_id=by_user_id, outcome=outcome, body=body,
                                  details=details or None)
+
+
+def _is_fresh(created_at, minutes: int = 15) -> bool:
+    """True if this timestamp is within `minutes` of now (tz-safe: naive rows are read as UTC)."""
+    if not created_at:
+        return False
+    ca = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
+    return ca >= datetime.now(timezone.utc) - timedelta(minutes=minutes)
+
+
+def _pick_call_log_for(items, call_id, direction=None):
+    """The existing CALL_LOG the call-end webhook should fold into instead of duplicating:
+    an exact call_id match wins; else a FRESH SAME-DIRECTION row with no call_id — that's the
+    agent's disposition logged before the webhook landed (the reverse race). Works for inbound
+    and outbound alike. A row already tagged with a different call_id is a different call, so
+    it's left alone (webhook inserts a fresh row)."""
+    if call_id:
+        exact = next((a for a in items if (a.details or {}).get("call_id") == call_id), None)
+        if exact:
+            return exact
+    if not direction:
+        return None
+    return next((a for a in items
+                 if (a.details or {}).get("direction") == direction
+                 and not (a.details or {}).get("call_id")
+                 and _is_fresh(a.created_at)), None)
+
+
+async def autolog_webhook_call(engine, lead_id: str, *, outcome, body, details, user_id) -> None:
+    """Auto-log a finished call from the call-end webhook — UNLESS this call is already on the
+    timeline (the agent dispositioned before the webhook landed, or the webhook fired twice):
+    then fold the CDR (duration/recording) into that row instead of inserting a twin. The
+    existing row's disposition/outcome WINS; we only add what the CDR uniquely knows. Normally
+    the webhook lands first and the disposition folds into IT (log_call) — this closes the
+    reverse race the other direction."""
+    call_id = (details or {}).get("call_id")
+    direction = (details or {}).get("direction")
+    recent = await LeadActivityManager(engine).fetch_all(
+        limit=5, filters={"lead_id": lead_id, "activity_type": LeadActivityType.CALL_LOG},
+        sorts=["created_at"])                      # newest first
+    existing = _pick_call_log_for(recent.items, call_id, direction)
+    if existing is not None:
+        merged = {**(existing.details or {}),
+                  **{k: v for k, v in (details or {}).items() if v is not None}}
+        patch: Dict[str, Any] = {"details": merged or None}
+        if not (existing.details or {}).get("disposition"):
+            # A bare auto-log (duplicate webhook), not the agent's disposition -> safe to set.
+            patch["outcome"], patch["body"] = outcome, body
+        await LeadActivityManager(engine).update(existing.uid, patch)
+        await LeadManager(engine).update(lead_id, {"last_activity_at": _now()})
+        return
+    await record_activity(engine, lead_id, LeadActivityType.CALL_LOG,
+                          user_id=user_id, outcome=outcome, body=body, details=details or None)
 
 
 async def attach_call_details(engine, activity_uid: str, patch: Dict[str, Any]) -> None:

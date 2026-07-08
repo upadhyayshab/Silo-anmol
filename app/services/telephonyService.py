@@ -98,8 +98,10 @@ async def _log_call_outcome(engine, event: CallEvent, telecaller) -> None:
             logger.warning(f"[telephony] could not grant call-access on {lead_id}: {e}")
 
     outcome = _status_to_outcome(event.status)
-    await leadService.record_activity(
-        engine, lead_id, LeadActivityType.CALL_LOG,
+    # Fold into an existing entry if the agent already logged this call (dispositioned before
+    # this webhook landed) or the webhook already fired — otherwise insert a fresh auto-log.
+    await leadService.autolog_webhook_call(
+        engine, lead_id,
         user_id=(telecaller.uid if telecaller else None),   # None -> system-logged
         outcome=outcome.value,
         body=f"{event.direction.value.title()} call · {outcome.value}",
