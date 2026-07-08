@@ -90,6 +90,61 @@ def _num(value) -> float:
     return float(value) if isinstance(value, Decimal) else (value or 0)
 
 
+def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
+                       order_to_date=None, region=None, regions=None, owner_id=None,
+                       owner_ids=None, stage=None, source=None, lead_numbers=None,
+                       scope_owner_id=None, extra_clause=None, gate_order_date=True):
+    """Shared WHERE conds for the lead-based reports (prospect + agent performance).
+
+    Returns ``(conds, order_date_conds)``. `region`/`regions` fold through canon_state
+    (so Telangana lands in the AP pool) and `regions` (a list) drives a multi-select
+    ``state IN (...)``. When `gate_order_date` is True an order-date window also gates
+    leads to those with an in-window order (prospect report); when False the window
+    only scopes the caller's own order rollup and never drops leads (agent report)."""
+    from services.leadService import canon_state
+    conds = [LeadSchema.deleted_at.is_(None)]
+    gte, lte = _day_bounds(from_date, to_date)
+    if gte is not None:
+        conds.append(LeadSchema.created_at >= gte)
+    if lte is not None:
+        conds.append(LeadSchema.created_at <= lte)
+
+    o_gte, o_lte = _day_bounds(order_from_date, order_to_date)
+    order_date_conds = []
+    if o_gte is not None:
+        order_date_conds.append(CustomerOrderSchema.order_date >= o_gte)
+    if o_lte is not None:
+        order_date_conds.append(CustomerOrderSchema.order_date <= o_lte)
+    if order_date_conds and gate_order_date:
+        conds.append(db.exists().where(CustomerOrderSchema.lead_id == LeadSchema.uid, *order_date_conds))
+
+    # lead.state is stored lowercase-canonical; canonicalize the incoming filter(s) so any
+    # casing matches and Telangana folds to the AP team. `regions` (multi-select) wins over
+    # the legacy single `region`.
+    region_list = regions if regions else ([region] if region else None)
+    if region_list:
+        canon = [c for c in (canon_state(r) for r in region_list) if c]
+        if canon:
+            conds.append(LeadSchema.state.in_(canon))
+    if owner_ids:
+        conds.append(LeadSchema.owner_id.in_(owner_ids))
+    elif owner_id:
+        conds.append(LeadSchema.owner_id == owner_id)
+    if stage:
+        conds.append(LeadSchema.stage == _enum_or_raw(LeadStage, stage))
+    if source:
+        conds.append(LeadSchema.source == _enum_or_raw(LeadSource, source))
+    if lead_numbers:
+        conds.append(LeadSchema.lead_number.in_(lead_numbers))
+    if scope_owner_id is not None:
+        conds.append(LeadSchema.owner_id.in_(scope_owner_id)
+                     if isinstance(scope_owner_id, (list, tuple, set))
+                     else LeadSchema.owner_id == scope_owner_id)
+    if extra_clause is not None:
+        conds.append(extra_clause)
+    return conds, order_date_conds
+
+
 async def prospect_report(
     engine, *,
     from_date: Optional[date] = None,
@@ -97,6 +152,7 @@ async def prospect_report(
     order_from_date: Optional[date] = None,
     order_to_date: Optional[date] = None,
     region: Optional[str] = None,
+    regions: Optional[List[str]] = None,
     owner_id: Optional[str] = None,
     owner_ids: Optional[List[str]] = None,
     stage: Optional[str] = None,
@@ -115,47 +171,14 @@ async def prospect_report(
     advanced filter engine) AND-ed into the same `conds` used by both queries."""
     lm = LeadManager(engine)
     async with lm.session_factory() as session:
-        conds = [LeadSchema.deleted_at.is_(None)]
-        gte, lte = _day_bounds(from_date, to_date)
-        if gte is not None:
-            conds.append(LeadSchema.created_at >= gte)
-        if lte is not None:
-            conds.append(LeadSchema.created_at <= lte)
-
-        # Order-date scope (order_date = order created_at): gate to prospects with
-        # >=1 order in the window, and restrict the order rollup below to those same
-        # in-window orders so the counts/amounts reflect the period, not lifetime.
-        o_gte, o_lte = _day_bounds(order_from_date, order_to_date)
-        order_date_conds = []
-        if o_gte is not None:
-            order_date_conds.append(CustomerOrderSchema.order_date >= o_gte)
-        if o_lte is not None:
-            order_date_conds.append(CustomerOrderSchema.order_date <= o_lte)
-        if order_date_conds:
-            conds.append(
-                db.exists().where(CustomerOrderSchema.lead_id == LeadSchema.uid, *order_date_conds)
-            )
-        if region:
-            # lead.state is stored lowercase-canonical; canonicalize the incoming filter
-            # so any casing matches and Telangana folds to the AP team (canon_state alias).
-            from services.leadService import canon_state
-            conds.append(LeadSchema.state == canon_state(region))
-        if owner_ids:
-            conds.append(LeadSchema.owner_id.in_(owner_ids))
-        elif owner_id:
-            conds.append(LeadSchema.owner_id == owner_id)
-        if stage:
-            conds.append(LeadSchema.stage == _enum_or_raw(LeadStage, stage))
-        if source:
-            conds.append(LeadSchema.source == _enum_or_raw(LeadSource, source))
-        if lead_numbers:
-            conds.append(LeadSchema.lead_number.in_(lead_numbers))
-        if scope_owner_id is not None:
-            conds.append(LeadSchema.owner_id.in_(scope_owner_id)
-                         if isinstance(scope_owner_id, (list, tuple, set))
-                         else LeadSchema.owner_id == scope_owner_id)
-        if extra_clause is not None:
-            conds.append(extra_clause)
+        # Order-date window gates prospects to those with an in-window order AND scopes the
+        # rollup below to those same orders, so counts/amounts reflect the period.
+        conds, order_date_conds = _lead_filter_conds(
+            from_date=from_date, to_date=to_date,
+            order_from_date=order_from_date, order_to_date=order_to_date,
+            region=region, regions=regions, owner_id=owner_id, owner_ids=owner_ids,
+            stage=stage, source=source, lead_numbers=lead_numbers,
+            scope_owner_id=scope_owner_id, extra_clause=extra_clause, gate_order_date=True)
 
         total = int((await session.execute(
             db.select(db.func.count()).select_from(LeadSchema).where(*conds)
@@ -278,3 +301,96 @@ async def prospect_report(
                 "region": (l.state or "").title(),   # stored lowercase-canonical; Title Case for display
             })
         return rows, total
+
+
+async def agent_performance(
+    engine, *,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    order_from_date: Optional[date] = None,
+    order_to_date: Optional[date] = None,
+    region: Optional[str] = None,
+    regions: Optional[List[str]] = None,
+    owner_ids: Optional[List[str]] = None,
+    source: Optional[str] = None,
+    scope_owner_id=None,
+) -> List[Dict[str, Any]]:
+    """Per-owner lead-stage pivot + order rollup — the LSQ-style "agent performance"
+    sheet. The three percentages are pure stage ratios (no call data):
+      attempted% = (total − New Lead) / total
+      connected% = (total − New Lead − Not Reachable) / total
+      conversion% = (FTU + RTU) / total
+    Lead-created date + region(s) + owner + scope filter which leads are counted; an
+    order-date window scopes ONLY the order rollup columns (never drops an owner)."""
+    conds, order_date_conds = _lead_filter_conds(
+        from_date=from_date, to_date=to_date,
+        order_from_date=order_from_date, order_to_date=order_to_date,
+        region=region, regions=regions, owner_ids=owner_ids, source=source,
+        scope_owner_id=scope_owner_id, gate_order_date=False)
+    order_conds = list(conds) + list(order_date_conds)
+
+    lm = LeadManager(engine)
+    async with lm.session_factory() as session:
+        # Stage counts per owner (drives the pivot + all three percentages).
+        stage_rows = (await session.execute(
+            db.select(LeadSchema.owner_id, LeadSchema.stage, db.func.count())
+              .where(*conds).group_by(LeadSchema.owner_id, LeadSchema.stage)
+        )).all()
+        # Order rollup per owner — order-level (no item fan-out): count / gross / net.
+        ord_rows = (await session.execute(
+            db.select(LeadSchema.owner_id,
+                      db.func.count(CustomerOrderSchema.uid),
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.gross_amount), 0),
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0))
+              .select_from(LeadSchema)
+              .join(CustomerOrderSchema, CustomerOrderSchema.lead_id == LeadSchema.uid)
+              .where(*order_conds).group_by(LeadSchema.owner_id)
+        )).all()
+        # Quantity per owner — item-level, in its own query so summing items can't fan
+        # out the gross/net above.
+        qty_rows = (await session.execute(
+            db.select(LeadSchema.owner_id, db.func.coalesce(db.func.sum(OrderItemSchema.quantity), 0))
+              .select_from(LeadSchema)
+              .join(CustomerOrderSchema, CustomerOrderSchema.lead_id == LeadSchema.uid)
+              .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
+              .where(*order_conds).group_by(LeadSchema.owner_id)
+        )).all()
+        owner_ids_present = {r[0] for r in stage_rows if r[0]}
+        owners: Dict[str, str] = {}
+        if owner_ids_present:
+            for uid, name, email in (await session.execute(
+                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email)
+                  .where(UserSchema.uid.in_(owner_ids_present))
+            )).all():
+                owners[uid] = name or email or uid
+
+    ord_map = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0)) for r in ord_rows}
+    qty_map = {r[0]: int(r[1] or 0) for r in qty_rows}
+    all_stages = [s.value for s in LeadStage]
+    per: Dict[Any, Dict[str, int]] = {}
+    for owner_id, stage, cnt in stage_rows:
+        sv = stage.value if hasattr(stage, "value") else stage
+        per.setdefault(owner_id, {})[sv] = per.setdefault(owner_id, {}).get(sv, 0) + int(cnt)
+
+    rows: List[Dict[str, Any]] = []
+    for owner_id, counts in per.items():
+        total = sum(counts.values())
+        new_lead = counts.get(LeadStage.NEW_LEAD.value, 0)
+        not_reach = counts.get(LeadStage.NOT_REACHABLE.value, 0)
+        conv = counts.get(LeadStage.FTU.value, 0) + counts.get(LeadStage.RTU.value, 0)
+        oc, gross, net = ord_map.get(owner_id, (0, 0.0, 0.0))
+        rows.append({
+            "owner_id": owner_id,
+            "owner": owners.get(owner_id) or ("Unassigned" if not owner_id else owner_id),
+            "stages": {sv: counts.get(sv, 0) for sv in all_stages},
+            "total": total,
+            "attempted_pct": round(100 * (total - new_lead) / total, 1) if total else 0.0,
+            "connected_pct": round(100 * (total - new_lead - not_reach) / total, 1) if total else 0.0,
+            "conversion_pct": round(100 * conv / total, 1) if total else 0.0,
+            "order_count": oc,
+            "order_quantity": qty_map.get(owner_id, 0),
+            "gross": round(gross, 2),
+            "net": round(net, 2),
+        })
+    rows.sort(key=lambda r: r["conversion_pct"])  # match the sheet (ascending by conv%)
+    return rows

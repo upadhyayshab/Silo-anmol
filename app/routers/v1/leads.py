@@ -56,12 +56,23 @@ def _lead_in_scope(ctx, lead) -> bool:
     return getattr(lead, "owner_id", None) == ctx.user_id
 
 
-async def _assert_lead_in_scope(ctx, lead):
+async def _agency_roster(ctx) -> set:
+    """The telecaller uids an agency admin oversees (their agency roster), or empty."""
+    if ctx.scope_level != ScopeLevel.AGENCY.value:
+        return set()
+    return set((await apply_scope({}, ctx)).get("telecaller_id") or [])
+
+
+async def _assert_lead_in_scope(ctx, lead, *, allow_agency=False):
     if _lead_in_scope(ctx, lead):
         return
     # A telecaller who handled a routed inbound call may act on a lead they don't own
     # (owner unchanged; their actions stay attributed to them via activity.user_id).
     if await assignmentService.has_call_access(engine, lead.uid, ctx.user_id):
+        return
+    # Agency admins may READ (allow_agency) — not mutate — any lead owned by their agency
+    # roster. Write endpoints leave allow_agency False, so this never grants mutation.
+    if allow_agency and getattr(lead, "owner_id", None) in await _agency_roster(ctx):
         return
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                         detail="Access denied: this lead is outside your scope")
@@ -238,12 +249,14 @@ async def _report_scope_owner(ctx):
 
 async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
                         source, lead_numbers, limit, offset, extra_clause=None,
-                        order_from_date=None, order_to_date=None, owner_ids=None):
+                        order_from_date=None, order_to_date=None, owner_ids=None,
+                        regions=None):
     nums = [n.strip() for n in lead_numbers.split(",")] if lead_numbers else None
     nums = [n for n in nums if n] if nums else None
     return await crmReportService.prospect_report(
         engine, from_date=from_date, to_date=to_date,
-        order_from_date=order_from_date, order_to_date=order_to_date, region=region,
+        order_from_date=order_from_date, order_to_date=order_to_date,
+        region=region, regions=regions,
         owner_id=owner_id, owner_ids=owner_ids, stage=stage, source=source, lead_numbers=nums,
         scope_owner_id=await _report_scope_owner(ctx), limit=limit, offset=offset,
         extra_clause=extra_clause,
@@ -257,6 +270,7 @@ async def prospect_report(
     order_from_date: Optional[date] = Query(None, description="Has an order created on/after (inclusive)"),
     order_to_date: Optional[date] = Query(None, description="Has an order created on/before (inclusive)"),
     region: Optional[str] = Query(None, description="Lead Inflow Region (lead.state)"),
+    regions: Optional[List[str]] = Query(None, description="Regions (repeatable, multi-select); overrides region"),
     owner_id: Optional[str] = Query(None),
     owner_ids: Optional[List[str]] = Query(None, description="Scope to these owners (repeatable); overrides owner_id"),
     stage: Optional[str] = Query(None),
@@ -271,7 +285,7 @@ async def prospect_report(
     rows, total = await _build_report(
         ctx, from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date,
-        region=region, owner_id=owner_id, owner_ids=owner_ids,
+        region=region, regions=regions, owner_id=owner_id, owner_ids=owner_ids,
         stage=stage, source=source, lead_numbers=lead_numbers, limit=limit, offset=offset,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
@@ -288,6 +302,7 @@ class ReportQueryRequest(BaseModel):
     order_from_date: Optional[date] = None
     order_to_date: Optional[date] = None
     region: Optional[str] = None
+    regions: Optional[List[str]] = None
     owner_id: Optional[str] = None
     owner_ids: Optional[List[str]] = None
     stage: Optional[str] = None
@@ -316,11 +331,78 @@ async def prospect_report_query(
     rows, total = await _build_report(
         ctx, from_date=body.from_date, to_date=body.to_date,
         order_from_date=body.order_from_date, order_to_date=body.order_to_date,
-        region=body.region, owner_id=body.owner_id, owner_ids=body.owner_ids,
+        region=body.region, regions=body.regions, owner_id=body.owner_id, owner_ids=body.owner_ids,
         stage=body.stage, source=body.source,
         lead_numbers=body.lead_numbers, limit=limit, offset=offset, extra_clause=clause,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/agent-performance")
+async def agent_performance_report(
+    from_date: Optional[date] = Query(None, description="Lead created on/after (inclusive)"),
+    to_date: Optional[date] = Query(None, description="Lead created on/before (inclusive)"),
+    order_from_date: Optional[date] = Query(None, description="Order created on/after — scopes the order columns only"),
+    order_to_date: Optional[date] = Query(None, description="Order created on/before — scopes the order columns only"),
+    region: Optional[str] = Query(None, description="Lead Inflow Region (lead.state)"),
+    regions: Optional[List[str]] = Query(None, description="Regions (repeatable, multi-select); overrides region"),
+    owner_ids: Optional[List[str]] = Query(None, description="Scope to these owners (repeatable)"),
+    source: Optional[str] = Query(None),
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
+):
+    """Per-owner agent-performance pivot: lead-stage counts, Grand Total, attempted /
+    connected / conversion percentages (stage-based), and an order rollup (count / qty
+    / gross / net). Agency-scoped for agency admins via _report_scope_owner."""
+    rows = await crmReportService.agent_performance(
+        engine, from_date=from_date, to_date=to_date,
+        order_from_date=order_from_date, order_to_date=order_to_date,
+        region=region, regions=regions, owner_ids=owner_ids, source=source,
+        scope_owner_id=await _report_scope_owner(ctx),
+    )
+    return {"items": rows, "total": len(rows)}
+
+
+class AgencyReassignRequest(BaseModel):
+    mobile: str
+    telecaller_id: str
+
+
+@router.post("/agency-reassign", response_model=LeadDetailResponse)
+async def agency_reassign(body: AgencyReassignRequest,
+                          ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ))):
+    """Agency-admin single reassign, by the lead's mobile number (never bulk).
+
+    Authorized purely by the agency roster: BOTH the lead's current owner and the target
+    telecaller must be inside the admin's agency, so an agency admin can shuffle owners
+    within their agency but can't pull a lead out of another agency. Agency admins have
+    no LEADS_WRITE, so this is their one permitted lead mutation."""
+    if ctx.scope_level != ScopeLevel.AGENCY.value:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Only agency admins may use this endpoint")
+    roster = await _agency_roster(ctx)
+    if not roster:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No agency roster")
+
+    from utils import dedup_utils
+    lead = await dedup_utils.find_duplicate(engine, mobile=body.mobile)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="No lead found for that mobile number")
+    if getattr(lead, "owner_id", None) not in roster:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="That lead is not owned by anyone in your agency")
+    if body.telecaller_id not in roster:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Target telecaller is not in your agency")
+    try:
+        telecaller = await user_manager.fetch(body.telecaller_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Telecaller not found")
+    if telecaller.role not in OWNER_ROLES or not telecaller.is_active:
+        raise HTTPException(status_code=400, detail="Target user is not an active telecaller or agency admin")
+
+    await leadService.reassign(engine, lead, body.telecaller_id, by_user_id=ctx.user_id)
+    fresh = await lead_manager.fetch(lead.uid)
+    return await leadService.build_lead_response(engine, fresh, include_activities=True)
 
 
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
@@ -328,7 +410,7 @@ async def get_lead(lead_id: str,
                    ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ))):
     """Full lead profile incl. activity timeline."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead)
+    await _assert_lead_in_scope(ctx, lead, allow_agency=True)  # agency admins may view their roster's leads
     return await leadService.build_lead_response(engine, lead, include_activities=True)
 
 
@@ -340,7 +422,7 @@ async def list_lead_activities(
 ):
     """Lead activity timeline (newest first)."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead)
+    await _assert_lead_in_scope(ctx, lead, allow_agency=True)  # agency admins may view their roster's leads
     return await leadService.fetch_activities(engine, lead.uid, limit=limit)
 
 
