@@ -165,6 +165,8 @@ class ExotelAdapter(TelephonyProvider):
         self._token_url = f"https://{integrations_host}/v2/integrations/token"
         self._usermapping_url = f"https://{integrations_host}/v2/integrations/usermapping"
         self._device_url = f"https://{integrations_host}/v2/integrations/device"
+        self._app_setting_url = f"https://{integrations_host}/v2/integrations/app_setting"
+        self._app_settings_done = False   # push _REQUIRED_APP_SETTINGS once per process
         self._sdk_token: Optional[str] = None
         self._sdk_token_ts = 0.0
         self._sdk_token_ttl = 30 * 86400   # re-mint monthly; Exotel expires it at 90 days
@@ -375,6 +377,7 @@ class ExotelAdapter(TelephonyProvider):
         token = await self._sdk_access_token()
         if not token:
             return None
+        await self._ensure_app_settings()   # pin record=true (once per process); best-effort
         e = email.strip().lower()
         exo = self._email_overrides.get(e, e)
         await self._ensure_mapping(exo, name, agent_number)
@@ -433,6 +436,38 @@ class ExotelAdapter(TelephonyProvider):
                 logger.warning(f"[exotel] auto-map POST for {exotel_email}: HTTP {r.status_code} {r.text[:200]}")
         except Exception as ex:
             logger.warning(f"[exotel] auto-map POST failed for {exotel_email}: {ex}")
+
+    # App-LEVEL (per AppID, not per-user) integration settings we require. `record=true` so
+    # Exotel records softphone calls — it was missing and had to be set by hand (Exotel ticket
+    # 2026-07-08); pinned here so a re-provisioned app doesn't silently lose recordings again.
+    _REQUIRED_APP_SETTINGS = {"record": "true"}
+
+    async def _ensure_app_settings(self) -> None:
+        """Idempotently push _REQUIRED_APP_SETTINGS via POST /v2/integrations/app_setting.
+        App-level, so once per process is enough; best-effort — never blocks softphone auth.
+        Leaves the done-flag unset if it couldn't run (creds/token not ready, or any POST
+        failed), so a later softphone open retries."""
+        if self._app_settings_done or not (self._app_id and self._app_secret):
+            return
+        token = await self._sdk_access_token()
+        if not token:
+            return   # creds not ready yet -> retry on a later auth
+        ok = True
+        for key, value in self._REQUIRED_APP_SETTINGS.items():
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    r = await client.post(
+                        self._app_setting_url, json={"Key": key, "Value": value},
+                        headers={"Authorization": token, "Content-Type": "application/json"})
+                if r.status_code == 200:
+                    logger.info(f"[exotel] app_setting {key}={value} ensured")
+                else:
+                    ok = False
+                    logger.warning(f"[exotel] app_setting {key} POST: HTTP {r.status_code} {r.text[:200]}")
+            except Exception as ex:
+                ok = False
+                logger.warning(f"[exotel] app_setting {key} POST failed: {ex}")
+        self._app_settings_done = ok   # retry on a later auth if any setting failed
 
     async def set_device_status(self, email: str, on: bool = True, device: str = "sip") -> bool:
         """Flip an agent's Exotel device availability via PUT /v2/integrations/device — the
