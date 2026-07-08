@@ -793,47 +793,55 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     user_manager = UserManager(engine)
     lead_manager = LeadManager(engine)
     from datetime import datetime, timezone
-    
+
     now = datetime.now(timezone.utc)
+    today_start = assignmentService._ist_day_start_utc()
     pool_objects = []
-    current_loads = {}
+    fresh_loads = {}      # untouched New-Lead backlog -> gates the quota cap
+    current_loads = {}    # leads given today -> fairness balance (incremented as we assign)
     # An explicit target pool (admin picked telecallers) is honored as-is — a super admin can
     # place any lead on any telecaller. An automatic distribution (sweep / no pool given) stays
     # strictly within each lead's own state; a lead with no in-region agent is left unassigned
     # (never spilled to the global pool) for a super admin to assign manually.
     auto = not telecaller_ids
 
-    async def get_active_count(uid: str) -> int:
-        open_leads = await lead_manager.fetch_all(filters={"owner_id": uid})
-        # Quota currency = UNTOUCHED leads (stage still New Lead). Working a lead frees
-        # its slot (any disposition moves the stage off New Lead), so the sweep tops an
-        # agent back up as they clear their fresh backlog. Twin of
-        # assignmentService._fresh_counts — keep the two in sync.
-        return sum(
-            1 for l in open_leads.items
-            if l.deleted_at is None
-            and (l.stage.value if hasattr(l.stage, "value") else l.stage) == LeadStage.NEW_LEAD.value
-        )
+    async def _counts(uid: str):
+        """(fresh New-Lead backlog, leads given today) for one agent, from a single fetch.
+        Fresh is the quota currency (untouched leads; working one frees its slot). Today-count
+        is the fairness metric — same split as the create path (assignmentService), so both
+        assignment paths spread leads equally instead of balancing on a fresh count that fast
+        workers keep at 0. Fresh twin: assignmentService._fresh_counts — keep in sync."""
+        rows = await lead_manager.fetch_all(filters={"owner_id": uid})
+        fresh = today = 0
+        for l in rows.items:
+            if l.deleted_at is not None:
+                continue
+            stage = l.stage.value if hasattr(l.stage, "value") else l.stage
+            if stage == LeadStage.NEW_LEAD.value:
+                fresh += 1
+            if l.created_at and l.created_at >= today_start:
+                today += 1
+        return fresh, today
 
     async def add_to_pool(u):
         # Auto/sweep round-robin is telecallers only; an explicit admin pick (Change
         # Owner popup, auto=False) may also land on an agency admin — they can own leads.
         if u.role not in (OWNER_ROLES if not auto else TELECALLER_ROLES) or not u.is_active:
             return
-        active_count = await get_active_count(u.uid)
+        fresh, today = await _counts(u.uid)
         # Explicit admin pick (Change Owner / chosen pool, auto=False): honor it regardless
         # of online status or quota — the super admin deliberately chose this telecaller.
         if not auto:
             pool_objects.append(u)
-            current_loads[u.uid] = active_count
+            fresh_loads[u.uid], current_loads[u.uid] = fresh, today
             return
         # Auto/sweep only: skip offline telecallers (no heartbeat > 30m) and those at quota.
         if not u.last_active_at or (now - u.last_active_at.replace(tzinfo=timezone.utc)).total_seconds() > 1800:
             return
-        if u.assignment_quota and u.assignment_quota > 0 and active_count >= u.assignment_quota:
+        if u.assignment_quota and u.assignment_quota > 0 and fresh >= u.assignment_quota:
             return
         pool_objects.append(u)
-        current_loads[u.uid] = active_count
+        fresh_loads[u.uid], current_loads[u.uid] = fresh, today
 
     # Build the validated target pool
     if telecaller_ids:
@@ -869,7 +877,7 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         # Re-evaluate pool to exclude those who just hit their quota (auto/sweep only;
         # an explicit admin pick is honored regardless of quota).
         if auto:
-            valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
+            valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and fresh_loads[u.uid] >= u.assignment_quota)]
         else:
             valid_pool = list(pool_objects)
 
@@ -890,13 +898,19 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
             skipped += 1
             continue
 
-        # Select the telecaller with the lowest current load (Load balancing round-robin)
-        valid_pool.sort(key=lambda u: current_loads[u.uid])
-        selected_tc = valid_pool[0]
-        
+        # Give it to a fewest-given-today agent, RANDOM tie-break (shared with the create
+        # path) so equal agents share evenly instead of the sort dumping every tie on one.
+        selected_tc = assignmentService._pick_min(valid_pool, current_loads)
+
         await reassign(engine, lead, selected_tc.uid, by_user_id, reason=AssignmentReason.ROUND_ROBIN.value)
-        
-        current_loads[selected_tc.uid] += 1
+
+        current_loads[selected_tc.uid] += 1   # +1 to their today-share (balances the batch)
+        # A freshly-assigned New lead also grows their fresh backlog, so the in-batch quota
+        # re-check stays honest; a reassigned already-worked lead does not.
+        lead_stage = getattr(lead, "stage", None)
+        stage_val = lead_stage.value if hasattr(lead_stage, "value") else lead_stage
+        if stage_val == LeadStage.NEW_LEAD.value:
+            fresh_loads[selected_tc.uid] += 1
         assigned += 1
         by_tc[selected_tc.uid] = by_tc.get(selected_tc.uid, 0) + 1
 

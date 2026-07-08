@@ -10,6 +10,7 @@ creation — e.g. 10 leads across 3 telecallers -> 4/3/3 — without needing a
 separate cursor table.
 """
 import logging
+import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
@@ -165,16 +166,59 @@ async def _fresh_counts(engine, telecaller_ids: List[str]) -> dict:
         return {oid: int(cnt) for oid, cnt in rows.all()}
 
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _ist_day_start_utc() -> datetime:
+    """Naive-UTC instant of 00:00 IST today (leads.created_at is stored naive UTC)."""
+    now_ist = datetime.now(IST)
+    midnight_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight_ist.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
+    """Map telecaller_id -> leads assigned to them since 00:00 IST today (by created_at).
+
+    This is the create-path FAIRNESS metric. Unlike fresh backlog — which fast workers keep
+    at 0, so balancing on it collapses to the uid tie-break and one agent hogs — today-count
+    keeps everyone logged in within ~1 lead of each other over the day."""
+    if not telecaller_ids:
+        return {}
+    cutoff = _ist_day_start_utc()
+    mgr = LeadManager(engine)
+    async with mgr.session_factory() as session:
+        rows = await session.execute(
+            db.select(LeadSchema.owner_id, db.func.count())
+            .where(
+                LeadSchema.owner_id.in_(telecaller_ids),
+                LeadSchema.created_at >= cutoff,
+                LeadSchema.deleted_at.is_(None),
+            )
+            .group_by(LeadSchema.owner_id)
+        )
+        return {oid: int(cnt) for oid, cnt in rows.all()}
+
+
 def _at_quota(u: UserSchema, fresh_n: int) -> bool:
     """True if this agent is at/over their fresh-lead quota. quota 0/None = uncapped."""
     return bool(u.assignment_quota and u.assignment_quota > 0 and fresh_n >= u.assignment_quota)
+
+
+def _pick_min(pool: List[UserSchema], counts: dict) -> UserSchema:
+    """Give the lead to an agent with the fewest counted leads; RANDOM tie-break so equal
+    agents share evenly. A deterministic uid tie-break dumps every tie on the lowest-uid
+    agent (the create-path twin of the inbound stickiness that random_pick fixes) — which
+    is exactly how one telecaller ended up with 49 leads while 22 got zero."""
+    least = min(counts.get(u.uid, 0) for u in pool)
+    return random.choice([u for u in pool if counts.get(u.uid, 0) == least])
 
 
 async def pick_telecaller(engine, outlet_id: Optional[str],
                           state: Optional[str] = None,
                           only_ids: Optional[set] = None,
                           *, allow_cross_state: bool = True,
-                          enforce_quota: bool = False) -> Optional[UserSchema]:
+                          enforce_quota: bool = False,
+                          random_pick: bool = False) -> Optional[UserSchema]:
     """Pick the least-loaded active telecaller for an outlet/state (None if none exist).
 
     `only_ids` constrains the pool to a given set of telecallers — used by inbound
@@ -188,20 +232,31 @@ async def pick_telecaller(engine, outlet_id: Optional[str],
     New-Lead count >= assignment_quota) and balances by that same fresh count — so
     the create path caps a fresh backlog and lets overflow wait unassigned. Left OFF
     by default: inbound live-call routing must still ring an at-quota agent.
+
+    `random_pick=True` returns a *random* agent from the pool instead of the
+    least-loaded one — used by inbound live-call routing to spread calls evenly
+    across whoever's available. min-by-(load, uid) is sticky for inbound: handled
+    calls don't add owned-lead load, so ties always break to the same lowest uid
+    and one agent gets hammered. Left OFF for the create path, which stays
+    load-balanced. Mutually exclusive with enforce_quota (create-only).
     """
     pool = await _active_telecallers(engine, outlet_id, state, only_ids,
                                      allow_cross_state=allow_cross_state)
     if not pool:
         return None
+    if random_pick:
+        return random.choice(pool)
     if enforce_quota:
-        counts = await _fresh_counts(engine, [u.uid for u in pool])
-        pool = [u for u in pool if not _at_quota(u, counts.get(u.uid, 0))]
+        fresh = await _fresh_counts(engine, [u.uid for u in pool])
+        pool = [u for u in pool if not _at_quota(u, fresh.get(u.uid, 0))]
         if not pool:
             return None  # everyone in-region at quota -> unassigned; the 5-min sweep retries
+        # Quota FILTERS on fresh backlog, but we BALANCE on leads-given-today so everyone
+        # logged in gets an equal share (see _received_today_counts / _pick_min).
+        counts = await _received_today_counts(engine, [u.uid for u in pool])
     else:
         counts = await _active_assignment_counts(engine, [u.uid for u in pool])
-    # Least loaded, tie-break deterministically by uid for stable rotation.
-    return min(pool, key=lambda u: (counts.get(u.uid, 0), u.uid))
+    return _pick_min(pool, counts)
 
 
 async def grant_call_access(engine, lead_id: str, telecaller_id: str) -> None:
