@@ -245,8 +245,10 @@ async def resolve_inbound_agent(engine, caller_number: str, provider=None) -> In
     if not owner_available:
         outlet_id = getattr(lead, "outlet_id", None) if lead else None
         state = getattr(lead, "state", None) if lead else None
+        # In-region only: no available in-state agent -> no pick (NO_AGENT -> Exotel queue),
+        # rather than ringing a cross-state agent and leaking that lead into their list.
         pick = await assignmentService.pick_telecaller(
-            engine, outlet_id, state=state, only_ids=avail)
+            engine, outlet_id, state=state, only_ids=avail, allow_cross_state=False)
         pick_id = pick.uid if pick else None
 
     chosen_id, reason = _decide_inbound(owner_id, owner_available, pick_id)

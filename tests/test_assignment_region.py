@@ -4,8 +4,9 @@ Pins the fix for the prod bug where Andhra Pradesh leads were handed to Karnatak
 telecallers. Auto-assignment (create round-robin + distribute/sweep) stays strictly
 in-region: a lead with no in-state agent (offline, over-quota, unstaffed, or no state)
 is left unassigned for a super admin to place manually — never spilled across states.
-Inbound call routing keeps the cross-state last resort (allow_cross_state default True)
-so a live incoming call still rings an available agent.
+assignmentService still exposes the cross-state last resort (allow_cross_state default True),
+but the inbound-routing call site (telephonyService.route_inbound) now passes False too, so an
+unstaffed state's incoming call goes to the Exotel queue rather than ringing a cross-state agent.
 
 Two paths are covered because both do their own round-robin:
   - assignmentService._active_telecallers  (create + inbound routing)

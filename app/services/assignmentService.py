@@ -10,6 +10,7 @@ creation — e.g. 10 leads across 3 telecallers -> 4/3/3 — without needing a
 separate cursor table.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
 import sqlalchemy as db
@@ -24,6 +25,21 @@ from utils.crm_enums import AssignmentReason, LeadStage
 from utils.outlet_assignment import auto_assign_outlet
 
 logger = logging.getLogger(__name__)
+
+# A routed inbound call grants the answering agent temporary rights to see/act on a lead
+# they don't own. That grant expires after this window so old cross-team calls stop leaking
+# into an agent's list. The row is left in place; it's just ignored past the cutoff.
+CALL_ACCESS_TTL = timedelta(hours=8)
+
+
+def _ttl_cutoff() -> datetime:
+    """Grants created before this naive-UTC instant are expired (columns store naive UTC)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) - CALL_ACCESS_TTL
+
+
+def _grant_live(created_at: datetime, now: datetime) -> bool:
+    """Pure TTL predicate (mirrors the SQL cutoff) — a grant is live within CALL_ACCESS_TTL of now."""
+    return created_at >= now - CALL_ACCESS_TTL
 
 
 async def resolve_outlet(engine, *, district: Optional[str] = None,
@@ -209,24 +225,37 @@ async def grant_call_access(engine, lead_id: str, telecaller_id: str) -> None:
 
 
 async def has_call_access(engine, lead_id: str, telecaller_id: str) -> bool:
-    """True if this telecaller was granted call-access on the lead (see grant_call_access).
-    Scoped to the call-access reason so a past *owner* (reassigned away) does NOT regain rights."""
+    """True if this telecaller has a NON-EXPIRED call-access grant on the lead (see
+    grant_call_access + CALL_ACCESS_TTL). Scoped to the call-access reason so a past *owner*
+    (reassigned away) does NOT regain rights."""
     mgr = LeadAssignmentManager(engine)
-    rows = await mgr.fetch_all(filters={
-        "lead_id": lead_id, "telecaller_id": telecaller_id,
-        "reason": AssignmentReason.INBOUND_CALL_ACCESS.value})
-    return bool(rows.items)
+    async with mgr.session_factory() as session:
+        row = await session.execute(
+            db.select(LeadAssignmentSchema.uid).where(
+                LeadAssignmentSchema.lead_id == lead_id,
+                LeadAssignmentSchema.telecaller_id == telecaller_id,
+                LeadAssignmentSchema.reason == AssignmentReason.INBOUND_CALL_ACCESS.value,
+                LeadAssignmentSchema.created_at >= _ttl_cutoff(),
+            ).limit(1)
+        )
+        return row.first() is not None
 
 
 async def call_access_lead_ids(engine, telecaller_id: str) -> List[str]:
-    """Lead ids this telecaller can act on via call-access (not owned). Used to widen their
-    lead list so a routed-call lead is findable (e.g. the post-call disposition lookup).
-    ponytail: returns all of them; fine for realistic per-agent volumes (hundreds)."""
+    """Lead ids this telecaller can act on via call-access (not owned), within CALL_ACCESS_TTL.
+    Used to widen their lead list so a routed-call lead is findable (e.g. the post-call
+    disposition lookup). Grants older than the TTL are dropped so stale cross-team calls
+    don't linger in the agent's list."""
     mgr = LeadAssignmentManager(engine)
-    rows = await mgr.fetch_all(filters={
-        "telecaller_id": telecaller_id,
-        "reason": AssignmentReason.INBOUND_CALL_ACCESS.value})
-    return [r.lead_id for r in rows.items]
+    async with mgr.session_factory() as session:
+        rows = await session.execute(
+            db.select(LeadAssignmentSchema.lead_id).where(
+                LeadAssignmentSchema.telecaller_id == telecaller_id,
+                LeadAssignmentSchema.reason == AssignmentReason.INBOUND_CALL_ACCESS.value,
+                LeadAssignmentSchema.created_at >= _ttl_cutoff(),
+            )
+        )
+        return [r[0] for r in rows.all()]
 
 
 async def record_assignment(engine, lead_id: str, telecaller_id: str, *,
@@ -245,3 +274,12 @@ async def record_assignment(engine, lead_id: str, telecaller_id: str, *,
         assigned_by=assigned_by,
         is_active=True,
     ))
+
+
+if __name__ == "__main__":
+    # ponytail: pure TTL-boundary check (DB paths need a live engine).
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    assert _grant_live(now - timedelta(hours=7, minutes=59), now)        # inside 8h -> visible
+    assert _grant_live(now, now)                                         # just granted
+    assert not _grant_live(now - timedelta(hours=8, minutes=1), now)     # past 8h -> dropped
+    print("call-access TTL ok")
