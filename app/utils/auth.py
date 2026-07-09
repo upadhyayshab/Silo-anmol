@@ -251,34 +251,41 @@ async def _scoped_outlet_ids(ctx: AuthContext) -> list:
     return []
 
 
-async def outlet_ids_for_state(state: Optional[str]) -> list:
-    """Resolve a state name to the uids of outlets located in it (case-insensitive).
+async def outlet_ids_for_state(state) -> list:
+    """Resolve a state to the uids of outlets located in it (case-insensitive).
 
-    Lets GLOBAL callers (super admin) voluntarily narrow order/report views to one
-    state. Returns [] for a blank state (caller applies no filter). For a *non-blank*
-    state that matches no outlet, callers must fall back to the "__none__" sentinel so
-    the query matches nothing instead of returning every row — mirror `apply_scope`:
+    `state` may be a single name OR an iterable of names (multi-select region filters),
+    in which case the union of their outlets is returned.
+
+    Lets GLOBAL callers (super admin) voluntarily narrow order/report views. Returns []
+    for a blank state (caller applies no filter). For a *non-blank* state that matches no
+    outlet, callers must fall back to the "__none__" sentinel so the query matches nothing
+    instead of returning every row — mirror `apply_scope`:
 
         if state:
             ids = await outlet_ids_for_state(state)
             filters[outlet_column] = ids or ["__none__"]
     """
-    if not state or not str(state).strip():
+    raw = [state] if isinstance(state, str) else list(state or [])
+    wanted = {str(s).strip().lower() for s in raw if s and str(s).strip()}
+    if not wanted:
         return []
-    # Fold in states that operationally serve the requested one: Telangana leads are
-    # worked by the AP team (STATE_ALIASES), but their warehouse outlets are still tagged
+    # Fold in states that operationally serve a requested one: Telangana leads are worked
+    # by the AP team (STATE_ALIASES), but their warehouse outlets are still tagged
     # 'Telangana' — so an explicit "Andhra Pradesh" filter must also match those, else it
     # under-counts (they'd only show under "All Regions"). Reverse the alias map so the
     # served-elsewhere state's outlets are included with the serving state.
     from services.leadService import STATE_ALIASES  # lazy: avoid utils<->services import cycle
-    canon = str(state).strip().lower()
-    names = {canon} | {src for src, dst in STATE_ALIASES.items() if dst == canon}
+    names = set(wanted)
+    for src, dst in STATE_ALIASES.items():
+        if dst in wanted:
+            names.add(src)
     mgr = _get_outlet_mgr()
     ids = []
-    for name in names:  # ≤2 states; $ieq is case-insensitive so lowercase matches stored casing
+    for name in names:  # few states; $ieq is case-insensitive so lowercase matches stored casing
         res = await mgr.fetch_all(filters={"state": {"$ieq": name}}, limit=0)
         ids.extend(o.uid for o in res.items)
-    return ids
+    return sorted(set(ids))
 
 
 _user_mgr = None

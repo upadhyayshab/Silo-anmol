@@ -1415,12 +1415,17 @@ async def get_daily_order_summary(
     to_date: date,
     outlet_id: Optional[str] = None,
     state: Optional[str] = None,
+    states: Optional[str] = None,
     main_filter: Optional[str] = None,
     sub_filter: Optional[str] = None,
     view_type: str = "logistics",
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
-    """ Get daily order summary including volume, revenue, and quantity by status. """
+    """ Get daily order summary including volume, revenue, and quantity by status.
+
+    `states` is a comma-separated multi-select region filter (e.g. "Karnataka,Punjab");
+    it takes precedence over the legacy single `state`. Both resolve to the union of
+    those states' outlets (Telangana folds in with Andhra Pradesh). """
     try:
         # Outlet scope: a scoped (outlet) caller is pinned to their own outlet via
         # apply_scope on assigned_outlet_id; global callers honor the explicit outlet_id.
@@ -1430,11 +1435,14 @@ async def get_daily_order_summary(
         if scope_outlet is not None:
             target_outlet_id = scope_outlet[0] if isinstance(scope_outlet, list) else scope_outlet
 
-        # Global-only state filter: narrow to outlets in that state (ANY on assigned_outlet_id).
-        # Runs in parallel to the scalar outlet_id branch; if both set they AND together.
+        # Global-only region filter: narrow to outlets in those states (ANY on
+        # assigned_outlet_id). Runs in parallel to the scalar outlet_id branch; if both set
+        # they AND together. `states` (multi-select, comma-separated) wins over `state`.
+        state_list = [s.strip() for s in states.split(",")] if states else ([state] if state else [])
+        state_list = [s for s in state_list if s]
         target_outlet_ids = None
-        if state and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
-            target_outlet_ids = await outlet_ids_for_state(state) or ["__none__"]
+        if state_list and (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+            target_outlet_ids = await outlet_ids_for_state(state_list) or ["__none__"]
 
         async with engine.connect() as conn:
             if view_type == "marketing":
