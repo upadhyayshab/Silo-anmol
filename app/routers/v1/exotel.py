@@ -12,6 +12,7 @@ Mounted under /api/v1, so the webhook URL to configure in Exotel is:
     https://<host>/api/v1/exotel/call
 """
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -19,10 +20,12 @@ from pydantic import BaseModel
 from config import get_settings, get_engine
 from core.telephony import TelephonyProvider
 from dependencies.telephony_dep import get_telephony_provider
-from managers import UserManager
+from managers import UserManager, AppSettingManager
 from services import telephonyService, presenceService, exophoneService
 from utils.auth import get_current_user_id, require_permission, AuthContext
-from utils.constants import TELECALLER_ROLES
+from utils.constants import (
+    TELECALLER_ROLES, SETTING_DEFAULT_EXOPHONE, SETTING_STATE_EXOPHONES,
+)
 from utils.permissions import Permission
 
 logger = logging.getLogger(__name__)
@@ -37,35 +40,116 @@ class HeartbeatRequest(BaseModel):
     status: str = "available"          # available | on_call | away
 
 
+class ExophoneConfigRequest(BaseModel):
+    default_exophone: Optional[str] = None
+    state_exophones: Optional[dict] = None
+
+
 @router.get("/agent-modes")
 async def agent_modes(
     _: AuthContext = Depends(require_permission(Permission.LEADS_MANAGE)),
     provider: TelephonyProvider = Depends(get_telephony_provider),
 ):
-    """Each active telecaller's softphone health (admin view). The WebRTC softphone
-    is the only call path, so `sip: None` => the agent cannot place or receive calls.
-      - `sip`      their Exotel SIP contact uri (None = not provisioned).
-      - `verified` outbound health: False = an unverified device is stuck active
-                   outbound (breaks calls, 10725); True = healthy; None when no SIP.
-    Display-only. One bulk CCM `/users?fields=devices` read backs the whole list."""
+    """Each active telecaller's softphone health + outbound caller-ID (admin view). The
+    WebRTC softphone is the only call path, so `sip: None` => the agent cannot call.
+      - `sip`        their Exotel SIP contact uri (None = not provisioned).
+      - `verified`   outbound health: False = an unverified device is stuck active
+                     outbound (breaks calls, 10725); True = healthy; None when no SIP.
+      - `mapped_vn`  the caller-ID Exotel currently presents (None = not mapped yet).
+      - `desired_vn` what this agent's state says it should be.
+      - `drift`      the two differ -> POST /exotel/remap re-points them.
+    Display-only. Two bulk reads back the whole list (CCM devices + usermappings)."""
     res = await UserManager(engine).fetch_all(filters={"role": TELECALLER_ROLES, "is_active": True})
     agents = list(res.items)
     status = await provider.agent_device_status([getattr(a, "email", "") or "" for a in agents])
+    default_vn, overrides = await exophoneService.load(engine)
+    mappings = await provider.list_usermappings()      # one bulk call, SipSecret stripped
+    plan = {p["email"]: p for p in
+            exophoneService.build_drift_plan(agents, mappings, default_vn, overrides)}
     out = []
     for a in agents:
         email = getattr(a, "email", "") or ""
         st = status.get(email.strip().lower()) or {}
+        row = plan.get(email.strip().lower()) or {}
         out.append({
             "uid": a.uid,
             "name": getattr(a, "full_name", "") or email or a.uid,
             "email": email,
             "sip": st.get("sip"),
             "verified": st.get("verified"),
+            "state": row.get("state"),
+            "mapped_vn": row.get("mapped_vn"),
+            "desired_vn": row.get("desired_vn"),
+            "drift": bool(row.get("drift")),
         })
-    # Broken first (no SIP, then unverified), then healthy — it's an action list.
-    out.sort(key=lambda r: (0 if not r["sip"] else (1 if r["verified"] is False else 2),
+    # Broken first (no SIP, then unverified), then drifting, then healthy — an action list.
+    out.sort(key=lambda r: (0 if not r["sip"] else (1 if r["verified"] is False else (2 if r["drift"] else 3)),
                             (r["name"] or "").lower()))
     return out
+
+
+@router.get("/exophones")
+async def list_exophones(
+    _: AuthContext = Depends(require_permission(Permission.LEADS_MANAGE)),
+    provider: TelephonyProvider = Depends(get_telephony_provider),
+):
+    """Every ExoPhone on the account with the call-flow it's bound to, for the
+    state->ExoPhone picker. `flow_id: null` = not attached to any inbound flow, so calls
+    back to it won't reach the CRM."""
+    return await provider.list_caller_ids_all()
+
+
+@router.get("/exophone-config")
+async def get_exophone_config(
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_READ)),
+):
+    """The state->ExoPhone map + the default every unmapped state falls back to."""
+    default_vn, overrides = await exophoneService.load(engine)
+    return {"default_exophone": default_vn, "state_exophones": overrides}
+
+
+@router.put("/exophone-config")
+async def put_exophone_config(
+    body: ExophoneConfigRequest,
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_WRITE)),
+):
+    """Save the map. Does NOT re-map anyone — call POST /exotel/remap after previewing."""
+    mgr = AppSettingManager(engine)
+    if body.default_exophone is not None:
+        await mgr.set(SETTING_DEFAULT_EXOPHONE, body.default_exophone)
+    if body.state_exophones is not None:
+        await mgr.set(SETTING_STATE_EXOPHONES, body.state_exophones)
+    default_vn, overrides = await exophoneService.load(engine)
+    return {"default_exophone": default_vn, "state_exophones": overrides}
+
+
+@router.post("/remap")
+async def remap_caller_ids(
+    dry_run: bool = True,
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_WRITE)),
+    provider: TelephonyProvider = Depends(get_telephony_provider),
+):
+    """Re-point every drifting agent's outbound caller-ID at their state's ExoPhone.
+
+    `dry_run=true` (the default) writes nothing and returns the plan, so the UI can show
+    "N agents will change X -> Y" before anything happens. Applying issues one PUT per
+    drifting agent, which rotates that agent's SipSecret — harmless to the WebRTC
+    softphone, which authenticates with accessToken+userId.
+    """
+    res = await UserManager(engine).fetch_all(filters={"role": TELECALLER_ROLES, "is_active": True})
+    default_vn, overrides = await exophoneService.load(engine)
+    mappings = await provider.list_usermappings()
+    plan = [p for p in exophoneService.build_drift_plan(list(res.items), mappings,
+                                                        default_vn, overrides) if p["drift"]]
+    if dry_run:
+        return {"dry_run": True, "planned": plan, "updated": [], "failed": []}
+
+    updated, failed = [], []
+    for p in plan:
+        ok = await provider.set_virtual_number(p["email"], p["desired_vn"])
+        (updated if ok else failed).append(p["email"])
+    logger.info(f"[exotel] remap applied: {len(updated)} updated, {len(failed)} failed")
+    return {"dry_run": False, "planned": plan, "updated": updated, "failed": failed}
 
 
 @router.get("/softphone-token")
