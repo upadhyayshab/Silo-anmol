@@ -12,6 +12,7 @@ in bulk via POST /leads/distribute; the owner is changed via POST /leads/{id}/as
 from datetime import datetime, timezone, date
 from typing import Optional, List
 
+import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -116,6 +117,8 @@ async def list_leads(
     q: Optional[str] = Query(None, description="Free-text search: name / mobile / email / lead number"),
     fb_page_id: Optional[str] = Query(None, description="Filter to leads whose campaign_data.page_id matches this FB page"),
     agency_id: Optional[str] = Query(None, description="Filter to leads whose owner belongs to this agency"),
+    order_from_date: Optional[date] = Query(None, description="Has an order created on/after (inclusive, IST)"),
+    order_to_date: Optional[date] = Query(None, description="Has an order created on/before (inclusive, IST)"),
     filters: dict = Depends(filtering_dependency),
     sorts: list = Depends(sorting_dependency),
     ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
@@ -125,7 +128,8 @@ async def list_leads(
     Telecallers are auto-restricted to their own leads. Supports the standard
     `field:eq/like/in/...` filters and `field:asc/desc` sorts, plus `q` search.
     `fb_page_id` filters on campaign_data.page_id (JSON path — FB leads have no
-    plain page column).
+    plain page column). `order_from_date`/`order_to_date` narrow to leads with at
+    least one order in that IST day window (same window the reports use).
     """
     # Telecallers see leads they own OR leads they were granted call-access to (handled a
     # routed inbound call). GLOBAL/microservice see all.
@@ -137,6 +141,7 @@ async def list_leads(
         q=q, filters={**filters, "deleted_at": None}, sorts=sorts, limit=limit, offset=offset,
         scope_owner_id=scope_owner_id, scope_uids=scope_uids, fb_page_id=fb_page_id,
         agency_id=agency_id,
+        extra_clause=crmReportService.order_window_clause(order_from_date, order_to_date),
     )
     responses = await _leads_to_responses(items)
     return LeadListResponse(items=responses, count=len(responses), total=total, limit=limit, offset=offset)
@@ -187,11 +192,16 @@ async def query_leads(
 ):
     """Run an advanced nested AND/OR filter tree against the leads list. Same
     role-scoping and response shape as GET /leads; the tree is validated and
-    translated by leadFilterService (422 on a malformed tree)."""
+    translated by leadFilterService (422 on a malformed tree). An order-date window
+    is AND-ed onto the tree, matching GET /leads."""
     try:
         clause = leadFilterService.build_filter_clause(body.filter)
     except leadFilterService.FilterValidationError as e:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+
+    order_clause = crmReportService.order_window_clause(body.order_from_date, body.order_to_date)
+    parts = [c for c in (clause, order_clause) if c is not None]
+    clause = sa.and_(*parts) if len(parts) > 1 else (parts[0] if parts else None)
 
     scope_owner_id, scope_uids = None, None
     if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):

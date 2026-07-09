@@ -90,6 +90,27 @@ def _num(value) -> float:
     return float(value) if isinstance(value, Decimal) else (value or 0)
 
 
+def _order_date_conds(order_from_date, order_to_date) -> list:
+    """Conds restricting `customer_orders.order_date` to the inclusive IST day window."""
+    o_gte, o_lte = _day_bounds(order_from_date, order_to_date)
+    conds = []
+    if o_gte is not None:
+        conds.append(CustomerOrderSchema.order_date >= o_gte)
+    if o_lte is not None:
+        conds.append(CustomerOrderSchema.order_date <= o_lte)
+    return conds
+
+
+def order_window_clause(order_from_date=None, order_to_date=None):
+    """EXISTS clause: the lead has >=1 order inside the IST day window; None when no
+    window is given (caller applies no filter). Shared by the reports and the Manage
+    Leads list so both interpret an order-date range identically."""
+    conds = _order_date_conds(order_from_date, order_to_date)
+    if not conds:
+        return None
+    return db.exists().where(CustomerOrderSchema.lead_id == LeadSchema.uid, *conds)
+
+
 def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
                        order_to_date=None, region=None, regions=None, owner_id=None,
                        owner_ids=None, stage=None, source=None, lead_numbers=None,
@@ -109,14 +130,9 @@ def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
     if lte is not None:
         conds.append(LeadSchema.created_at <= lte)
 
-    o_gte, o_lte = _day_bounds(order_from_date, order_to_date)
-    order_date_conds = []
-    if o_gte is not None:
-        order_date_conds.append(CustomerOrderSchema.order_date >= o_gte)
-    if o_lte is not None:
-        order_date_conds.append(CustomerOrderSchema.order_date <= o_lte)
+    order_date_conds = _order_date_conds(order_from_date, order_to_date)
     if order_date_conds and gate_order_date:
-        conds.append(db.exists().where(CustomerOrderSchema.lead_id == LeadSchema.uid, *order_date_conds))
+        conds.append(order_window_clause(order_from_date, order_to_date))
 
     # lead.state is stored lowercase-canonical; canonicalize the incoming filter(s) so any
     # casing matches and Telangana folds to the AP team. `regions` (multi-select) wins over

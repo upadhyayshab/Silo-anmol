@@ -2,7 +2,7 @@
 
 Re-exported from `models/__init__.py`.
 """
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 
@@ -65,6 +65,9 @@ class LeadQueryRequest(BaseModel):
     filter: Optional[Dict[str, Any]] = None
     q: Optional[str] = None
     sorts: Optional[List[str]] = None
+    # Order-date window (IST days) AND-ed onto the tree — mirrors GET /leads.
+    order_from_date: Optional[date] = None
+    order_to_date: Optional[date] = None
     limit: int = 25
     offset: int = 0
 
