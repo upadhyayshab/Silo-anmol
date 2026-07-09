@@ -1,14 +1,10 @@
 import os
-import pytz
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from services.smartping_job_service import smartping_job_service
 from services.inventory_audit_service import inventory_audit_service
 from services import facebook_service
 from services.leadService import sweep_unassigned
-from services.order_revert_service import revert_stale_orders
-
-IST = pytz.timezone("Asia/Kolkata")
 
 # Define your interval or cron schedules here.
 
@@ -44,13 +40,8 @@ JOBS_CONFIG = [
         "func": facebook_service.nightly_sync,
         "trigger": CronTrigger(hour=2, minute=0)
     },
-    {
-        # Revert stale (non-terminal, non-pending) orders to PENDING once a day at
-        # midnight IST. No-op unless a super admin has enabled it (system_configuration).
-        "name": "revert_stale_orders",
-        "func": revert_stale_orders,
-        "trigger": CronTrigger(hour=0, minute=0, timezone=IST)
-    },
+    # ponytail: revert_stale_orders unscheduled 2026-07-09 — service, settings and the
+    # superadmin toggle still exist but nothing calls them. Re-add here to revive.
     # Examples of other schedules you can easily add:
     # {
     #     "name": "run_daily_reports",
