@@ -144,8 +144,11 @@ async def inbound_route(request: Request,
         payload = dict(await request.form())
 
     caller = payload.get("CallFrom") or payload.get("From") or payload.get("caller") or ""
-    route = await telephonyService.resolve_inbound_agent(engine, caller, provider=provider)
-    logger.info(f"[exotel] inbound from {caller!r} -> {route.reason} "
+    # Which ExoPhone the customer dialed -> which state(s) that number serves.
+    dialed = payload.get("CallTo") or payload.get("To") or payload.get("called") or ""
+    route = await telephonyService.resolve_inbound_agent(
+        engine, caller, provider=provider, dialed_number=dialed)
+    logger.info(f"[exotel] inbound from {caller!r} to {dialed!r} -> {route.reason} "
                 f"telecaller={route.telecaller_id} dial={route.dial_number} lead={route.lead_id}")
     if not route.dial_number:
         return {"fetch_after_attempt": False, "destination": []}

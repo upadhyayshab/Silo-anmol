@@ -12,7 +12,7 @@ separate cursor table.
 import logging
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+from typing import Optional, List, Sequence, Union
 
 import sqlalchemy as db
 
@@ -61,6 +61,20 @@ def _same_state(a: Optional[str], b: Optional[str]) -> bool:
     return bool(a) and bool(b) and a.strip().lower() == b.strip().lower()
 
 
+def _as_states(state) -> List[str]:
+    """`state` may be one state or several. One ExoPhone can serve a region spanning
+    states (Telangana + Andhra Pradesh share a number), so inbound routing passes a list."""
+    if not state:
+        return []
+    if isinstance(state, str):
+        return [state]
+    return [s for s in state if s]
+
+
+def _in_states(user_state: Optional[str], states: List[str]) -> bool:
+    return any(_same_state(user_state, s) for s in states)
+
+
 def _restrict(pool: List[UserSchema], only_ids: Optional[set]) -> List[UserSchema]:
     """Keep only telecallers in `only_ids` (e.g. the currently-available set for
     inbound routing). `only_ids=None` means no restriction (the default lead-create
@@ -70,11 +84,14 @@ def _restrict(pool: List[UserSchema], only_ids: Optional[set]) -> List[UserSchem
 
 
 async def _active_telecallers(engine, outlet_id: Optional[str],
-                              state: Optional[str],
+                              state: Union[str, Sequence[str], None] = None,
                               only_ids: Optional[set] = None,
                               *, allow_cross_state: bool = True) -> List[UserSchema]:
-    """Tiered pool: telecallers in the outlet -> same state -> global, optionally
+    """Tiered pool: telecallers in the outlet -> same state(s) -> global, optionally
     restricted to `only_ids` (available agents for inbound routing).
+
+    `state` accepts one state or several: inbound routing derives it from the ExoPhone
+    the customer dialed, and one number can serve a multi-state region.
 
     Region separation: a lead is only assigned across states as a last resort
     (when no telecaller exists in its state at all).
@@ -95,12 +112,14 @@ async def _active_telecallers(engine, outlet_id: Optional[str],
         if eligible:
             return eligible
 
-    # Tier 2: telecallers in the same state (region-scoped fallback).
-    if state:
+    # Tier 2: telecallers in the same state(s) (region-scoped fallback).
+    states = _as_states(state)
+    if states:
         all_active = await user_manager.fetch_all(
             filters={"role": TELECALLER_ROLES, "is_active": True}
         )
-        in_state_all = [u for u in all_active.items if _same_state(getattr(u, "state", None), state)]
+        in_state_all = [u for u in all_active.items
+                        if _in_states(getattr(u, "state", None), states)]
         in_state = _restrict(in_state_all, only_ids)
         if in_state:
             return in_state
@@ -214,7 +233,7 @@ def _pick_min(pool: List[UserSchema], counts: dict) -> UserSchema:
 
 
 async def pick_telecaller(engine, outlet_id: Optional[str],
-                          state: Optional[str] = None,
+                          state: Union[str, Sequence[str], None] = None,
                           only_ids: Optional[set] = None,
                           *, allow_cross_state: bool = True,
                           enforce_quota: bool = False,

@@ -222,10 +222,15 @@ def _decide_inbound(owner_id: Optional[str], owner_available: bool,
     return None, "no_agent"
 
 
-async def resolve_inbound_agent(engine, caller_number: str, provider=None) -> InboundRoute:
+async def resolve_inbound_agent(engine, caller_number: str, provider=None,
+                                dialed_number: str = "") -> InboundRoute:
     """Decide who an inbound call should ring. Owner-first (if the caller matches a
     lead whose owner is available), else the least-loaded available telecaller scoped
     to the lead's outlet/state, else no agent (NO_AGENT -> Exotel queue applet).
+
+    `dialed_number` is the ExoPhone the customer called. For an UNKNOWN caller (no lead,
+    so no state) it supplies the region: the number's state(s) scope the pool. Unmapped
+    number -> no states -> today's global available pool.
 
     `dial_number` is the chosen agent's **SIP id** (rings their in-browser softphone)
     or None — there is no PSTN fallback; an agent without a softphone mapping is
@@ -235,7 +240,7 @@ async def resolve_inbound_agent(engine, caller_number: str, provider=None) -> In
     ponytail: queue/retry on NO_AGENT is delegated to Exotel's Queue applet for now;
     this function is the seam where a backend call-queue would hook in later.
     """
-    from services import assignmentService, presenceService   # lazy: avoid import cycle
+    from services import assignmentService, presenceService, exophoneService   # lazy: avoid import cycle
 
     lead = await dedup_utils.find_duplicate(engine, mobile=caller_number)
     avail = await presenceService.available_ids(engine)
@@ -246,14 +251,18 @@ async def resolve_inbound_agent(engine, caller_number: str, provider=None) -> In
     pick_id = None
     if not owner_available:
         outlet_id = getattr(lead, "outlet_id", None) if lead else None
-        state = getattr(lead, "state", None) if lead else None
+        lead_state = getattr(lead, "state", None) if lead else None
         # A KNOWN lead stays in-region: no available in-state agent -> NO_AGENT -> Exotel
         # queue, never a cross-state ring that leaks the lead into another team's list.
-        # An UNKNOWN caller has no lead/state to protect, so fall back to the global
-        # available pool — otherwise a brand-new prospect calling in would ring nobody.
+        # An UNKNOWN caller has no lead/state to protect, so scope by the ExoPhone they
+        # dialed — that number's state(s). Unmapped number -> [] -> global available pool,
+        # otherwise a brand-new prospect calling in would ring nobody.
+        state = lead_state
+        if not state and dialed_number:
+            state = await exophoneService.states_for_dialed(engine, dialed_number)
         pick = await assignmentService.pick_telecaller(
             engine, outlet_id, state=state, only_ids=avail,
-            allow_cross_state=(state is None), random_pick=True)
+            allow_cross_state=(lead_state is None), random_pick=True)
         pick_id = pick.uid if pick else None
 
     chosen_id, reason = _decide_inbound(owner_id, owner_available, pick_id)

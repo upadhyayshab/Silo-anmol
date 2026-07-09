@@ -116,6 +116,33 @@ def test_outlet_tier_wins_over_state():
     assert {u.uid for u in pool} == {"o1"}, [u.uid for u in pool]
 
 
+# --- one ExoPhone can serve several states (inbound routing passes a list) ---------
+
+def test_state_may_be_a_list_one_number_two_states():
+    # AP + Telangana share one ExoPhone -> a call to it must reach BOTH states' agents.
+    _patch_users([_user("ap1", "andhra pradesh"), _user("tg1", "telangana"),
+                  _user("ka1", "karnataka")])
+    pool = run(A._active_telecallers("E", None, ["andhra pradesh", "telangana"],
+                                     only_ids={"ap1", "tg1", "ka1"}))
+    assert {u.uid for u in pool} == {"ap1", "tg1"}, [u.uid for u in pool]
+
+
+def test_empty_state_list_behaves_like_no_state():
+    # No config -> states_for_dialed returns [] -> today's global pool. No regression.
+    _patch_users([_user("ka1", "karnataka"), _user("ap1", "andhra pradesh")])
+    pool = run(A._active_telecallers("E", None, [], only_ids=None))
+    assert {u.uid for u in pool} == {"ka1", "ap1"}, [u.uid for u in pool]
+
+
+def test_state_list_still_waits_rather_than_crossing():
+    # Both AP and TG agents exist but are offline -> [] (Exotel queue), never Karnataka.
+    _patch_users([_user("ap1", "andhra pradesh"), _user("tg1", "telangana"),
+                  _user("ka1", "karnataka")])
+    pool = run(A._active_telecallers("E", None, ["andhra pradesh", "telangana"],
+                                     only_ids={"ka1"}))
+    assert pool == [], [u.uid for u in pool]
+
+
 # --- leadService.distribute_leads (auto pool / sweep) ----------------------------
 
 def _tc(uid, state, online=True):
