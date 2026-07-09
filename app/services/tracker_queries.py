@@ -31,6 +31,13 @@ _LEADGEN_SOURCES = (
     "'fb lead ads','pay per click ads','social media','whatsapp inbound',"
     "'inbound phone call','outbound phone call','inbound email'"
 )
+# CAUTION -- the two D2C branches are keyed on DIFFERENT columns and are KNOWN to disagree:
+#   orders: uid LIKE 'order%'            (placed through the Medusa storefront)
+#   leads : source IN (_D2C_LEAD_SOURCES) (originated on the storefront)
+# A 'medusa'-sourced lead is D2C, but if a telecaller places its order through the CRM the
+# order's uid is not 'order%', so the order lands in Organic -- 111 such orders in June.
+# This is a recorded, deferred business decision (design doc §9.2), not an oversight.
+# It is the same failure shape as the 'telecaller' bug: leads in one section, orders in another.
 _D2C_LEAD_SOURCES = "'medusa','add to cart','browsed 3 pages','web visit/login','app sign up'"
 
 _ORDER_SQL = f"""
