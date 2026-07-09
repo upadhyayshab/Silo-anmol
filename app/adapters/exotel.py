@@ -19,6 +19,7 @@ Note: this account's Users API does NOT expose agents' SIP/device ids in the
 address book, so SIP ids come from /usermapping — see `resolve_agent_sip`.
 """
 import logging
+import re
 import time
 from typing import Any, List, Mapping, Optional
 
@@ -28,6 +29,7 @@ from core.telephony import (
     CallDirection, CallEvent, CallEventKind, CallStatus,
     TelephonyProvider,
 )
+from utils.dedup_utils import normalize_mobile
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +131,76 @@ def _exophones_from_body(body: Any, flow_id: str = "") -> List[dict]:
     return out
 
 
+def _exophones_with_flow(body: Any) -> List[dict]:
+    """EVERY ExoPhone on the account + the call-flow id its `voice_url` points at.
+    Unlike `_exophones_from_body` this does NOT filter by flow — the admin picker must
+    show numbers that aren't on the CRM flow yet (a caller-ID with no inbound flow means
+    customer callbacks to it never reach the CRM)."""
+    rows = body
+    if isinstance(body, dict):
+        rows = body.get("incoming_phone_numbers") or (body.get("response") or {}).get("data") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    out: List[dict] = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict):
+            continue
+        number = r.get("phone_number") or r.get("PhoneNumber")
+        if not number:
+            continue
+        m = re.search(r"start_voice/(\d+)", str(r.get("voice_url") or ""))
+        out.append({"number": number,
+                    "label": r.get("friendly_name") or number,
+                    "flow_id": m.group(1) if m else None})
+    return out
+
+
+def _usermappings_from_body(body: Any) -> List[dict]:
+    """`Data.Users[]` from the bulk /usermapping read, with **SipSecret removed** — the
+    payload carries it and it must never reach a browser."""
+    users = ((body or {}).get("Data") or {}).get("Users") or []
+    return [{k: v for k, v in u.items() if k != "SipSecret"}
+            for u in users if isinstance(u, dict)]
+
+
+def _put_body(rec: Mapping[str, Any], vn: str) -> dict:
+    """Body for PUT /usermapping. It takes a **single object**; an array is rejected with
+    `400 invalid Payload` (POST, confusingly, takes an array). Undocumented."""
+    uid = rec.get("AppUserId")
+    return {
+        "AppUserId": uid,
+        "AppUsername": rec.get("AppUsername") or "",
+        "Email": rec.get("Email") or uid,
+        "ExotelAccountSid": rec.get("ExotelAccountSid") or "",
+        "ExotelUserName": rec.get("ExotelUserName") or "",
+        "AgentNumber": rec.get("AgentNumber") or "",
+        "VirtualNumber": vn,
+    }
+
+
+def _needs_vn_update(current: Optional[str], desired: Optional[str]) -> bool:
+    """Compare NORMALIZED numbers. Exotel stores the same ExoPhone as '08068875144' and
+    '+918068875144'; a raw compare would PUT on every softphone open (each PUT rotates
+    the agent's SipSecret)."""
+    if not desired:
+        return False
+    return normalize_mobile(current) != normalize_mobile(desired)
+
+
+async def _choose_vn(adapter, virtual_number: str) -> str:
+    """The VirtualNumber to provision a NEW mapping with. Prefer the caller-supplied
+    (state-derived) number; fall back to the first flow-scoped ExoPhone.
+
+    ponytail: the `exophones[0]` fallback is the old lottery — its order is Exotel's,
+    which is exactly how 109 agents ended up split 83/26 across two numbers. It survives
+    only for accounts with no config; once `default_exophone` is set it never runs.
+    """
+    if virtual_number:
+        return virtual_number
+    exophones = await adapter.list_caller_ids()
+    return exophones[0]["number"] if exophones else ""
+
+
 def _first(payload: Mapping[str, Any], *keys: str) -> Optional[str]:
     """First real value among `keys`. Exotel's Passthru sends the literal string
     "null" for empty fields (RecordingUrl, DialCallStatus, ...) — treat that, and
@@ -157,6 +229,8 @@ class ExotelAdapter(TelephonyProvider):
         self._ccm_base = f"https://{ccm_subdomain}/v2/accounts/{sid}"  # Users + Calls (CCM) APIs
         self._crm_flow_id = str(crm_flow_id)  # only list ExoPhones whose flow is the CRM app
         self._email_overrides = _parse_overrides(email_overrides)  # CRM email -> Exotel email exceptions
+        # ...and back, so nothing outside this adapter ever handles an Exotel-side email.
+        self._reverse_email_overrides = {v: k for k, v in self._email_overrides.items()}
         self._sip_map = _parse_overrides(sip_map)  # Exotel email -> SIP id, for inbound softphone routing
         # WebRTC softphone SDK auth — App-entity Id/Secret (IP-PSTN-intermix onboarding).
         self._app_id = app_id
@@ -364,6 +438,104 @@ class ExotelAdapter(TelephonyProvider):
             if self._exo is None:
                 self._exo, self._exo_ts = [], now
         return self._exo
+
+    # Exotel's bulk /usermapping read silently returns 20 rows unless page_size is
+    # passed; limit/offset/count are accepted and ignored. Undocumented.
+    _USERMAPPING_PAGE_SIZE = 500
+
+    def _to_exotel_email(self, email: str) -> str:
+        """CRM email -> Exotel email. Idempotent: an already-Exotel address isn't a key."""
+        e = (email or "").strip().lower()
+        return self._email_overrides.get(e, e)
+
+    def _to_crm_email(self, exotel_email: str) -> str:
+        """Exotel email -> CRM email, so callers outside the adapter only see CRM ones."""
+        e = (exotel_email or "").strip().lower()
+        return self._reverse_email_overrides.get(e, e)
+
+    async def list_caller_ids_all(self) -> List[dict]:
+        """Every ExoPhone on the account (NOT flow-filtered) with its `flow_id`, for the
+        admin state->ExoPhone picker."""
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, auth=self._auth) as client:
+                resp = await client.get(self._exophones_url)
+                resp.raise_for_status()
+                return _exophones_with_flow(resp.json())
+        except Exception as e:
+            logger.warning(f"[exotel] exophone (all) fetch failed: {e}")
+            return []
+
+    async def list_usermappings(self) -> List[dict]:
+        """Every app usermapping in one call, SipSecret stripped, `AppUserId` translated
+        back to the CRM email. MUST send `page_size` — without it Exotel returns 20 rows
+        and no hint that it truncated."""
+        token = await self._sdk_access_token()
+        if not token:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                r = await client.get(self._usermapping_url,
+                                     params={"page_size": self._USERMAPPING_PAGE_SIZE},
+                                     headers={"Authorization": token})
+                r.raise_for_status()
+                rows = _usermappings_from_body(r.json())
+        except Exception as e:
+            logger.warning(f"[exotel] usermapping list failed: {e}")
+            return []
+        for rec in rows:
+            rec["AppUserId"] = self._to_crm_email(rec.get("AppUserId") or "")
+        return rows
+
+    async def usermapping_record(self, email: str) -> Optional[dict]:
+        """One agent's full mapping record (by CRM email), or None when unmapped (404)."""
+        token = await self._sdk_access_token()
+        if not token:
+            return None
+        exo = self._to_exotel_email(email)
+        try:
+            # /usermapping builds ?user_id= unencoded downstream, so pre-encode '+'.
+            url = f"{self._usermapping_url}?user_id={exo.replace('+', '%2B')}"
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                r = await client.get(url, headers={"Authorization": token})
+            if r.status_code != 200:
+                return None
+            data = (r.json() or {}).get("Data")
+            rec = data[0] if isinstance(data, list) and data else (data or {})
+            return rec or None
+        except Exception as e:
+            logger.warning(f"[exotel] usermapping read failed for {exo}: {e}")
+            return None
+
+    async def set_virtual_number(self, email: str, vn: str,
+                                 rec: Optional[dict] = None) -> bool:
+        """Re-point an existing mapping's outbound caller-ID (agent given by CRM email).
+
+        PUT updates in place: SipId and device ids stay stable (verified 2026-07-09), so
+        inbound SIP routing is unaffected. It DOES rotate SipSecret — harmless to the
+        WebRTC SDK (which auths with accessToken+userId), but a reason to only call this
+        on genuine drift.
+        """
+        if not vn:
+            return False
+        token = await self._sdk_access_token()
+        if not token:
+            return False
+        rec = rec or await self.usermapping_record(email)
+        if not rec:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                r = await client.put(self._usermapping_url, json=_put_body(rec, vn),
+                                     headers={"Authorization": token,
+                                              "Content-Type": "application/json"})
+            if r.status_code == 200:
+                logger.info(f"[exotel] caller-id {email} -> {vn}")
+                return True
+            logger.warning(f"[exotel] set VirtualNumber {email}: "
+                           f"HTTP {r.status_code} {r.text[:200]}")
+        except Exception as e:
+            logger.warning(f"[exotel] set VirtualNumber failed for {email}: {e}")
+        return False
 
     async def softphone_auth(self, email: str, name: str = "", agent_number: str = "") -> Optional[dict]:
         """{accessToken, userId} for the in-browser WebRTC SDK. userId is the agent's
