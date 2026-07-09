@@ -76,6 +76,23 @@ def _reengage_target_stage(current):
     return LeadStage.ENGAGED if cur in DORMANT_STAGES else None
 
 
+def _may_auto_stage(current: str, target: LeadStage) -> bool:
+    """May a logged disposition auto-move a lead from `current` to `target`?
+
+    - FTU/RTU (converted) are never auto-demoted by a later call.
+    - ENGAGED never falls to NOT_REACHABLE: someone already talked to this lead, so a
+      later unanswered call must not bury it in the Not Reachable bucket. It can still
+      be disqualified (Not Interested / DNC / Wrong Number -> NOT_QUALIFIED) and still
+      converts on real orders (ENGAGED -> FTU -> RTU via handle_post_order).
+    - A no-op move (already at target) is not a change.
+    """
+    if current in PROTECTED_STAGES:
+        return False
+    if current == LeadStage.ENGAGED.value and target is LeadStage.NOT_REACHABLE:
+        return False
+    return current != target.value
+
+
 def canon_geo(value):
     """Lowercase-canonical a geography string so leads line up with the
     outlet_mappings / cluster_districts convention. Blank -> None. Pure
@@ -667,12 +684,13 @@ async def log_call(engine, lead: LeadSchema, outcome: Optional[str], note: Optio
     if updates:
         await LeadManager(engine).update(lead.uid, updates)
     # Auto-advance stage off the disposition (e.g. Not Interested -> Not Qualified, Interested ->
-    # Engaged). Converted leads (FTU/RTU) are protected from auto-demotion; "Order Booked" has no
-    # entry, so its stage stays driven by real order placement.
+    # Engaged). _may_auto_stage holds the guards: converted leads (FTU/RTU) are never auto-demoted,
+    # and an ENGAGED lead never falls to NOT_REACHABLE. "Order Booked" has no entry, so its stage
+    # stays driven by real order placement.
     if sub_disposition:
         target = DISPOSITION_STAGE.get(sub_disposition)
         current = lead.stage.value if hasattr(lead.stage, "value") else lead.stage
-        if target and current not in PROTECTED_STAGES and current != target.value:
+        if target and _may_auto_stage(current, target):
             await change_stage(engine, lead, target, by_user_id=by_user_id,
                                note=f"Auto: {sub_disposition} → {target.value}")
     details: Dict[str, Any] = {}
