@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, date, timezone, timedelta
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union
+import uuid
 # ============================================================================
 
 
@@ -1425,8 +1426,11 @@ class DailyTrackerInputSchema(BaseSchema):
     """
     __tablename__ = "daily_tracker_inputs"
 
-    tracker_date = db.Column(db.Date, nullable=False, index=True)
-    region = db.Column(db.String(16), nullable=False, index=True)
+    # ponytail: the unique index below is the only index. This table holds
+    # 3 regions x 6 metrics x ~31 days ~= 560 rows/month; add a (region, tracker_date)
+    # composite only if fetch_month ever shows up in a slow-query log.
+    tracker_date = db.Column(db.Date, nullable=False)
+    region = db.Column(db.String(16), nullable=False)
     metric_key = db.Column(db.String(64), nullable=False)
     value = db.Column(db.Numeric(14, 2), nullable=False)
     updated_by = db.Column(db.String, nullable=True)
@@ -1438,22 +1442,29 @@ class DailyTrackerInputSchema(BaseSchema):
 
 class DailyTrackerInputManager(ERPGenericManager[DailyTrackerInputSchema]):
     async def upsert(self, tracker_date, region: str, metric_key: str, value, updated_by: str = None) -> None:
+        """Atomic. Two people saving the same cell must not race.
+
+        A SELECT-then-INSERT here loses a write: both callers see no row, both INSERT,
+        and the second dies on uq_tracker_input. Same fix as presenceService.py:25-50 —
+        a single INSERT ... ON CONFLICT DO UPDATE, one round trip, no read-then-write gap.
+        We bypass the ORM `before_insert` uid listener (Core stmt), so set the same
+        prefixed uid by hand (see presenceService.heartbeat).
+        """
+        if self.engine.dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert as _insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert as _insert
+
+        stmt = _insert(self.Schema).values(
+            uid=f"daily_tracker_inputs_{uuid.uuid4()}",
+            tracker_date=tracker_date, region=region, metric_key=metric_key,
+            value=value, updated_by=updated_by,
+        ).on_conflict_do_update(
+            index_elements=["tracker_date", "region", "metric_key"],
+            set_={"value": value, "updated_by": updated_by, "updated_at": db.func.now()},
+        )
         async with self.session_factory() as session:
-            query = (
-                db.select(self.Schema)
-                .where(self.Schema.tracker_date == tracker_date)
-                .where(self.Schema.region == region)
-                .where(self.Schema.metric_key == metric_key)
-            )
-            existing = (await session.execute(query)).scalars().first()
-            if existing:
-                existing.value = value
-                existing.updated_by = updated_by
-            else:
-                session.add(self.Schema(
-                    tracker_date=tracker_date, region=region,
-                    metric_key=metric_key, value=value, updated_by=updated_by,
-                ))
+            await session.execute(stmt)
             await session.commit()
 
     async def fetch_month(self, start_date, end_date, region: str) -> Dict[str, Dict[Any, Any]]:

@@ -29,13 +29,11 @@ def upgrade() -> None:
         sa.Column("value", sa.Numeric(14, 2), nullable=False),
         sa.Column("updated_by", sa.String(), nullable=True),
         sa.PrimaryKeyConstraint("uid"),
+        # Postgres backs this with a composite b-tree; it is the only index this
+        # table needs. Standalone tracker_date / region indexes would be redundant.
         sa.UniqueConstraint("tracker_date", "region", "metric_key", name="uq_tracker_input"),
     )
-    op.create_index("ix_daily_tracker_inputs_tracker_date", "daily_tracker_inputs", ["tracker_date"])
-    op.create_index("ix_daily_tracker_inputs_region", "daily_tracker_inputs", ["region"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_daily_tracker_inputs_region", table_name="daily_tracker_inputs")
-    op.drop_index("ix_daily_tracker_inputs_tracker_date", table_name="daily_tracker_inputs")
     op.drop_table("daily_tracker_inputs")
