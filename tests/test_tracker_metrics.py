@@ -13,6 +13,8 @@ import os
 import sys
 from datetime import date
 
+import pytest
+
 # Import the module directly, NOT via `from services.tracker_metrics import ...`.
 # app/services/__init__.py eagerly imports invoice_service -> managers -> SharedBackend,
 # which needs a DB layer on sys.path and defeats the point of a pure test. Pointing
@@ -66,9 +68,24 @@ def test_catalogue_shape():
     assert len(ROWS) == 103
     assert Counter(r.section for r in ROWS) == {"overall": 18, "leadgen": 34, "d2c": 34, "organic": 17}
     assert len({r.id for r in ROWS}) == 103, "row ids must be unique"
-    assert len(INPUT_KEYS) == 6
-    assert INPUT_KEYS <= {r.id for r in ROWS}, "every input key must name a real row"
     assert all(r.tooltip for r in ROWS), "every row must carry a tooltip"
+
+
+def test_input_keys_are_exactly_the_six_hand_entered_metrics():
+    """Identity, not a subset check.
+
+    INPUT_KEYS drives `editable` in the grid payload AND the PUT whitelist. A subset
+    check stays green if a key is swapped for another valid row id -- which would
+    silently make a DERIVED row editable and stop persisting the real one.
+    """
+    assert INPUT_KEYS == {
+        "leadgen.meta_leads", "leadgen.spends",
+        "d2c.spends", "d2c.sessions", "d2c.engaged_users", "d2c.add_to_cart",
+    }
+    by_id = {r.id: r for r in ROWS}
+    for key in INPUT_KEYS:
+        assert by_id[key].source == "input", f"{key} is {by_id[key].source}, not an input row"
+    assert {r.id for r in ROWS if r.source == "input"} == INPUT_KEYS
 
 
 def test_d2c_row_order_matches_the_sheet():
@@ -113,7 +130,6 @@ def test_sunday_weekday_average_is_not_broken():
     assert len(avg) == 7
     assert avg[0] == (7278 + 18684 + 23758 + 25333 + 24071) / 5     # Mondays -> 19824.8
     assert avg[6] == (19449 + 46086 + 23182 + 23502) / 4            # Sundays -> 28054.75
-    assert avg[6] is not None
 
 
 def test_ratio_rows_aggregate_before_dividing():
@@ -145,14 +161,23 @@ def test_mtd_only_rows_have_no_daily_cells():
     assert _row(grid, "leadgen", "orders_booked")["daily"] is not None
 
 
-def test_estimated_revenue_uses_days_in_month():
-    """Defect D4: the sheet hardcoded x30. July has 31 days."""
-    july = [date(2026, 7, d) for d in range(1, 32)]
-    base = {r.id: [0] * 31 for r in ROWS if r.source != "derived"}
-    base["organic.revenue_received"] = [100_000] * 31
-    grid = build_grid(july, base, date(2026, 8, 1))
-    # 100,000/day * 31 days / 100,000 = 31.0 lakh
-    assert grid["estimated_revenue_lakhs"] == 31.0
+@pytest.mark.parametrize("year,month,n_days", [
+    (2026, 7, 31),   # 31-day month -- catches a hardcoded 30
+    (2026, 6, 30),   # 30-day month -- catches a hardcoded 31
+    (2027, 2, 28),   # 28-day month -- catches both
+])
+def test_estimated_revenue_uses_days_in_month(year, month, n_days):
+    """Defect D4: the sheet hardcoded x30.
+
+    One month proves nothing. Asserting 31.0 for July passes whether month_days comes
+    from calendar.monthrange or from a literal 31. Three month lengths pin it down.
+    """
+    days = [date(year, month, d) for d in range(1, n_days + 1)]
+    base = {r.id: [0] * n_days for r in ROWS if r.source != "derived"}
+    base["organic.revenue_received"] = [100_000] * n_days
+    grid = build_grid(days, base, date(year + 1, 1, 1))
+    # 100,000/day * n_days days / 100,000 = n_days lakh
+    assert grid["estimated_revenue_lakhs"] == float(n_days)
 
 
 def test_empty_week_bucket_is_dash_not_zero():
