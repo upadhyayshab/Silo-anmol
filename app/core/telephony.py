@@ -86,12 +86,32 @@ class TelephonyProvider(ABC):
         True = healthy, None when no SIP. Display-only for the admin view. Default: none."""
         return {}
 
-    async def softphone_auth(self, email: str, name: str = "", agent_number: str = "") -> Optional[dict]:
+    async def softphone_auth(self, email: str, name: str = "", agent_number: str = "",
+                             virtual_number: str = "") -> Optional[dict]:
         """Credentials for an in-browser softphone SDK: `{accessToken, userId}` for
         the given agent, or None if the vendor has no embeddable softphone / it isn't
         configured. The CRM frontend inits the SDK with these. `name`/`agent_number`
-        let the adapter lazily map the agent on first use."""
+        let the adapter lazily map the agent on first use. `virtual_number` is the
+        outbound caller-ID the agent should present (their state's ExoPhone); the
+        adapter provisions and re-points the mapping to it."""
         return None
+
+    async def list_usermappings(self) -> list:
+        """Every agent's softphone mapping — at least `AppUserId` (the agent's CRM email)
+        and `VirtualNumber` (their outbound caller-ID). Secrets must be stripped by the
+        adapter. Default: none."""
+        return []
+
+    async def list_caller_ids_all(self) -> list:
+        """Every caller-ID number on the account: `{number, label, flow_id}`. `flow_id`
+        None = not attached to an inbound call flow. Default: none."""
+        return []
+
+    async def set_virtual_number(self, email: str, vn: str,
+                                 rec: Optional[dict] = None) -> bool:
+        """Re-point one agent's outbound caller-ID, agent given by their CRM email.
+        Default: unsupported."""
+        return False
 
     async def fetch_call_details(self, call_sid: str) -> Optional[dict]:
         """Pull a finished call's record by its id — `{status: CallStatus,

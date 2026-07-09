@@ -537,10 +537,29 @@ class ExotelAdapter(TelephonyProvider):
             logger.warning(f"[exotel] set VirtualNumber failed for {email}: {e}")
         return False
 
-    async def softphone_auth(self, email: str, name: str = "", agent_number: str = "") -> Optional[dict]:
+    async def _sync_virtual_number(self, exotel_email: str, desired: str) -> None:
+        """Re-point an ALREADY-mapped agent's caller-ID when config changed.
+
+        `_ensure_mapping` returns early for mapped agents, so without this an agent would
+        keep their first-ever VirtualNumber forever. Only PUTs on genuine drift — each PUT
+        rotates SipSecret, and a raw compare would fire on every softphone open because
+        Exotel stores '08068875144' and '+918068875144' interchangeably.
+        """
+        if not desired:
+            return
+        rec = await self.usermapping_record(exotel_email)
+        if not rec or not _needs_vn_update(rec.get("VirtualNumber"), desired):
+            return
+        await self.set_virtual_number(exotel_email, desired, rec=rec)
+
+    async def softphone_auth(self, email: str, name: str = "", agent_number: str = "",
+                             virtual_number: str = "") -> Optional[dict]:
         """{accessToken, userId} for the in-browser WebRTC SDK. userId is the agent's
         AppUserId (their email, override-applied — must match what's provisioned in
         Exotel's /usermapping). None until the app entity creds are configured.
+
+        `virtual_number` is the outbound caller-ID this agent should present (their state's
+        ExoPhone). It provisions a new mapping and re-points an existing one on drift.
 
         Lazily ensures the agent is MAPPED in Exotel (links their existing Exotel user
         to the app so their softphone can register) — see `_ensure_mapping`."""
@@ -552,7 +571,8 @@ class ExotelAdapter(TelephonyProvider):
         await self._ensure_app_settings()   # pin record=true (once per process); best-effort
         e = email.strip().lower()
         exo = self._email_overrides.get(e, e)
-        await self._ensure_mapping(exo, name, agent_number)
+        await self._ensure_mapping(exo, name, agent_number, virtual_number)
+        await self._sync_virtual_number(exo, virtual_number)   # config changed -> re-point
         # Flip the agent's softphone (SIP) device Available — the same flag as the ON/OFF
         # toggle in the Exotel dashboard. Without it, CCM make-call fails 10708 ("no online
         # device") even though the SDK's SIP is registered. Best-effort: never blocks auth.
@@ -561,11 +581,16 @@ class ExotelAdapter(TelephonyProvider):
         # plus-addressed Exotel email (crm+1@…) is read as a space -> 404. Pre-encode it.
         return {"accessToken": token, "userId": exo.replace("+", "%2B")}
 
-    async def _ensure_mapping(self, exotel_email: str, name: str, agent_number: str) -> None:
+    async def _ensure_mapping(self, exotel_email: str, name: str, agent_number: str,
+                              virtual_number: str = "") -> None:
         """Lazy auto-map: if the agent has no /usermapping yet, LINK their existing Exotel
         user to the app (POST /usermapping). Never CREATES an Exotel user — guarded by the
         address-book directory, so an email that isn't already an Exotel user is skipped.
-        Idempotent (GET-first) and attempted at most once per process per email."""
+        Idempotent (GET-first) and attempted at most once per process per email.
+
+        `virtual_number` is the agent's state ExoPhone — the caller-ID the new mapping is
+        provisioned with. Already-mapped agents return early here; `_sync_virtual_number`
+        is what re-points them."""
         if await self._usermapping_sip(exotel_email):
             return                                   # already mapped (cached GET)
         if exotel_email in self._provision_tried:
@@ -577,9 +602,8 @@ class ExotelAdapter(TelephonyProvider):
             logger.info(f"[exotel] auto-map skipped: {exotel_email} is not an Exotel user "
                         "(align their CRM email to their Exotel email)")
             return
-        # VirtualNumber for the mapping (shared default ExoPhone — outbound overrides it per call).
-        exophones = await self.list_caller_ids()
-        vn = exophones[0]["number"] if exophones else ""
+        # Outbound caller-ID for the new mapping: the agent's state ExoPhone when configured.
+        vn = await _choose_vn(self, virtual_number)
         if not vn:
             logger.warning(f"[exotel] auto-map skipped: no ExoPhone for VirtualNumber ({exotel_email})")
             return

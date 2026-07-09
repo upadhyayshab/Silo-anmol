@@ -20,7 +20,7 @@ from config import get_settings, get_engine
 from core.telephony import TelephonyProvider
 from dependencies.telephony_dep import get_telephony_provider
 from managers import UserManager
-from services import telephonyService, presenceService
+from services import telephonyService, presenceService, exophoneService
 from utils.auth import get_current_user_id, require_permission, AuthContext
 from utils.constants import TELECALLER_ROLES
 from utils.permissions import Permission
@@ -76,10 +76,13 @@ async def softphone_token(
     """Mint the in-browser WebRTC softphone SDK credentials for the logged-in agent.
     Returns {accessToken, userId}; 503 until the Exotel WebRTC onboarding is done."""
     agent = await UserManager(engine).fetch(user_id)
+    # Outbound caller-ID = the ExoPhone mapped to this agent's state (default otherwise).
+    virtual_number = await exophoneService.desired_vn_for(engine, getattr(agent, "state", None))
     auth = await provider.softphone_auth(
         getattr(agent, "email", "") or "",
         name=getattr(agent, "full_name", "") or "",
         agent_number=getattr(agent, "phone", "") or "",
+        virtual_number=virtual_number,
     )
     if not auth:
         raise HTTPException(status_code=503,
