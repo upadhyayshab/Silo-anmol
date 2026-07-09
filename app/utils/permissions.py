@@ -59,6 +59,7 @@ class Permission(str, Enum):
     # Finance overview / reports
     FINANCE_READ = "finance:read"          # company financials / margin zone
     REPORTS_READ = "reports:read"
+    TRACKER_WRITE = "tracker:write"
     # Delivery (driver roster) / cash handovers / notifications
     DELIVERY_READ = "delivery:read"
     DELIVERY_WRITE = "delivery:write"
@@ -233,6 +234,7 @@ ROLE_DEFINITIONS = {
     }),
     UserRole.MARKETING_HEAD: dict(scope=ScopeLevel.GLOBAL, location_type=None, perms={
         P.CAMPAIGNS_READ, P.CAMPAIGNS_WRITE, P.REPORTS_READ, P.LEADS_READ,
+        P.TRACKER_WRITE,
     }),
     UserRole.AUDITOR: dict(scope=ScopeLevel.GLOBAL, location_type=None, perms={
         P.ORDERS_READ, P.INVENTORY_READ, P.PRODUCTS_READ, P.PRODUCTS_COST_READ,

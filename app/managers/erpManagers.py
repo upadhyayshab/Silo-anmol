@@ -1417,6 +1417,61 @@ class AppSettingManager(ERPGenericManager[AppSettingSchema]):
             await self.create(AppSettingSchema(key=key, value=value))
 
 
+class DailyTrackerInputSchema(BaseSchema):
+    """Hand-entered metrics for the Business Daily Tracker.
+
+    Only six metrics have no ERP source: meta_leads, leadgen.spends, d2c.spends,
+    d2c.sessions, d2c.engaged_users, d2c.add_to_cart. Everything else is computed.
+    """
+    __tablename__ = "daily_tracker_inputs"
+
+    tracker_date = db.Column(db.Date, nullable=False, index=True)
+    region = db.Column(db.String(16), nullable=False, index=True)
+    metric_key = db.Column(db.String(64), nullable=False)
+    value = db.Column(db.Numeric(14, 2), nullable=False)
+    updated_by = db.Column(db.String, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint("tracker_date", "region", "metric_key", name="uq_tracker_input"),
+    )
+
+
+class DailyTrackerInputManager(ERPGenericManager[DailyTrackerInputSchema]):
+    async def upsert(self, tracker_date, region: str, metric_key: str, value, updated_by: str = None) -> None:
+        async with self.session_factory() as session:
+            query = (
+                db.select(self.Schema)
+                .where(self.Schema.tracker_date == tracker_date)
+                .where(self.Schema.region == region)
+                .where(self.Schema.metric_key == metric_key)
+            )
+            existing = (await session.execute(query)).scalars().first()
+            if existing:
+                existing.value = value
+                existing.updated_by = updated_by
+            else:
+                session.add(self.Schema(
+                    tracker_date=tracker_date, region=region,
+                    metric_key=metric_key, value=value, updated_by=updated_by,
+                ))
+            await session.commit()
+
+    async def fetch_month(self, start_date, end_date, region: str) -> Dict[str, Dict[Any, Any]]:
+        """-> {metric_key: {date: Decimal}}"""
+        async with self.session_factory() as session:
+            query = (
+                db.select(self.Schema)
+                .where(self.Schema.region == region)
+                .where(self.Schema.tracker_date >= start_date)
+                .where(self.Schema.tracker_date <= end_date)
+            )
+            rows = (await session.execute(query)).scalars().all()
+        out: Dict[str, Dict[Any, Any]] = {}
+        for r in rows:
+            out.setdefault(r.metric_key, {})[r.tracker_date] = r.value
+        return out
+
+
 # ============================================================================
 # OUTLET DAILY COLLECTIONS
 # ============================================================================
@@ -1855,6 +1910,7 @@ __all__ = [
     "NotificationSchema", "NotificationManager",
     "SystemConfigurationSchema", "SystemConfigurationManager",
     "AppSettingSchema", "AppSettingManager",
+    "DailyTrackerInputSchema", "DailyTrackerInputManager",
 
     # Outlet Collections
     "OutletDailyCollectionSchema", "OutletDailyCollectionManager",
