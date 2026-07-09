@@ -58,7 +58,11 @@ def weekday_indices(days: List[date]) -> List[List[int]]:
     return [[i for i, d in enumerate(days) if d.weekday() == wd] for wd in range(7)]
 
 
-def _sum(values: List[Optional[float]], idx: List[int]) -> float:
+def _sum(values: List[Optional[float]], idx: List[int]) -> Optional[float]:
+    # An empty bucket is "no such column", not zero. February has no 29-EOM week,
+    # and a wall of 0s reads as real data. None renders as an em dash.
+    if not idx:
+        return None
     return sum(values[i] for i in idx if values[i] is not None)
 
 
