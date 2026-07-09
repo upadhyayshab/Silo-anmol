@@ -1,6 +1,5 @@
 import calendar
 from datetime import date, datetime, timezone, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -10,7 +9,7 @@ from models import TrackerInputUpsert
 from services.tracker_metrics import INPUT_KEYS, build_grid
 from services.tracker_queries import REGIONS, fetch_lead_facts, fetch_order_facts
 from utils.auth import require_permission, AuthContext
-from utils.permissions import Permission
+from utils.permissions import Permission, ScopeLevel
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -31,6 +30,25 @@ def _month_bounds(month: str):
     return start, end
 
 
+def _enforce_scope(ctx: AuthContext, region: str) -> None:
+    """`reports:read` is held by OUTLET_MANAGER, MARKETING_EXECUTIVE, CLUSTER_MANAGER and
+    STATE_HEAD. Without this fence any outlet manager could read all-India revenue and ad
+    spend. The tracker reports whole regions, so anything narrower than STATE is refused.
+    """
+    if ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value:
+        return
+    wanted = REGIONS[region]
+    if ctx.scope_level == ScopeLevel.STATE.value and wanted is not None:
+        allowed = {s.strip().lower() for s in (ctx.states or [])}
+        if set(wanted) <= allowed:
+            return
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "The Business Daily Tracker reports whole regions. Your account is scoped more "
+        "narrowly than the region you asked for.",
+    )
+
+
 @router.get("")
 async def get_tracker(
     month: str = Query(..., description="YYYY-MM"),
@@ -39,6 +57,7 @@ async def get_tracker(
 ):
     if region not in REGIONS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"region must be one of {sorted(REGIONS)}")
+    _enforce_scope(ctx, region)
     start, end = _month_bounds(month)
     states = REGIONS[region]
 
@@ -50,7 +69,11 @@ async def get_tracker(
         stored = await input_manager.fetch_month(start, end, region)
         n = (end - start).days + 1
         for metric_key in INPUT_KEYS:
-            series = [0.0] * n
+            # None, not 0.0: a day nobody has keyed in yet is unknown, not zero.
+            # Zero-filling makes CPL = spends/leads = 0/25000 render as a real "Rs 0"
+            # -- free leads -- instead of an em dash. region=ALL can never hold inputs
+            # (PUT rejects it), so this is permanent for that view.
+            series = [None] * n
             for d, v in stored.get(metric_key, {}).items():
                 series[(d - start).days] = float(v)
             base[metric_key] = series
@@ -73,6 +96,7 @@ async def put_tracker_input(
     payload: TrackerInputUpsert,
     ctx: AuthContext = Depends(require_permission(Permission.TRACKER_WRITE)),
 ):
+    _enforce_scope(ctx, payload.region if payload.region in REGIONS else "ALL")
     if payload.metric_key not in INPUT_KEYS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"{payload.metric_key} is computed, not an input. Writable: {sorted(INPUT_KEYS)}")

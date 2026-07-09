@@ -59,11 +59,16 @@ def weekday_indices(days: List[date]) -> List[List[int]]:
 
 
 def _sum(values: List[Optional[float]], idx: List[int]) -> Optional[float]:
-    # An empty bucket is "no such column", not zero. February has no 29-EOM week,
-    # and a wall of 0s reads as real data. None renders as an em dash.
+    # Two kinds of "nothing", both of which must render as an em dash rather than 0:
+    #   * an empty bucket -- February has no 29-EOM week
+    #   * a bucket whose every value is None -- a manual-input row nobody has keyed in yet
+    # A wall of 0s reads as real data. An explicit 0.0 entered by a human still sums to 0.
     if not idx:
         return None
-    return sum(values[i] for i in idx if values[i] is not None)
+    picked = [values[i] for i in idx if values[i] is not None]
+    if not picked:
+        return None
+    return sum(picked)
 
 
 def _mean(values: List[Optional[float]], idx: List[int]) -> Optional[float]:

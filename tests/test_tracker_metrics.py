@@ -210,3 +210,38 @@ def test_safe_div_never_raises():
     assert safe_div(1, 0) is None
     assert safe_div(None, 5) is None
     assert safe_div(10, 4) == 2.5
+
+
+def test_unentered_input_rows_are_dash_not_zero():
+    """A day nobody keyed in is unknown, not zero.
+
+    Zero-filled spends make CPL = 0/25000 render as a real "Rs 0" -- free leads.
+    """
+    base = _base()
+    base["leadgen.spends"] = [None] * 30          # nobody entered any spend
+    grid = build_grid(JUNE, base, TODAY)
+    spends = _row(grid, "leadgen", "spends")
+    assert spends["mtd"] is None
+    assert all(v is None for v in spends["daily"])
+    assert _row(grid, "leadgen", "cpl")["mtd"] is None      # not 0.0
+    assert _row(grid, "leadgen", "cpl")["weekly"][0] is None
+
+
+def test_an_explicitly_entered_zero_is_still_zero():
+    """Absence is None; a human typing 0 is 0. They must not collapse together."""
+    base = _base()
+    base["leadgen.spends"] = [0.0] * 30
+    grid = build_grid(JUNE, base, TODAY)
+    assert _row(grid, "leadgen", "spends")["mtd"] == 0.0
+    assert _row(grid, "leadgen", "cpl")["mtd"] == 0.0
+
+
+def test_partially_entered_input_sums_only_the_entered_days():
+    base = _base()
+    series = [None] * 30
+    series[0], series[1] = 100.0, 200.0
+    base["leadgen.spends"] = series
+    grid = build_grid(JUNE, base, TODAY)
+    assert _row(grid, "leadgen", "spends")["mtd"] == 300.0
+    assert _row(grid, "leadgen", "spends")["weekly"][0] == 300.0
+    assert _row(grid, "leadgen", "spends")["weekly"][1] is None   # days 8-14: nothing entered
