@@ -84,6 +84,13 @@ SETTING_AUTO_REVERT_ENABLED = "auto_revert_enabled"
 SETTING_AUTO_REVERT_FLUSH = "auto_revert_flush_existing"
 SETTING_AUTO_REVERT_BASELINE_AT = "auto_revert_baseline_at"  # ISO-8601 string
 
+# Telephony: outbound caller-ID (the Exotel usermapping VirtualNumber) per telecaller
+# state. Also app_settings rows -> no migration. A missing row falls back to
+# DEFAULT_EXOPHONE, so shipping with no config changes nothing.
+SETTING_DEFAULT_EXOPHONE = "default_exophone"   # str  — used when a state has no override
+SETTING_STATE_EXOPHONES = "state_exophones"     # dict — {state: exophone}
+DEFAULT_EXOPHONE = "+918068875144"              # the ExoPhone 83/109 agents already use
+
 
 class CollectionType(str, Enum):
     DOORSTEP = "doorstep"
