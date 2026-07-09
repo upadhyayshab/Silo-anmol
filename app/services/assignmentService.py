@@ -34,8 +34,10 @@ CALL_ACCESS_TTL = timedelta(hours=8)
 
 
 def _ttl_cutoff() -> datetime:
-    """Grants created before this naive-UTC instant are expired (columns store naive UTC)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None) - CALL_ACCESS_TTL
+    """Grants created before this instant are expired. Tz-AWARE UTC: `created_at` is a
+    timestamptz (SharedBackend base schema), so the driver hands back aware datetimes; an
+    aware bound also keeps the SQL comparison independent of the session's TimeZone."""
+    return datetime.now(timezone.utc) - CALL_ACCESS_TTL
 
 
 def _grant_live(created_at: datetime, now: datetime) -> bool:
@@ -189,10 +191,16 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _ist_day_start_utc() -> datetime:
-    """Naive-UTC instant of 00:00 IST today (leads.created_at is stored naive UTC)."""
+    """UTC instant of 00:00 IST today, tz-AWARE.
+
+    `leads.created_at` is a timestamptz (SharedBackend base schema), so the driver returns
+    aware datetimes. Returning a naive bound here blew up the moment a caller compared it in
+    Python rather than in SQL ("can't compare offset-naive and offset-aware datetimes" —
+    leadService.distribute_leads._counts), and left the SQL bound leaning on the session's
+    TimeZone to be interpreted. Aware is correct for both."""
     now_ist = datetime.now(IST)
     midnight_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
-    return midnight_ist.astimezone(timezone.utc).replace(tzinfo=None)
+    return midnight_ist.astimezone(timezone.utc)
 
 
 async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
