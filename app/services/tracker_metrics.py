@@ -121,7 +121,7 @@ _ORDER_ROWS = [
     ("units_pending_amount",   "inr", "Value of orders booked this day that are still pending."),
     ("orders_delivered",       "int", "Orders whose actual_delivery_date is this day — independent of when they were booked."),
     ("units_delivered",        "int", "Units delivered on this day."),
-    ("revenue_received",       "inr", "Value of orders delivered on this day."),
+    ("revenue_received",       "inr", "Invoiced value (gross - discount) of the orders delivered on this day. Accrual, not cash: a COD order counts here on delivery, before the money is reconciled."),
 ]
 
 _LEAD_ROWS = [

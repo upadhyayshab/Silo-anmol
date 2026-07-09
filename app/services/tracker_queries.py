@@ -19,7 +19,14 @@ REGIONS: Dict[str, Optional[List[str]]] = {
     "ALL": None,
 }
 
-# Paid / direct-response sources. Everything else falls through to Organic.
+# Paid / direct-response sources. Everything else falls through to Organic --
+# including 'Organic Search', 'Referral Sites', 'Direct Traffic', unattributed rows,
+# outlet-manager orders, and 'Telecaller' (auto-set when a telecaller creates a lead
+# with no source given, i.e. origin unknown -- the same bucket as unattributed).
+#
+# This ONE constant feeds BOTH the order and the lead classifier. Do not append a
+# source to one side only: a lead in Lead Gen whose order lands in Organic silently
+# inflates Lead Gen's conversion rate and moves revenue between sections.
 _LEADGEN_SOURCES = (
     "'fb lead ads','pay per click ads','social media','whatsapp inbound',"
     "'inbound phone call','outbound phone call','inbound email'"
@@ -31,9 +38,16 @@ WITH days AS (
     SELECT generate_series(CAST(:start AS DATE), CAST(:end AS DATE), '1 day'::interval)::date AS day
 ),
 sections AS (SELECT unnest(ARRAY['leadgen','d2c','organic']) AS section),
+-- ponytail: `o` has no date filter and is referenced twice, so PG materializes it and
+-- every query scans the whole table (~15k rows today, ~4ms). If customer_orders reaches
+-- six figures, push `created_at >= :start - interval '90 days'` into `o`, or split the
+-- booked-cohort and delivered scans into two independently-filtered CTEs.
 o AS (
     SELECT co.uid,
            (co.created_at AT TIME ZONE 'Asia/Kolkata')::date AS booked_day,
+           -- actual_delivery_date is a bare DATE (verified in information_schema), so it
+           -- needs no AT TIME ZONE. reports.py:1500/1633/1690 shift it to IST; that is a
+           -- bug in those reports, not a pattern to copy here.
            co.actual_delivery_date                            AS delivered_day,
            co.order_status,
            co.prepaid_amount,
@@ -108,9 +122,12 @@ l AS (
     SELECT ld.uid,
            (ld.created_at AT TIME ZONE 'Asia/Kolkata')::date AS day,
            ld.stage::text AS stage,
+           -- Both classifiers MUST share _LEADGEN_SOURCES verbatim. Adding a source to one
+           -- side only (e.g. 'telecaller') files a lead under Lead Gen while its order lands
+           -- in Organic: July had 178 such leads and 127 such orders, 6% of the month.
            CASE
                WHEN LOWER(ld.source::text) IN ({_D2C_LEAD_SOURCES}) THEN 'd2c'
-               WHEN LOWER(ld.source::text) IN ({_LEADGEN_SOURCES},'telecaller') THEN 'leadgen'
+               WHEN LOWER(ld.source::text) IN ({_LEADGEN_SOURCES}) THEN 'leadgen'
                ELSE 'organic'
            END AS section
     FROM leads ld
