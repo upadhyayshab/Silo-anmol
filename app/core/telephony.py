@@ -113,6 +113,14 @@ class TelephonyProvider(ABC):
         Default: unsupported."""
         return False
 
+    async def provision_user(self, email: str, name: str = "", agent_number: str = "",
+                             virtual_number: str = "") -> Optional[str]:
+        """Create the agent's vendor-side user + softphone mapping, returning their SIP id.
+        Idempotent — an already-provisioned agent's id comes back unchanged.
+        `virtual_number` is the outbound caller-ID to provision them with.
+        Default: unsupported."""
+        return None
+
     async def fetch_call_details(self, call_sid: str) -> Optional[dict]:
         """Pull a finished call's record by its id — `{status: CallStatus,
         duration_seconds, recording_url}` — for cases where no webhook fires (e.g. the

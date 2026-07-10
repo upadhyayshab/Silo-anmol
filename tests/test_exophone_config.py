@@ -74,6 +74,56 @@ def test_reverse_lookup_unknown_number_is_empty():
     assert X.states_for_exophone("", OVERRIDES) == []
 
 
+# --- the temporary IVR bridge: digit is an ALIAS for a number ----------------------
+
+IVR = {"1": "+918068875144", "2": TG_AP, "3": "+911723456789"}
+
+
+def test_digit_resolves_to_its_regions_exophone():
+    assert X.exophone_for_digit("2", IVR) == TG_AP
+    assert X.exophone_for_digit("3", IVR) == "+911723456789"
+
+
+def test_digit_then_reverse_lookup_yields_the_region():
+    # The whole point: the digit feeds the SAME reverse lookup the dialed number uses,
+    # so region membership lives only in state_exophones.
+    exo = X.exophone_for_digit("2", IVR)
+    assert set(X.states_for_exophone(exo, OVERRIDES)) == {"Telangana", "Andhra Pradesh"}
+
+
+def test_unknown_or_blank_digit_is_none():
+    # -> caller falls through to the dialed number, i.e. today's behaviour.
+    assert X.exophone_for_digit("9", IVR) is None
+    assert X.exophone_for_digit("", IVR) is None
+    assert X.exophone_for_digit(None, IVR) is None
+
+
+def test_no_ivr_config_is_none():
+    assert X.exophone_for_digit("1", {}) is None
+    assert X.exophone_for_digit("1", None) is None
+
+
+def test_digit_is_whitespace_tolerant_and_accepts_ints():
+    assert X.exophone_for_digit(" 2 ", IVR) == TG_AP
+    assert X.exophone_for_digit(2, IVR) == TG_AP
+
+
+def test_no_digit_short_circuits_before_touching_the_db():
+    # Post-IVR (no `digit` param) this must cost nothing. A bogus engine proves no DB read:
+    # if it ever hit AppSettingManager, this would raise instead of returning None.
+    import asyncio
+    for blank in ("", None, "   "):
+        assert asyncio.run(X.exophone_for_digit_db("NOT_AN_ENGINE", blank)) is None
+
+
+def test_digit_pointing_at_an_unconfigured_number_yields_no_states():
+    # Guard: a digit aliasing a number that isn't in state_exophones is a DEAD mapping —
+    # it must fall back to the global pool, not silently pick a wrong region.
+    dead = X.exophone_for_digit("1", IVR)          # +918068875144 is not in OVERRIDES
+    assert dead == "+918068875144"
+    assert X.states_for_exophone(dead, OVERRIDES) == []
+
+
 # --- the admin drift plan ----------------------------------------------------------
 
 def _agent(uid, email, state):

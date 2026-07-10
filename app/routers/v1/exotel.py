@@ -11,6 +11,7 @@ calls (no server-side click-to-call):
 Mounted under /api/v1, so the webhook URL to configure in Exotel is:
     https://<host>/api/v1/exotel/call
 """
+import json
 import logging
 from typing import Optional
 
@@ -24,7 +25,8 @@ from managers import UserManager, AppSettingManager
 from services import telephonyService, presenceService, exophoneService
 from utils.auth import get_current_user_id, require_permission, AuthContext
 from utils.constants import (
-    TELECALLER_ROLES, SETTING_DEFAULT_EXOPHONE, SETTING_STATE_EXOPHONES,
+    TELECALLER_ROLES, SETTING_DEFAULT_EXOPHONE, SETTING_IVR_DIGITS,
+    SETTING_STATE_EXOPHONES,
 )
 from utils.permissions import Permission
 
@@ -43,6 +45,7 @@ class HeartbeatRequest(BaseModel):
 class ExophoneConfigRequest(BaseModel):
     default_exophone: Optional[str] = None
     state_exophones: Optional[dict] = None
+    ivr_digits: Optional[dict] = None
 
 
 @router.get("/agent-modes")
@@ -103,9 +106,11 @@ async def list_exophones(
 async def get_exophone_config(
     _: AuthContext = Depends(require_permission(Permission.CONFIG_READ)),
 ):
-    """The state->ExoPhone map + the default every unmapped state falls back to."""
+    """The state->ExoPhone map, the default every unmapped state falls back to, and the
+    temporary IVR digit->ExoPhone aliases."""
     default_vn, overrides = await exophoneService.load(engine)
-    return {"default_exophone": default_vn, "state_exophones": overrides}
+    return {"default_exophone": default_vn, "state_exophones": overrides,
+            "ivr_digits": await exophoneService.load_ivr_digits(engine)}
 
 
 @router.put("/exophone-config")
@@ -119,8 +124,11 @@ async def put_exophone_config(
         await mgr.set(SETTING_DEFAULT_EXOPHONE, body.default_exophone)
     if body.state_exophones is not None:
         await mgr.set(SETTING_STATE_EXOPHONES, body.state_exophones)
+    if body.ivr_digits is not None:
+        await mgr.set(SETTING_IVR_DIGITS, body.ivr_digits)
     default_vn, overrides = await exophoneService.load(engine)
-    return {"default_exophone": default_vn, "state_exophones": overrides}
+    return {"default_exophone": default_vn, "state_exophones": overrides,
+            "ivr_digits": await exophoneService.load_ivr_digits(engine)}
 
 
 @router.post("/remap")
@@ -150,6 +158,38 @@ async def remap_caller_ids(
         (updated if ok else failed).append(p["email"])
     logger.info(f"[exotel] remap applied: {len(updated)} updated, {len(failed)} failed")
     return {"dry_run": False, "planned": plan, "updated": updated, "failed": failed}
+
+
+@router.post("/users/{uid}/provision")
+async def provision_agent(
+    uid: str,
+    _: AuthContext = Depends(require_permission(Permission.CONFIG_WRITE)),
+    provider: TelephonyProvider = Depends(get_telephony_provider),
+):
+    """Create the Exotel user + softphone mapping for one telecaller, so they can call.
+
+    Agency telecallers are never in Exotel's address book, so the lazy auto-map on
+    softphone open skips them forever (`sip: null` in /agent-modes). This is the only
+    path that creates. Identity comes from the ERP user record — no form, no typos —
+    and the caller-ID from their state's ExoPhone. Idempotent: re-provisioning an
+    already-mapped agent returns their existing SIP id and writes nothing.
+    """
+    agent = await UserManager(engine).fetch(uid)
+    if not agent:
+        raise HTTPException(status_code=404, detail="User not found")
+    email = (getattr(agent, "email", "") or "").strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Agent has no email — Exotel keys users by email")
+    virtual_number = await exophoneService.desired_vn_for(engine, getattr(agent, "state", None))
+    sip = await provider.provision_user(
+        email,
+        name=getattr(agent, "full_name", "") or "",
+        agent_number=getattr(agent, "phone", "") or "",
+        virtual_number=virtual_number,
+    )
+    if not sip:
+        raise HTTPException(status_code=502, detail="Exotel rejected the provisioning request")
+    return {"uid": uid, "email": email, "sip": sip, "mapped_vn": virtual_number}
 
 
 @router.get("/softphone-token")
@@ -205,17 +245,17 @@ async def inbound_route(request: Request,
     available telecaller, else no agent (Exotel's Queue applet then takes the call).
 
     Wire this as the **CCM Programmable Connect** applet's dynamic URL (Primary URL).
-    We answer with JSON (HTTP 200, <5s) dialing the chosen agent as a USER, so the
-    value can be their **SIP id** (rings the in-browser softphone) or PSTN phone:
-        {"fetch_after_attempt": false, "destination_type": "user",
-         "destination": [{"contact_uri": "sip:naveenh37746fa6",
-                          "device_contact_uri": "sip:naveenh37746fa6"}]}
+    We answer with JSON (HTTP 200, <5s). Per Exotel's docs, `destination` is an ARRAY of
+    {contact_uri} objects ONLY; contact_uri is the agent's **SIP id** (sip:... rings the
+    in-browser softphone) or a +91 E.164 PSTN number:
+        {"fetch_after_attempt": false,
+         "destination": [{"contact_uri": "sip:naveenh37746fa6"}]}
     An empty `destination` -> Exotel's "we didn't dial anyone" branch (native
-    queue/voicemail). NB the old PSTN-only `{"destination":{"numbers":[...]}}` shape
-    silently DROPPED `sip:` values (Exotel dialed nobody — DialWhomNumber empty); this
-    is the correct Programmable-Connect schema. Exotel's beta docs disagree on field
-    names, so we send both `contact_uri` + `device_contact_uri` (+ `destination_type`)
-    to satisfy either version.
+    queue/voicemail). Field-shape history (all confirmed live): the PSTN-only
+    `{"destination":{"numbers":[...]}}` shape silently dropped `sip:` values; adding
+    `destination_type:"user"` made Exotel key on a user UUID we don't send; and an extra
+    `device_contact_uri` key made Exotel drop the destination (Leg2Status null, no dial).
+    So we send exactly `[{"contact_uri": ...}]` and nothing else.
 
     ponytail: unsigned like the other Exotel webhooks — allow-list Exotel's source IPs
     at the LB before prod.
@@ -230,22 +270,35 @@ async def inbound_route(request: Request,
     caller = payload.get("CallFrom") or payload.get("From") or payload.get("caller") or ""
     # Which ExoPhone the customer dialed -> which state(s) that number serves.
     dialed = payload.get("CallTo") or payload.get("To") or payload.get("called") or ""
+    # IVR bridge: today every call lands on the one published number, so `dialed` carries no
+    # region. Each Gather branch instead hits `?digit=N`; N is an alias for that region's
+    # ExoPhone, which then feeds the same reverse lookup. The digit therefore WINS over
+    # `dialed`. Once the 3 numbers are live, drop the applet: no `digit` -> `dialed` decides,
+    # and this line stops doing anything. No code change.
+    # `digit` rides in the URL we configured, so read the QUERY STRING too — on a POST it is
+    # not in `payload` (which is the body), and the IVR would silently route to nobody.
+    digit = payload.get("digit") or request.query_params.get("digit") or ""
+    by_digit = await exophoneService.exophone_for_digit_db(engine, digit)
     route = await telephonyService.resolve_inbound_agent(
-        engine, caller, provider=provider, dialed_number=dialed)
-    logger.info(f"[exotel] inbound from {caller!r} to {dialed!r} -> {route.reason} "
+        engine, caller, provider=provider, dialed_number=(by_digit or dialed))
+    logger.info(f"[exotel] inbound from {caller!r} to {(by_digit or dialed)!r}"
+                f"{f' (ivr digit {digit})' if by_digit else ''}"
+                f" -> {route.reason} "
                 f"telecaller={route.telecaller_id} dial={route.dial_number} lead={route.lead_id}")
     if not route.dial_number:
-        return {"fetch_after_attempt": False, "destination": []}
-    # Current Beta schema: no `destination_type` (setting it to "user" makes Exotel
-    # key on a user UUID `id` we don't send -> it dials nobody). The sip:/+91 form of
-    # `contact_uri` tells Exotel the type. Send both uri field names across beta versions.
-    return {
+        resp = {"fetch_after_attempt": False, "destination": []}
+        logger.info(f"[exotel] inbound RESPONSE -> {json.dumps(resp)}")
+        return resp
+    # CCM Programmable Connect schema (per Exotel docs): `destination` is an array of
+    # {contact_uri} objects ONLY. contact_uri = the SIP id (sip:...) for a WebRTC agent, or
+    # +91 E.164 for PSTN. No `destination_type`, and NO `device_contact_uri` — the extra key
+    # made Exotel drop the destination entirely (Leg2Status null, agent leg never dialed).
+    resp = {
         "fetch_after_attempt": False,
-        "destination": [{
-            "contact_uri": route.dial_number,
-            "device_contact_uri": route.dial_number,
-        }],
+        "destination": [{"contact_uri": route.dial_number}],
     }
+    logger.info(f"[exotel] inbound RESPONSE -> {json.dumps(resp)}")
+    return resp
 
 
 @router.api_route("/call", methods=["GET", "POST"])

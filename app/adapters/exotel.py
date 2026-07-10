@@ -608,13 +608,23 @@ class ExotelAdapter(TelephonyProvider):
             logger.warning(f"[exotel] auto-map skipped: no ExoPhone for VirtualNumber ({exotel_email})")
             return
         self._provision_tried.add(exotel_email)
+        await self._post_usermapping(exotel_email, name, agent_number, vn)
+
+    async def _post_usermapping(self, exotel_email: str, name: str, agent_number: str,
+                                vn: str) -> Optional[str]:
+        """POST /usermapping -> the agent's new SipId (None on failure). Creates the Exotel
+        user when it doesn't exist, provisions their SIP device, and mints the mapping.
+        The body is an **array** (PUT, confusingly, takes a single object)."""
         token = await self._sdk_access_token()
+        if not token:
+            return None
+        display = name or exotel_email.split("@")[0]
         body = [{
             "AppUserId": exotel_email,
-            "AppUsername": name or exotel_email.split("@")[0],
+            "AppUsername": display,
             "Email": exotel_email,
             "ExotelAccountSid": self._sid,
-            "ExotelUserName": name or exotel_email.split("@")[0],
+            "ExotelUserName": display,
             "AgentNumber": agent_number or "",
             "VirtualNumber": vn,
         }]
@@ -627,11 +637,38 @@ class ExotelAdapter(TelephonyProvider):
             sip = (rec or {}).get("SipId")
             if sip:
                 self._sip_cache[exotel_email] = (sip, time.time())
-                logger.info(f"[exotel] auto-mapped {exotel_email} -> {sip}")
-            else:
-                logger.warning(f"[exotel] auto-map POST for {exotel_email}: HTTP {r.status_code} {r.text[:200]}")
+                self._dev_ts = 0.0   # the devices cache no longer knows about this agent
+                logger.info(f"[exotel] mapped {exotel_email} -> {sip} (caller-id {vn})")
+                return sip
+            logger.warning(f"[exotel] usermapping POST for {exotel_email}: HTTP {r.status_code} {r.text[:200]}")
         except Exception as ex:
-            logger.warning(f"[exotel] auto-map POST failed for {exotel_email}: {ex}")
+            logger.warning(f"[exotel] usermapping POST failed for {exotel_email}: {ex}")
+        return None
+
+    async def provision_user(self, email: str, name: str = "", agent_number: str = "",
+                             virtual_number: str = "") -> Optional[str]:
+        """CREATE the Exotel user + softphone mapping for an agent who has none, and return
+        their SipId. This is the one path allowed to create — `_ensure_mapping` only ever
+        links agents that already exist in the address book, so agency telecallers (who
+        never do) can't be onboarded lazily.
+
+        Idempotent: an already-mapped agent's existing SipId is returned without a write.
+        `virtual_number` is their state's ExoPhone; falls back to the flow-scoped first."""
+        if not email:
+            return None
+        exo = self._to_exotel_email(email)
+        existing = await self._usermapping_sip(exo)
+        if existing:
+            return existing
+        vn = await _choose_vn(self, virtual_number)
+        if not vn:
+            logger.warning(f"[exotel] provision skipped: no ExoPhone for VirtualNumber ({exo})")
+            return None
+        sip = await self._post_usermapping(exo, name, agent_number, vn)
+        if sip:
+            self._dir_ts = 0.0             # a brand-new Exotel user; refresh the address book
+            self._provision_tried.discard(exo)
+        return sip
 
     # App-LEVEL (per AppID, not per-user) integration settings we require. `record=true` so
     # Exotel records softphone calls — it was missing and had to be set by hand (Exotel ticket
@@ -903,4 +940,32 @@ if __name__ == "__main__":
     ]}
     assert _exophones_from_body(phones_body, "45195") == [{"number": "08068875264", "label": "CRM-1"}]
     assert len(_exophones_from_body(phones_body, "")) == 2
+
+    # provision_user: creates only when unmapped, is idempotent, and applies the email
+    # override + the state's caller-ID. Stubs the two network edges.
+    p = ExotelAdapter("sid", "key", "token", app_id="i", app_secret="s",
+                      email_overrides="agency.rm@x.com:rm@exotel.com")
+    posted = []
+
+    async def _fake_post(exo, name, num, vn):
+        posted.append((exo, name, num, vn))
+        return "sip:newagent01"
+
+    p._post_usermapping = _fake_post
+    p._sip_cache = {"mapped@x.com": ("sip:already", time.time())}
+
+    # already mapped -> returns the existing SIP, writes nothing.
+    assert asyncio.run(p.provision_user("mapped@x.com")) == "sip:already"
+    assert posted == []
+    # unmapped -> creates, with the override applied and the state's ExoPhone as caller-ID.
+    p._sip_cache["rm@exotel.com"] = (None, time.time())          # cached 404 = unmapped
+    sip = asyncio.run(p.provision_user("Agency.RM@x.com", name="RM One",
+                                       agent_number="9876543210", virtual_number="08068875264"))
+    assert sip == "sip:newagent01"
+    assert posted == [("rm@exotel.com", "RM One", "9876543210", "08068875264")]
+    # no caller-ID anywhere -> refuses rather than guessing.
+    p._sip_cache["fresh@x.com"] = (None, time.time())
+    p._exo, p._exo_ts = [], time.time()                          # no ExoPhones on the account
+    assert asyncio.run(p.provision_user("fresh@x.com")) is None
+    assert len(posted) == 1                                      # nothing posted
     print("exotel adapter OK")

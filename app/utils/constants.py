@@ -91,6 +91,13 @@ SETTING_DEFAULT_EXOPHONE = "default_exophone"   # str  — used when a state has
 SETTING_STATE_EXOPHONES = "state_exophones"     # dict — {state: exophone}
 DEFAULT_EXOPHONE = "+918068875144"              # the ExoPhone 83/109 agents already use
 
+# Temporary IVR bridge: one published number today, so the caller picks their language and
+# the chosen digit stands in for the region. {digit: exophone} — the digit is an ALIAS for
+# a number already in SETTING_STATE_EXOPHONES, so region membership has a single source of
+# truth. Delete the App Bazaar Gather applet once the 3 numbers are live and this key stops
+# being read (the dialed number supplies the region directly).
+SETTING_IVR_DIGITS = "ivr_digits"               # dict — {"1": "+9180...", "2": ...}
+
 
 class CollectionType(str, Enum):
     DOORSTEP = "doorstep"
