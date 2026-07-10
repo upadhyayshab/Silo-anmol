@@ -1192,10 +1192,18 @@ async def get_order(
 ):
     """Get specific order details"""
     try:
-        order = await order_manager.fetch(order_id, joins = [CustomerOrderSchema.items, CustomerOrderSchema.telecaller])
+        order = await order_manager.fetch(order_id, joins = [
+            CustomerOrderSchema.items, CustomerOrderSchema.telecaller,
+            CustomerOrderSchema.assigned_outlet, CustomerOrderSchema.delivery_person,
+        ])
 
         await _assert_order_in_scope(ctx, order)
-        return apply_field_mask("orders", ctx, order.model_dump())
+        data = order.model_dump()
+        # delivery_person is typed `dict` on OrderResponse, so pydantic won't filter it —
+        # slim it by hand or the whole user row (password hash included) ships to the client.
+        if data.get("delivery_person"):
+            data["delivery_person"] = {k: data["delivery_person"].get(k) for k in ("full_name", "phone")}
+        return apply_field_mask("orders", ctx, data)
     
     except Exception as e:
         if "not found" in str(e).lower():
