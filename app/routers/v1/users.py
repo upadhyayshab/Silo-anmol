@@ -59,7 +59,13 @@ async def sync_lsq_telecallers(
     1. Fetches telecallers from LSQ.
     2. Creates new users in ERP if not present (password is email).
     3. Maps LSQ ID to ERP User ID; updates lsq_id and profile if already mapped.
-    4. Deactivates ERP users who are no longer in LSQ payload.
+
+    NEVER deactivates. It used to (agents missing from the LSQ payload, or inactive
+    in LSQ, were flipped is_active=False and their leads released) — but with LSQ
+    being decommissioned its user list is stale, so each run mass-deactivated the
+    live call floor mid-shift (2026-07-10: 37 agents; scripts/reactivate_heartbeat_users.py
+    is the repair tool). ERP is now the authority on who is active; LSQ can only
+    add/update, never disable.
     """
     try:
         # 1. Fetch telecallers from LSQ (Network call)
@@ -78,8 +84,6 @@ async def sync_lsq_telecallers(
         # Build lookup maps for O(1) access
         email_to_mapping = {m.lsq_email.lower(): m for m in mappings_res.items if m.lsq_email}
         email_to_user = {u.email.lower(): u for u in users_res.items if u.email}
-        
-        lsq_emails_lower = {u.get("EmailAddress").lower() for u in lsq_users if u.get("EmailAddress")}
 
         created = 0
         updated = 0
@@ -131,9 +135,8 @@ async def sync_lsq_telecallers(
 
             if mapping:
                 uids_processed.add(mapping.telecaller_id)
-                # Update existing user and mapping if needed
+                # Update profile only — is_active is ERP-owned, LSQ must not flip it.
                 update_data = {
-                    "is_active": is_active,
                     "role": UserRole.TELECALLER,
                     "full_name": full_name,
                     "phone": phone,
@@ -145,9 +148,8 @@ async def sync_lsq_telecallers(
                 updated += 1
             elif erp_user:
                 uids_processed.add(erp_user.uid)
-                # User exists but no mapping — update and create mapping
+                # User exists but no mapping — update profile (not is_active) and map.
                 update_data = {
-                    "is_active": is_active,
                     "role": UserRole.TELECALLER,
                     "full_name": full_name,
                     "phone": phone,
@@ -174,30 +176,7 @@ async def sync_lsq_telecallers(
                 elif isinstance(res, str) and res.startswith("error:"):
                     errors.append({"email": "Batch Create", "error": res[7:]})
 
-        # 4. Bulk Deactivate users who are no longer in the LSQ payload
-        # IMPORTANT: Use uids_processed to avoid deactivating users who were matched via mapping 
-        # but had a different email in the users table.
-        uids_to_deactivate = [
-            u.uid for email, u in email_to_user.items() 
-            if u.uid not in uids_processed and u.is_active
-        ]
-        
-        deactivated = 0
-        if uids_to_deactivate:
-            try:
-                await user_manager.update_all(
-                    filters={"uid": uids_to_deactivate},
-                    updates={"is_active": False},
-                    limit=len(uids_to_deactivate)
-                )
-                # Free their leads so the sweep redistributes them (else stranded on a dead owner).
-                from services.leadService import release_leads_of_users
-                await release_leads_of_users(engine, uids_to_deactivate)
-                deactivated = len(uids_to_deactivate)
-            except Exception as e:
-                errors.append({"email": "Bulk Deactivate", "error": str(e)})
-
-        summary = f"Sync complete: {created} created, {updated} updated, {deactivated} deactivated."
+        summary = f"Sync complete: {created} created, {updated} updated. (Sync never deactivates.)"
         if errors:
             summary += f" {len(errors)} batch error(s)."
 
