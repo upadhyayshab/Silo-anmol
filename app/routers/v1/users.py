@@ -1,15 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
-import asyncio
 
 import sqlalchemy as sa
 from pydantic import BaseModel
 
 from config import get_settings, get_engine
-from managers import (UserManager, LSQTelecallerMappingManager, UserSchema,
-                      LSQTelecallerMappingSchema, UserScopeAssignmentManager,
+from managers import (UserManager, UserSchema, UserScopeAssignmentManager,
                       UserScopeAssignmentSchema)
-from services import CRMService
 from services.leadService import canon_state
 from models import (
     UserCreateRequest, UserUpdateRequest, UserPasswordChangeRequest,
@@ -25,9 +22,7 @@ from utils.constants import UserRole
 settings = get_settings()
 engine = get_engine(settings.name)
 user_manager = UserManager(engine)
-lsq_mapping_manager = LSQTelecallerMappingManager(engine)
 scope_assignment_manager = UserScopeAssignmentManager(engine)
-crm_service = CRMService()
 
 # Multi-valued row-scope levels a user can be granted. GLOBAL roles need no row;
 # OUTLET scope comes from the user's own `outlet_id` field (not an assignment row).
@@ -48,147 +43,10 @@ class ScopeAssignmentResponse(BaseModel):
 router = APIRouter(prefix="/users", tags=["User Management"])
 
 
-# SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
-
-@router.post("/sync/telecallers", response_model=StatusResponse)
-async def sync_lsq_telecallers(
-    _: AuthContext = Depends(require_permission(Permission.USERS_MANAGE))
-):
-    """
-    Sync telecallers from LeadSquared to ERP.
-    1. Fetches telecallers from LSQ.
-    2. Creates new users in ERP if not present (password is email).
-    3. Maps LSQ ID to ERP User ID; updates lsq_id and profile if already mapped.
-
-    NEVER deactivates. It used to (agents missing from the LSQ payload, or inactive
-    in LSQ, were flipped is_active=False and their leads released) — but with LSQ
-    being decommissioned its user list is stale, so each run mass-deactivated the
-    live call floor mid-shift (2026-07-10: 37 agents; scripts/reactivate_heartbeat_users.py
-    is the repair tool). ERP is now the authority on who is active; LSQ can only
-    add/update, never disable.
-    """
-    try:
-        # 1. Fetch telecallers from LSQ (Network call)
-        lsq_users = await crm_service.get_lsq_telecallers()
-        if not isinstance(lsq_users, list):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to fetch telecallers from LSQ"
-            )
-
-        # 2. Fetch all local data upfront (Bulk DB calls)
-        # Fetching all mappings and all current telecallers to avoid lookups in the loop
-        mappings_res = await lsq_mapping_manager.fetch_all(limit=0)
-        users_res = await user_manager.fetch_all(filters={"role": UserRole.TELECALLER}, limit=0)
-        
-        # Build lookup maps for O(1) access
-        email_to_mapping = {m.lsq_email.lower(): m for m in mappings_res.items if m.lsq_email}
-        email_to_user = {u.email.lower(): u for u in users_res.items if u.email}
-
-        created = 0
-        updated = 0
-        errors = []
-        tasks = []
-
-        # Helper to handle creation logic in parallel
-        async def create_new_lsq_user(user_email, user_full_name, user_phone, user_lsq_id, is_active):
-            try:
-                new_user = UserSchema(
-                    email=user_email,
-                    full_name=user_full_name,
-                    role=UserRole.TELECALLER,
-                    phone=user_phone,
-                    password_hash=get_password_hash(user_email),
-                    is_active=is_active
-                )
-                created_user = await user_manager.create(new_user)
-                new_mapping = LSQTelecallerMappingSchema(
-                    lsq_id=user_lsq_id,
-                    telecaller_id=created_user.uid,
-                    lsq_email=user_email
-                )
-                await lsq_mapping_manager.create(new_mapping)
-                return "created"
-            except Exception as e:
-                return f"error: {str(e)}"
-
-        # 3. Identify and Queue Operations
-        uids_processed = set()
-        for user_data in lsq_users:
-            email = user_data.get("EmailAddress")
-            if not email:
-                continue
-            
-            email_lower = email.lower()
-            lsq_id = user_data.get("ID")
-            first_name = user_data.get("FirstName", "")
-            last_name = user_data.get("LastName", "")
-            full_name = f"{first_name} {last_name}".strip() or "LSQ User"
-            phone = user_data.get("Phone")
-            
-            # LeadSquared StatusCode: 0 is active, 1 is inactive
-            lsq_active_status = user_data.get("StatusCode")
-            is_active = (str(lsq_active_status) == "0")
-
-            mapping = email_to_mapping.get(email_lower)
-            erp_user = email_to_user.get(email_lower)
-
-            if mapping:
-                uids_processed.add(mapping.telecaller_id)
-                # Update profile only — is_active is ERP-owned, LSQ must not flip it.
-                update_data = {
-                    "role": UserRole.TELECALLER,
-                    "full_name": full_name,
-                    "phone": phone,
-                    "email": email # Sync email in case it changed in LSQ
-                }
-                tasks.append(user_manager.update(mapping.telecaller_id, update_data))
-                if mapping.lsq_id != lsq_id:
-                    tasks.append(lsq_mapping_manager.update(mapping.uid, {"lsq_id": lsq_id}))
-                updated += 1
-            elif erp_user:
-                uids_processed.add(erp_user.uid)
-                # User exists but no mapping — update profile (not is_active) and map.
-                update_data = {
-                    "role": UserRole.TELECALLER,
-                    "full_name": full_name,
-                    "phone": phone,
-                }
-                tasks.append(user_manager.update(erp_user.uid, update_data))
-                new_mapping = LSQTelecallerMappingSchema(
-                    lsq_id=lsq_id,
-                    telecaller_id=erp_user.uid,
-                    lsq_email=email
-                )
-                tasks.append(lsq_mapping_manager.create(new_mapping))
-                updated += 1
-            else:
-                # New user creation
-                tasks.append(create_new_lsq_user(email, full_name, phone, lsq_id, is_active))
-                created += 1
-
-        # Execute all creates/updates in parallel
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in results:
-                if isinstance(res, Exception):
-                    errors.append({"email": "Batch Update", "error": str(res)})
-                elif isinstance(res, str) and res.startswith("error:"):
-                    errors.append({"email": "Batch Create", "error": res[7:]})
-
-        summary = f"Sync complete: {created} created, {updated} updated. (Sync never deactivates.)"
-        if errors:
-            summary += f" {len(errors)} batch error(s)."
-
-        return StatusResponse(status="success", message=summary)
-
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {str(e)}"
-        )
-
+# LSQ telecaller sync REMOVED (2026-07-10): its bulk-deactivate step twice took down
+# the prod call floor once LSQ's user list went stale (LSQ is being decommissioned).
+# Agents are created/managed in the ERP directly; scripts/reactivate_heartbeat_users.py
+# repairs any past damage.
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
