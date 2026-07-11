@@ -37,6 +37,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Best-effort downgrade: re-adding the FK fails if any order was hard-deleted (orphaned order_id rows) — only clean before the feature is used.
     op.execute(
         "ALTER TABLE delivery_tracking "
         f"ADD CONSTRAINT {_FK} FOREIGN KEY (order_id) REFERENCES customer_orders (uid)"
