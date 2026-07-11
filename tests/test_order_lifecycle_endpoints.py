@@ -132,8 +132,56 @@ async def _acoro(v):  # helper: wrap a value in an awaitable
     return v
 
 
+def test_returns_lists_rider_custody_orders():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    now = datetime.now(timezone.utc)
+    order = _order(order_status="attempted")
+    fom = FakeOrderManager(order)
+    ev = [SimpleNamespace(event_type="ASSIGNED", status_changed_to=None, created_at=now, payload=None),
+          SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
+                          created_at=now, payload=None, changed_by="d1", remarks=None, source="rider_app")]
+    ftrack = FakeTracking(rows=ev)
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom
+    SVC.tracking_manager = ftrack
+    L.user_manager = SimpleNamespace(fetch_all=lambda **kw: _acoro(SimpleNamespace(items=[], count=0)))
+    try:
+        ctx = AuthContext(user_id="mgr", role="OUTLET_MANAGER", scope_level="GLOBAL")
+        resp = asyncio.run(L.get_rider_returns(outlet_id="out1", delivery_person_id=None, ctx=ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    riders = resp["riders"]
+    assert riders and riders[0]["orders"][0]["order_number"] == "ORD-1"
+    print("OK: test_returns_lists_rider_custody_orders")
+
+
+def test_return_confirm_sets_pending_and_logs_event():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    order = _order(order_status="attempted", delivery_person_id="d1")
+    fom = FakeOrderManager(order)
+    ftrack = FakeTracking()
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom
+    SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="mgr", role="OUTLET_MANAGER", scope_level="GLOBAL")
+        resp = asyncio.run(L.confirm_order_return("o1", ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    assert order.order_status == "pending"
+    assert order.delivery_person_id is None
+    assert any(r.event_type == "RETURNED_TO_OUTLET" for r in ftrack.rows)
+    print("OK: test_return_confirm_sets_pending_and_logs_event")
+
+
 if __name__ == "__main__":
     test_third_disposition_writes_escalation_event()
     test_delete_writes_snapshot_event_before_delete()
     test_timeline_returns_events_and_state()
+    test_returns_lists_rider_custody_orders()
+    test_return_confirm_sets_pending_and_logs_event()
     print("All tests passed.")

@@ -1,6 +1,7 @@
 """Order lifecycle endpoints: timeline, rider returns, CRM escalation queue.
 Kept separate from the (very large) orders.py."""
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -10,6 +11,7 @@ from managers import CustomerOrderManager, UserManager
 from services import order_events_service
 from services.order_events_service import fold_order_state
 from utils.auth import AuthContext, require_permission
+from utils.constants import OrderStatus, OrderEventType, Custody, TERMINAL_ORDER_STATUSES
 from utils.permissions import Permission
 
 settings = get_settings()
@@ -52,3 +54,62 @@ async def get_order_timeline(
             "created_at": e.created_at,
         } for e in events],
     }
+
+
+@router.get("/returns")
+async def get_rider_returns(
+    outlet_id: Optional[str] = None,
+    delivery_person_id: Optional[str] = None,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
+):
+    """Orders physically still with a rider (custody=RIDER), grouped by rider.
+    // ponytail: scans non-terminal orders and folds each — same pattern as the old
+    revert job. Materialize a projection only if this scan ever gets slow."""
+    filters = {"order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
+    if outlet_id:
+        filters["assigned_outlet_id"] = outlet_id
+    if delivery_person_id:
+        filters["delivery_person_id"] = delivery_person_id
+    orders = (await order_manager.fetch_all(filters=filters, limit=100000)).items
+
+    now = datetime.now(timezone.utc)
+    groups = {}
+    for o in orders:
+        events = await order_events_service.load_events(o.uid)
+        state = fold_order_state(events)
+        if state.custody != Custody.RIDER:
+            continue
+        last_disp = max((e.created_at for e in events
+                         if e.event_type == OrderEventType.RIDER_DISPOSITION), default=None)
+        hours = round((now - last_disp).total_seconds() / 3600, 1) if last_disp else None
+        g = groups.setdefault(o.delivery_person_id, {
+            "delivery_person_id": o.delivery_person_id, "orders": []})
+        g["orders"].append({
+            "uid": o.uid, "order_number": o.order_number,
+            "customer_name": getattr(o, "customer_name", None), "attempt_count": state.attempt_count,
+            "with_rider_hours": hours,
+        })
+    names = await _actor_names(list(groups.keys()))
+    for pid, g in groups.items():
+        g["delivery_person_name"] = names.get(pid)
+    return {"riders": list(groups.values())}
+
+
+@router.post("/{order_id}/return")
+async def confirm_order_return(
+    order_id: str,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
+):
+    """Outlet manager confirms undelivered goods are physically back at the outlet."""
+    order = await order_manager.fetch(order_id)
+    if order.order_status in TERMINAL_ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Order is already delivered or cancelled.")
+    await order_manager.update(order_id, {
+        "order_status": OrderStatus.PENDING, "delivery_person_id": None})
+    order.order_status = OrderStatus.PENDING
+    order.delivery_person_id = None
+    await order_events_service.record_event(
+        order, OrderEventType.RETURNED_TO_OUTLET,
+        actor_id=ctx.user_id, source="erp", status=OrderStatus.PENDING,
+        remarks="Undelivered goods received back at outlet.")
+    return {"status": "ok"}
