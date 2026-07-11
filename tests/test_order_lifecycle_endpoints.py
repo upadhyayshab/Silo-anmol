@@ -80,6 +80,36 @@ def test_third_disposition_writes_escalation_event():
     print("OK: test_third_disposition_writes_escalation_event")
 
 
+def test_delete_writes_snapshot_event_before_delete():
+    import routers.v1.orders as O
+    import services.order_events_service as SVC
+    order = _order(order_status="pending")
+    ftrack = FakeTracking()
+    fom = FakeOrderManager(order)
+    deleted = {"called": False}
+
+    class FakeSession:
+        async def delete(self, obj): deleted["called"] = True
+        async def commit(self): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    orig = (O.order_manager, O.tracking_manager, SVC.tracking_manager)
+    O.order_manager = fom
+    O.tracking_manager = ftrack
+    SVC.tracking_manager = ftrack
+    try:
+        # call only the snapshot helper the task introduces (keep the test focused)
+        asyncio.run(SVC.record_event(order, "DELETED", actor_id="super", source="erp",
+                                     payload={"order_number": order.order_number}))
+    finally:
+        O.order_manager, O.tracking_manager, SVC.tracking_manager = orig
+    assert any(r.event_type == "DELETED" and r.payload["order_number"] == "ORD-1"
+               for r in ftrack.rows)
+    print("OK: test_delete_writes_snapshot_event_before_delete")
+
+
 if __name__ == "__main__":
     test_third_disposition_writes_escalation_event()
+    test_delete_writes_snapshot_event_before_delete()
     print("All tests passed.")

@@ -20,10 +20,10 @@ from models import (
 )
 from utils.auth import require_permission, apply_scope, apply_field_mask, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, payment_status_for
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, payment_status_for, OrderEventType
 from utils.crm_constants import ActivityType
 from utils.warehouse_utils import get_default_warehouse_id
-from services import CRMService, storeService, deliveryService
+from services import CRMService, storeService, deliveryService, order_events_service
 from services.deliveryService import ScheduledDeliveryRequest, ScheduledAssignment, ScheduledOrder
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
@@ -343,6 +343,11 @@ async def create_order(
                 )
                 await transaction_manager.create(txn, session=session)
             await session.commit()
+
+        await order_events_service.record_event(
+            created_order, OrderEventType.CREATED,
+            actor_id=ctx.user_id, source="erp", status=created_order.order_status,
+        )
 
         # DEBUG: Log the created order from database
         print(f"🔍 DEBUG: After database insert:")
@@ -2078,6 +2083,7 @@ async def _apply_status_change(
                 delivery_person_id=(None if new_status == OrderStatus.PENDING
                                     else order.delivery_person_id),
                 status_changed_to=new_status,
+                event_type=OrderEventType.STATUS_CHANGE,
                 postpone_date=postpone_date,
                 priority_level=order.priority_level or 0,
                 remarks=build_cumulative_remarks(existing_tracking.items, new_status, base_remark),
@@ -2584,7 +2590,25 @@ async def delete_order(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Order not found during deletion"
                     )
-                
+
+                # Snapshot the order into the event log BEFORE the hard delete — the
+                # event row has no FK to the order (Task 2), so it survives. Written
+                # via its own session (record_event's default) so it commits and is
+                # durable independently of, and before, the delete below.
+                snapshot = {
+                    "order_number": order_to_delete.order_number,
+                    "customer_name": order_to_delete.customer_name,
+                    "customer_phone": order_to_delete.customer_phone,
+                    "final_status": str(order_to_delete.order_status),
+                    "total_amount": float(order_to_delete.total_amount or 0),
+                    "assigned_outlet_id": order_to_delete.assigned_outlet_id,
+                    "deleted_reason": reason,
+                }
+                await order_events_service.record_event(
+                    order_to_delete, OrderEventType.DELETED,
+                    actor_id=ctx.user_id, source="erp", payload=snapshot,
+                )
+
                 # Delete the order
                 await session.delete(order_to_delete)
                 await session.commit()
