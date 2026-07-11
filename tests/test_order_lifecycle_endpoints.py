@@ -86,13 +86,6 @@ def test_delete_writes_snapshot_event_before_delete():
     order = _order(order_status="pending")
     ftrack = FakeTracking()
     fom = FakeOrderManager(order)
-    deleted = {"called": False}
-
-    class FakeSession:
-        async def delete(self, obj): deleted["called"] = True
-        async def commit(self): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
 
     orig = (O.order_manager, O.tracking_manager, SVC.tracking_manager)
     O.order_manager = fom

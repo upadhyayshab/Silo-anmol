@@ -2593,8 +2593,9 @@ async def delete_order(
 
                 # Snapshot the order into the event log BEFORE the hard delete — the
                 # event row has no FK to the order (Task 2), so it survives. Written
-                # via its own session (record_event's default) so it commits and is
-                # durable independently of, and before, the delete below.
+                # into the SAME session as the delete below so both commit atomically:
+                # if the delete fails, the snapshot rolls back too (no orphaned DELETED
+                # event for an order that still exists).
                 snapshot = {
                     "order_number": order_to_delete.order_number,
                     "customer_name": order_to_delete.customer_name,
@@ -2607,6 +2608,7 @@ async def delete_order(
                 await order_events_service.record_event(
                     order_to_delete, OrderEventType.DELETED,
                     actor_id=ctx.user_id, source="erp", payload=snapshot,
+                    session=session,
                 )
 
                 # Delete the order
