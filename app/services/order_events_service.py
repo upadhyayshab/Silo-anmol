@@ -42,7 +42,7 @@ def fold_order_state(events: List[Any]) -> OrderState:
             if outcome in NON_DELIVERED_RIDER_OUTCOMES:
                 s.attempt_count += 1
                 s.custody = Custody.RIDER
-            elif outcome in ("delivered",):
+            elif outcome == "delivered":
                 s.custody = Custody.CUSTOMER
         elif et == OrderEventType.RETURNED_TO_OUTLET:
             s.custody = Custody.OUTLET
@@ -76,7 +76,8 @@ async def load_events(order_id: str) -> List[Any]:
 
 async def record_event(order, event_type, *, actor_id, source, status=None,
                        remarks=None, postpone_date=None, payload=None, session=None):
-    """Append one event row. outlet_id/telecaller_id come from the order (nullable-safe)."""
+    """Append one event row. outlet_id may be None for orders not yet assigned to an
+    outlet (the column is nullable); telecaller_id is always set on a real order."""
     row = DeliveryTrackingSchema(
         order_id=order.uid,
         outlet_id=order.assigned_outlet_id,

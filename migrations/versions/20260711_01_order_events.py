@@ -25,6 +25,7 @@ _FK = "delivery_tracking_order_id_fkey"
 def upgrade() -> None:
     op.add_column("delivery_tracking", sa.Column("event_type", sa.String(32), nullable=True))
     op.add_column("delivery_tracking", sa.Column("payload", sa.JSON(), nullable=True))
+    op.alter_column("delivery_tracking", "outlet_id", existing_type=sa.String(), nullable=True)
     op.create_index("ix_delivery_tracking_event_type", "delivery_tracking", ["event_type"])
 
     # Backfill: every historical row is a status change (timeline display only; never
@@ -45,3 +46,6 @@ def downgrade() -> None:
     op.drop_index("ix_delivery_tracking_event_type", table_name="delivery_tracking")
     op.drop_column("delivery_tracking", "payload")
     op.drop_column("delivery_tracking", "event_type")
+
+    # Note: reverting outlet_id to NOT NULL fails if any null-outlet event rows exist.
+    op.alter_column("delivery_tracking", "outlet_id", existing_type=sa.String(), nullable=False)

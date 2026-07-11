@@ -1261,7 +1261,7 @@ class DeliveryTrackingSchema(BaseSchema):
     __tablename__ = "delivery_tracking"
 
     order_id = db.Column(db.String, nullable=False, index=True)  # FK intentionally dropped (20260711_01_order_events): the lifecycle log outlives the order, so no FK to customer_orders
-    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=False)
+    outlet_id = db.Column(db.String, db.ForeignKey("outlets.uid"), nullable=True)  # nullable: event-log rows exist for orders with no assigned outlet yet (CREATED/DELETED)
     telecaller_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
     delivery_person_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     status_changed_to = db.Column(db.String(50), nullable=False)
