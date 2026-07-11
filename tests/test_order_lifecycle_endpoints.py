@@ -102,7 +102,38 @@ def test_delete_writes_snapshot_event_before_delete():
     print("OK: test_delete_writes_snapshot_event_before_delete")
 
 
+def test_timeline_returns_events_and_state():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    now = datetime.now(timezone.utc)
+    rows = [
+        SimpleNamespace(event_type="CREATED", status_changed_to="pending", source="erp",
+                        changed_by="t1", remarks=None, created_at=now, payload=None),
+        SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted", source="rider_app",
+                        changed_by="d1", remarks="no answer", created_at=now, payload=None),
+    ]
+    ftrack = FakeTracking(rows=rows)
+    orig = SVC.tracking_manager
+    SVC.tracking_manager = ftrack
+    L.user_manager = SimpleNamespace(  # name lookup returns {} → actor_name None is fine
+        fetch_all=lambda **kw: _acoro(SimpleNamespace(items=[], count=0)))
+    try:
+        ctx = AuthContext(user_id="super", role="SUPER_ADMIN", scope_level="GLOBAL")
+        resp = asyncio.run(L.get_order_timeline("o1", ctx))
+    finally:
+        SVC.tracking_manager = orig
+    assert resp["state"]["attempt_count"] == 1
+    assert [e["event_type"] for e in resp["events"]] == ["CREATED", "RIDER_DISPOSITION"]
+    print("OK: test_timeline_returns_events_and_state")
+
+
+async def _acoro(v):  # helper: wrap a value in an awaitable
+    return v
+
+
 if __name__ == "__main__":
     test_third_disposition_writes_escalation_event()
     test_delete_writes_snapshot_event_before_delete()
+    test_timeline_returns_events_and_state()
     print("All tests passed.")

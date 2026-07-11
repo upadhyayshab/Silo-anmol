@@ -29,6 +29,8 @@ from .smartping import router as smartping_router
 from .leads import router as leads_router
 from .state_lanes import router as state_lanes_router
 from .lead_segments import router as lead_segments_router
+from .attendance import router as attendance_router
+from .order_lifecycle import router as order_lifecycle_router
 from .business_tracker import router as business_tracker_router
 from .facebook import (
     router as facebook_router, pages_router as facebook_pages_router,
@@ -74,6 +76,8 @@ router.include_router(smartping_router)
 router.include_router(leads_router)
 router.include_router(state_lanes_router)
 router.include_router(lead_segments_router)
+router.include_router(attendance_router)
+router.include_router(order_lifecycle_router)
 router.include_router(business_tracker_router)
 router.include_router(facebook_router)
 router.include_router(facebook_pages_router)
