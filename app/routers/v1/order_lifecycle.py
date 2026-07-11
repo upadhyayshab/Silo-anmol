@@ -8,10 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from config import get_settings, get_engine
 from managers import CustomerOrderManager, UserManager
+from models import CrmOutcomeRequest
 from services import order_events_service
 from services.order_events_service import fold_order_state
+from services.order_aging_service import AGE_LIMIT
 from utils.auth import AuthContext, require_permission
-from utils.constants import OrderStatus, OrderEventType, Custody, TERMINAL_ORDER_STATUSES
+from utils.constants import (
+    OrderStatus, OrderEventType, Custody, TERMINAL_ORDER_STATUSES,
+    CancellationReason, EscalationState,
+)
 from utils.permissions import Permission
 
 settings = get_settings()
@@ -113,3 +118,68 @@ async def confirm_order_return(
         actor_id=ctx.user_id, source="erp", status=OrderStatus.PENDING,
         remarks="Undelivered goods received back at outlet.")
     return {"status": "ok"}
+
+
+@router.get("/crm-queue")
+async def get_crm_queue(
+    outlet_id: Optional[str] = None,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
+):
+    """Orders escalated to CRM and awaiting a confirm/decline/unreachable outcome."""
+    filters = {"order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
+    if outlet_id:
+        filters["assigned_outlet_id"] = outlet_id
+    orders = (await order_manager.fetch_all(filters=filters, limit=100000)).items
+    now = datetime.now(timezone.utc)
+    out = []
+    for o in orders:
+        state = fold_order_state(await order_events_service.load_events(o.uid))
+        if state.escalation_state != EscalationState.CRM_REVIEW:
+            continue
+        days_left = None
+        if state.escalated_at:
+            days_left = max(0, (AGE_LIMIT - (now - state.escalated_at)).days)
+        out.append({
+            "uid": o.uid, "order_number": o.order_number, "customer_name": getattr(o, "customer_name", None),
+            "customer_phone": getattr(o, "customer_phone", None), "attempt_count": state.attempt_count,
+            "escalation_count": state.escalation_count,
+            "escalated_at": state.escalated_at, "days_left": days_left,
+        })
+    return {"orders": out}
+
+
+@router.post("/{order_id}/crm-outcome")
+async def submit_crm_outcome(
+    order_id: str,
+    payload: CrmOutcomeRequest,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
+):
+    """CRM disposition for an order sitting in escalation_state=CRM_REVIEW."""
+    order = await order_manager.fetch(order_id)
+    outcome = payload.outcome
+    if outcome == "confirm":
+        await order_manager.update(order_id, {
+            "order_status": OrderStatus.PENDING, "delivery_person_id": None})
+        order.order_status = OrderStatus.PENDING
+        order.delivery_person_id = None
+        await order_events_service.record_event(
+            order, OrderEventType.ESCALATED_LOGISTICS, actor_id=ctx.user_id, source="erp",
+            status=OrderStatus.PENDING,
+            remarks=payload.remark or "Customer confirmed — back to logistics.")
+    elif outcome == "decline":
+        await order_manager.update(order_id, {"order_status": OrderStatus.CANCELLED,
+                                              "status_remarks": payload.remark})
+        order.order_status = OrderStatus.CANCELLED
+        await order_events_service.record_event(
+            order, OrderEventType.CANCELLED, actor_id=ctx.user_id, source="erp",
+            status=OrderStatus.CANCELLED, remarks=payload.remark,
+            payload={"cancellation_reason": CancellationReason.CUSTOMER_DECLINED,
+                     "cancelled_by_role": ctx.role})
+    elif outcome == "unreachable":
+        await order_events_service.record_event(
+            order, OrderEventType.CRM_OUTCOME, actor_id=ctx.user_id, source="erp",
+            status=order.order_status, remarks=payload.remark or "Customer unreachable.",
+            payload={"crm_outcome": "unreachable"})
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown outcome: {outcome}")
+    return {"status": "ok", "outcome": outcome}

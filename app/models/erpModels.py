@@ -468,6 +468,11 @@ class OrderStatusUpdateRequest(BaseModel):
     postpone_date: Optional[date] = None
 
 
+class CrmOutcomeRequest(BaseModel):
+    outcome: str            # "confirm" | "decline" | "unreachable"
+    remark: Optional[str] = None
+
+
 class OrderAssignRequest(BaseModel):
     assigned_outlet_id: str
 
@@ -1305,7 +1310,7 @@ __all__ = [
     # Order
     "OrderItemRequest", "OrderPaymentRequest", "OrderCreateRequest", "ProxyOrderCreateRequest", "OrderUpdateRequest",
     "OrderFullUpdateRequest",
-    "OrderStatusUpdateRequest", "OrderAssignRequest", "OrderRevokeRequest",
+    "OrderStatusUpdateRequest", "CrmOutcomeRequest", "OrderAssignRequest", "OrderRevokeRequest",
     "OrderItemResponse", "OrderResponse",
     
     # Transaction

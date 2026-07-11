@@ -178,10 +178,61 @@ def test_return_confirm_sets_pending_and_logs_event():
     print("OK: test_return_confirm_sets_pending_and_logs_event")
 
 
+def _escalated_order_rows():
+    now = datetime.now(timezone.utc)
+    rows = [SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
+                            created_at=now, payload=None, changed_by="d1", remarks=None, source="rider_app")
+            for _ in range(3)]
+    rows.append(SimpleNamespace(event_type="ESCALATED_CRM", status_changed_to="attempted",
+                                created_at=now, payload=None, changed_by=None, remarks=None, source="system"))
+    return rows
+
+
+def test_crm_confirm_bounces_to_logistics():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    order = _order(order_status="attempted", delivery_person_id="d1")
+    fom = FakeOrderManager(order)
+    ftrack = FakeTracking(rows=_escalated_order_rows())
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom; SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="tc1", role="TELECALLER", scope_level="GLOBAL")
+        asyncio.run(L.submit_crm_outcome("o1", SimpleNamespace(outcome="confirm", remark="wants it"), ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    assert order.order_status == "pending"
+    assert any(r.event_type == "ESCALATED_LOGISTICS" for r in ftrack.rows)
+    print("OK: test_crm_confirm_bounces_to_logistics")
+
+
+def test_crm_decline_cancels_with_reason():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    order = _order(order_status="attempted")
+    fom = FakeOrderManager(order)
+    ftrack = FakeTracking(rows=_escalated_order_rows())
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom; SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="tc1", role="TELECALLER", scope_level="GLOBAL")
+        asyncio.run(L.submit_crm_outcome("o1", SimpleNamespace(outcome="decline", remark="not needed"), ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    assert order.order_status == "cancelled"
+    cancel = [r for r in ftrack.rows if r.event_type == "CANCELLED"][0]
+    assert cancel.payload["cancellation_reason"] == "CUSTOMER_DECLINED"
+    print("OK: test_crm_decline_cancels_with_reason")
+
+
 if __name__ == "__main__":
     test_third_disposition_writes_escalation_event()
     test_delete_writes_snapshot_event_before_delete()
     test_timeline_returns_events_and_state()
     test_returns_lists_rider_custody_orders()
     test_return_confirm_sets_pending_and_logs_event()
+    test_crm_confirm_bounces_to_logistics()
+    test_crm_decline_cancels_with_reason()
     print("All tests passed.")
