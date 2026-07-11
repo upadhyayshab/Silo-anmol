@@ -391,6 +391,11 @@ async def update_delivery_status(
             updates["order_status"] = new_status
             await order_manager.update(order_uid, updates)
 
+            # Reflect the persisted changes on the in-memory order so the event log
+            # (which reads priority_level / order_status off `order`) records fresh values.
+            for _k, _v in updates.items():
+                setattr(order, _k, _v)
+
             # Append the immutable rider-disposition event (source of truth for attempts).
             await order_events_service.record_event(
                 order, OrderEventType.RIDER_DISPOSITION,
