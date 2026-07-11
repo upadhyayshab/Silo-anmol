@@ -123,7 +123,7 @@ async def confirm_order_return(
 @router.get("/crm-queue")
 async def get_crm_queue(
     outlet_id: Optional[str] = None,
-    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ)),
 ):
     """Orders escalated to CRM and awaiting a confirm/decline/unreachable outcome."""
     filters = {"order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
@@ -152,7 +152,7 @@ async def get_crm_queue(
 async def submit_crm_outcome(
     order_id: str,
     payload: CrmOutcomeRequest,
-    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_WRITE)),
 ):
     """CRM disposition for an order sitting in escalation_state=CRM_REVIEW."""
     order = await order_manager.fetch(order_id)
