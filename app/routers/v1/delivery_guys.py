@@ -9,19 +9,20 @@ from config import get_settings, get_engine
 from managers import (
     DeliveryGuyManager, UserManager, OutletManager, DeliveryGuySchema, UserSchema,
     CustomerOrderManager, OrderItemManager, OrderTransactionManager,
-    InventoryManager, DeliveryTrackingManager, OrderTransactionSchema, DeliveryTrackingSchema,
+    InventoryManager, DeliveryTrackingManager, OrderTransactionSchema,
     RateCardManager, RateCardSchema
 )
 from models import (
     DeliveryGuyCreateRequest, DeliveryGuyUpdateRequest, DeliveryGuyResponse,
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
+from services import order_events_service
+from services.order_events_service import fold_order_state, should_escalate
 from utils.auth import require_permission, apply_scope, get_password_hash, AuthContext
 from utils.permissions import Permission, ScopeLevel
-from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod
+from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod, OrderEventType
 from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
-from utils.delivery_utils import build_cumulative_remarks
 from utils.smartping_utils import trigger_smartping_event_bg
 
 settings = get_settings()
@@ -276,7 +277,14 @@ async def delete_delivery_guy(
 # --- Webhook Endpoints ---
 
 @router.post("/webhooks/delivery-status", status_code=status.HTTP_200_OK)
-async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], background_tasks: BackgroundTasks):
+async def update_delivery_status(
+    payload: List[DeliveryStatusUpdatePayload],
+    background_tasks: BackgroundTasks,
+    # The captain backend's ErpClient authenticates as a microservice via X-API-Key,
+    # which SDKMiddleware resolves to scopes on request.state.scopes. Mirrors the same
+    # rider-facing bulk-assign endpoint (orders.py's bulk/assign-delivery).
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS, allow_scopes=["delivery:work"])),
+):
     """
     Webhook endpoint to receive delivery status updates for multiple orders.
     """
@@ -297,28 +305,17 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
 
             order_uid = order.uid
             updates = {}
+            did_auto_reconcile = False
             if item.delivery_person_id:
                 updates["delivery_person_id"] = item.delivery_person_id
 
-            # Fetch all tracking records for history building and attempt count
-            all_tracking = await tracking_manager.fetch_all(
-                filters={"order_id": order_uid},
-                sorts=["created_at"]
-            )
-            try:
-                current_attempt = int(all_tracking.items[-1].attempt_number) if all_tracking.items else 0
-            except (ValueError, TypeError):
-                current_attempt = 0
-            new_attempt_number = current_attempt
-
             new_status = order.order_status
             item_crm_tasks = []
-            
+
             if item.status == "delivered":
                 new_status = OrderStatus.DELIVERED
                 updates["actual_delivery_date"] = datetime.utcnow()
-                new_attempt_number = current_attempt + 1
-                
+
                 item_crm_tasks.append((order_uid, ActivityType.DELIVERY_STATUS))
                 # Process reconciliation and inventory only if order status is changing to delivered
                 if order.order_status != OrderStatus.DELIVERED:
@@ -331,10 +328,10 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
                             payment_method=order.payment_method,
                             amount_paid=amount_to_collect,
                             notes=f"Auto-reconciled from bulk webhook. Remarks: {item.remarks}",
-                            received_by=item.delivery_person_id or order.delivery_guy_id
+                            received_by=item.delivery_person_id or order.delivery_person_id
                         )
                         await transaction_manager.create(transaction)
-                        updates["has_auto_reconciled"] = True
+                        did_auto_reconcile = True
                     
                     # Finalize inventory (deduct from quantity and reserved)
                     items = await order_item_manager.fetch_all(filters={"order_id": order_uid})
@@ -363,7 +360,6 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
 
             elif item.status in ["postponed", "attempted" , "customer_not_available", "unable_to_contact", "unable_to_locate", "payment_not_ready"]:
                 new_status = OrderStatus(item.status)
-                new_attempt_number = current_attempt + 1
                 if item.status in ["postponed" , "attempted"]:
                     item_crm_tasks.append((order_uid, ActivityType.DELIVERY_STATUS))
                 if item.status in ["postponed", "payment_not_ready"] and item.postpone_date:
@@ -395,22 +391,29 @@ async def update_delivery_status(payload: List[DeliveryStatusUpdatePayload], bac
             updates["order_status"] = new_status
             await order_manager.update(order_uid, updates)
 
-            tracking_record = DeliveryTrackingSchema(
-                order_id=order_uid,
-                outlet_id=order.assigned_outlet_id,
-                telecaller_id=order.telecaller_id,
-                delivery_person_id=item.delivery_person_id or order.delivery_person_id,
-                status_changed_to=new_status,
-                postpone_date=item.postpone_date,
-                attempt_number=new_attempt_number,
-                priority_level=updates.get("priority_level", order.priority_level or 0),
-                remarks=build_cumulative_remarks(all_tracking.items, new_status, item.remarks),
-                changed_by=item.delivery_person_id or order.telecaller_id,
+            # Append the immutable rider-disposition event (source of truth for attempts).
+            await order_events_service.record_event(
+                order, OrderEventType.RIDER_DISPOSITION,
+                actor_id=item.delivery_person_id or order.telecaller_id,
                 source="rider_app",
+                status=item.status,                      # raw rider outcome, e.g. 'customer_not_available'
+                remarks=item.remarks,
+                postpone_date=item.postpone_date,
             )
-            await tracking_manager.create(tracking_record)
-            
-            if updates.pop("has_auto_reconciled", False):
+            # Fold the full log and escalate if the fresh cycle of 3 is complete.
+            events = await order_events_service.load_events(order_uid)
+            state = fold_order_state(events)
+            if should_escalate(state):
+                await order_events_service.record_event(
+                    order, OrderEventType.ESCALATED_CRM,
+                    actor_id=None, source="system",
+                    status=order.order_status,
+                    remarks=f"Auto-escalated to CRM after {state.attempt_count} attempts.",
+                    payload={"attempt_count": state.attempt_count,
+                             "escalation_count": state.escalation_count},
+                )
+
+            if did_auto_reconcile:
                 item_crm_tasks.append((order_uid, ActivityType.PAYMENT_STATUS))
                 
             # Add item_crm_tasks to the main list only if everything above succeeded
