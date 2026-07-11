@@ -20,7 +20,7 @@ from services import order_events_service
 from services.order_events_service import fold_order_state, should_escalate
 from utils.auth import require_permission, apply_scope, get_password_hash, AuthContext
 from utils.permissions import Permission, ScopeLevel
-from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod, OrderEventType
+from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod, OrderEventType, SYSTEM_USER_UID
 from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
 from utils.smartping_utils import trigger_smartping_event_bg
@@ -406,7 +406,7 @@ async def update_delivery_status(
             if should_escalate(state):
                 await order_events_service.record_event(
                     order, OrderEventType.ESCALATED_CRM,
-                    actor_id=None, source="system",
+                    actor_id=SYSTEM_USER_UID, source="system",
                     status=order.order_status,
                     remarks=f"Auto-escalated to CRM after {state.attempt_count} attempts.",
                     payload={"attempt_count": state.attempt_count,
