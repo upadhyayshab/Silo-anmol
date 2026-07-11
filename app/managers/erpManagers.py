@@ -817,7 +817,6 @@ class CustomerOrderSchema(BaseSchema):
     delivery_person = relationship("UserSchema", foreign_keys=[delivery_person_id])
     items = relationship("OrderItemSchema", back_populates="order", cascade="all, delete-orphan")
     transactions = relationship("OrderTransactionSchema", back_populates="order", cascade="all, delete-orphan")
-    delivery_tracking = relationship("DeliveryTrackingSchema", back_populates="order", cascade="all, delete-orphan")
     lsq_order_ad = relationship("LSQOrderAdSchema", back_populates="order",cascade="all, delete-orphan")
 
 
@@ -1278,8 +1277,13 @@ class DeliveryTrackingSchema(BaseSchema):
     remarks = db.Column(db.Text)
     changed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False)
 
+    # Event-log fields (order lifecycle). event_type is an OrderEventType value stored
+    # as plain String (no ALTER TYPE needed for new types). payload carries event-specific
+    # data — e.g. a full order snapshot on the DELETED event so history survives deletion.
+    event_type = db.Column(db.String(32), nullable=True, index=True)
+    payload = db.Column(db.JSON, nullable=True)
+
     # Relationships
-    order = relationship("CustomerOrderSchema", back_populates="delivery_tracking")
     outlet = relationship("OutletSchema", back_populates="delivery_tracking")
     delivery_person = relationship("UserSchema", foreign_keys=[delivery_person_id])
     changer = relationship("UserSchema", foreign_keys=[changed_by])
