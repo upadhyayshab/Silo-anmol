@@ -5,6 +5,7 @@ from services.smartping_job_service import smartping_job_service
 from services.inventory_audit_service import inventory_audit_service
 from services import facebook_service
 from services.leadService import sweep_unassigned
+from services import order_aging_service
 
 # Define your interval or cron schedules here.
 
@@ -40,8 +41,13 @@ JOBS_CONFIG = [
         "func": facebook_service.nightly_sync,
         "trigger": CronTrigger(hour=2, minute=0)
     },
-    # ponytail: revert_stale_orders unscheduled 2026-07-09 — service, settings and the
-    # superadmin toggle still exist but nothing calls them. Re-add here to revive.
+    {
+        # Nightly 30-day auto-cancel for escalated, unresolved orders. Kill-switch
+        # flagged (SETTING_AGING_CANCEL_ENABLED, default off) — see order_aging_service.
+        "name": "cancel_aged_orders",
+        "func": order_aging_service.cancel_aged_orders,
+        "trigger": CronTrigger(hour=19, minute=0)   # 00:30 IST
+    },
     # Examples of other schedules you can easily add:
     # {
     #     "name": "run_daily_reports",

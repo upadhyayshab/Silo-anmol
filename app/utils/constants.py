@@ -75,11 +75,14 @@ def is_revertible_status(order_status: OrderStatus) -> bool:
 
 
 # Seeded inactive account used as `changed_by` for automated (non-human) status
-# changes — the daily revert job. See scripts/seed/seed_system_user.py.
+# changes — e.g. the nightly aging auto-cancel job. See scripts/seed/seed_system_user.py.
 SYSTEM_USER_UID = "users_system_autorevert"
 
 
-# app_settings keys (one row per setting) backing the daily order auto-revert.
+# app_settings keys (one row per setting) backing the retired daily order auto-revert
+# job (app/services/order_revert_service.py, removed 2026-07-11). The superadmin
+# toggle in app/routers/v1/config.py still reads/writes these — left dead pending
+# its own removal (see Task 12) — so the keys stay here rather than dangling imports.
 SETTING_AUTO_REVERT_ENABLED = "auto_revert_enabled"
 SETTING_AUTO_REVERT_FLUSH = "auto_revert_flush_existing"
 SETTING_AUTO_REVERT_BASELINE_AT = "auto_revert_baseline_at"  # ISO-8601 string
