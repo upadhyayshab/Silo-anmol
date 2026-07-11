@@ -84,6 +84,51 @@ SETTING_AUTO_REVERT_ENABLED = "auto_revert_enabled"
 SETTING_AUTO_REVERT_FLUSH = "auto_revert_flush_existing"
 SETTING_AUTO_REVERT_BASELINE_AT = "auto_revert_baseline_at"  # ISO-8601 string
 
+
+class OrderEventType(str, Enum):
+    CREATED = "CREATED"
+    ASSIGNED = "ASSIGNED"
+    STATUS_CHANGE = "STATUS_CHANGE"
+    RIDER_DISPOSITION = "RIDER_DISPOSITION"
+    RETURNED_TO_OUTLET = "RETURNED_TO_OUTLET"
+    ESCALATED_CRM = "ESCALATED_CRM"
+    CRM_OUTCOME = "CRM_OUTCOME"
+    ESCALATED_LOGISTICS = "ESCALATED_LOGISTICS"
+    CANCELLED = "CANCELLED"
+    EDITED = "EDITED"
+    DELETED = "DELETED"
+
+
+class CancellationReason(str, Enum):
+    CUSTOMER_DECLINED = "CUSTOMER_DECLINED"
+    AGED_OUT = "AGED_OUT"
+    DUPLICATE = "DUPLICATE"
+    OUT_OF_SERVICE_AREA = "OUT_OF_SERVICE_AREA"
+    MANUAL_OTHER = "MANUAL_OTHER"
+
+
+class EscalationState(str, Enum):
+    NONE = "NONE"
+    CRM_REVIEW = "CRM_REVIEW"
+    LOGISTICS = "LOGISTICS"
+
+
+class Custody(str, Enum):
+    OUTLET = "OUTLET"
+    RIDER = "RIDER"
+    CUSTOMER = "CUSTOMER"
+
+
+# Rider dispositions that count as a failed delivery attempt (drive escalation).
+# 'delivered' is excluded. Values match the rider-app/webhook status strings.
+NON_DELIVERED_RIDER_OUTCOMES = frozenset({
+    "attempted", "customer_not_available", "unable_to_contact",
+    "unable_to_locate", "payment_not_ready", "postponed",
+})
+
+# app_settings kill-switch for the nightly 30-day auto-cancel job (default off).
+SETTING_AGING_CANCEL_ENABLED = "aging_cancel_enabled"
+
 # Telephony: outbound caller-ID (the Exotel usermapping VirtualNumber) per telecaller
 # state. Also app_settings rows -> no migration. A missing row falls back to
 # DEFAULT_EXOPHONE, so shipping with no config changes nothing.
