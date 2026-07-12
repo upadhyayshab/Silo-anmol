@@ -32,6 +32,8 @@ class LeadActivityType(str, Enum):
     ORDER = "order"  # an order was placed from the CRM for this lead
     ORDER_UPDATE = "order_update" # an order's status/payment/delivery was updated
     RE_ENGAGED = "re_engaged"  # a dormant lead re-submitted a form and was reopened/reassigned
+    ORDER_ESCALATED = "order_escalated"  # an order failed delivery 3x and was escalated to CRM for verification
+    ORDER_VERIFICATION = "order_verification"  # CRM verified an escalated order (confirm / decline / unreachable)
 
 
 class CallOutcome(str, Enum):

@@ -215,6 +215,36 @@ async def record_activity(engine, lead_id: str, activity_type: LeadActivityType,
     return activity
 
 
+async def log_order_lead_activity(engine, order, body: str, *,
+                                  activity_type: LeadActivityType = LeadActivityType.ORDER_UPDATE,
+                                  user_id: Optional[str] = None,
+                                  outcome: Optional[str] = None,
+                                  details: Optional[Dict[str, Any]] = None) -> None:
+    """Best-effort mirror of an order lifecycle event (CRM escalation / CRM outcome) onto
+    the linked lead's activity timeline, so a telecaller working the *lead* sees it.
+
+    Resolves the lead by ``order.lead_id``; if absent (most CRM orders carry a NULL
+    lead_id), falls back to a bare **last-10-digits** match of the order phone against
+    ``leads.mobile``; if still nothing, skips silently. Never raises into the caller — a
+    missing lead or a logging failure must not break the order/return/CRM flow."""
+    try:
+        lead_id = getattr(order, "lead_id", None)
+        if not lead_id:
+            phone = getattr(order, "customer_phone", None) or ""
+            digits = re.sub(r"\D", "", phone)[-10:]
+            if len(digits) == 10:
+                res = await LeadManager(engine).fetch_all(filters={"mobile": digits}, limit=1)
+                if res.items:
+                    lead_id = res.items[0].uid
+        if not lead_id:
+            return  # no lead to attach to — skip
+        await record_activity(engine, lead_id, activity_type,
+                              user_id=user_id, body=body, outcome=outcome, details=details)
+    except Exception as e:
+        logger.warning(f"[lead] could not log order activity for "
+                       f"{getattr(order, 'order_number', order)}: {e}")
+
+
 # --------------------------------------------------------------------------
 # Mutations
 # --------------------------------------------------------------------------

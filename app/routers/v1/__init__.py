@@ -55,6 +55,10 @@ router.include_router(outlets_router)
 router.include_router(products_router)
 router.include_router(inventory_router)
 router.include_router(inventory_audits_router)
+# order_lifecycle BEFORE orders: its static paths /orders/returns and /orders/crm-queue must
+# be matched ahead of orders.py's GET /orders/{order_id}, which would otherwise capture them
+# as order_id="returns"/"crm-queue" and 404.
+router.include_router(order_lifecycle_router)
 router.include_router(orders_router)
 router.include_router(invoices_router)
 router.include_router(transfers_router)
@@ -77,7 +81,6 @@ router.include_router(leads_router)
 router.include_router(state_lanes_router)
 router.include_router(lead_segments_router)
 router.include_router(attendance_router)
-router.include_router(order_lifecycle_router)
 router.include_router(business_tracker_router)
 router.include_router(facebook_router)
 router.include_router(facebook_pages_router)

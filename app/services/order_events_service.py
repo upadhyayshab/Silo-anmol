@@ -74,6 +74,33 @@ async def load_events(order_id: str) -> List[Any]:
     return res.items
 
 
+async def order_ids_with_event(event_type, outlet_id: Optional[str] = None) -> List[str]:
+    """Distinct order_ids that have >=1 event of this type (optionally scoped to an outlet).
+    Lets a list endpoint fold only the relevant handful of orders instead of every
+    non-terminal order at the outlet. Uses scalar filters only (no dict operators)."""
+    f = {"event_type": event_type}
+    if outlet_id:
+        f["outlet_id"] = outlet_id
+    res = await tracking_manager.fetch_all(filters=f)
+    return list({e.order_id for e in res.items})
+
+
+async def load_events_bulk(order_ids: List[str]) -> dict:
+    """Events for many orders in ONE query, grouped {order_id: [events ascending]}.
+    List endpoints (returns / crm-queue) fold every candidate order; calling load_events
+    per order is an N+1 that is catastrophic against a remote DB (one round-trip per order).
+    A single IN query + in-memory grouping turns N+1 into 1. Per-order lists stay ascending
+    because the whole result is sorted ascending by created_at."""
+    ids = [i for i in order_ids if i]
+    if not ids:
+        return {}
+    res = await tracking_manager.fetch_all(filters={"order_id": ids}, sorts=["-created_at"])
+    grouped: dict = {}
+    for e in res.items:
+        grouped.setdefault(e.order_id, []).append(e)
+    return grouped
+
+
 async def record_event(order, event_type, *, actor_id, source, status=None,
                        remarks=None, postpone_date=None, payload=None, session=None):
     """Append one event row. outlet_id may be None for orders not yet assigned to an

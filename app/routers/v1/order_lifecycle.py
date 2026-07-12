@@ -10,6 +10,7 @@ from config import get_settings, get_engine
 from managers import CustomerOrderManager, UserManager
 from models import CrmOutcomeRequest
 from services import order_events_service
+from services import leadService
 from services.order_events_service import fold_order_state, should_escalate
 from services.order_aging_service import AGE_LIMIT
 from utils.auth import AuthContext, require_permission
@@ -17,6 +18,7 @@ from utils.constants import (
     OrderStatus, OrderEventType, Custody, TERMINAL_ORDER_STATUSES,
     CancellationReason, EscalationState,
 )
+from utils.crm_enums import LeadActivityType
 from utils.permissions import Permission
 
 settings = get_settings()
@@ -68,19 +70,25 @@ async def get_rider_returns(
     ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS)),
 ):
     """Orders physically still with a rider (custody=RIDER), grouped by rider.
-    // ponytail: scans non-terminal orders and folds each — same pattern as the old
-    revert job. Materialize a projection only if this scan ever gets slow."""
-    filters = {"order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
+    Only orders that have a RIDER_DISPOSITION event can be custody=RIDER, so narrow to
+    those order_ids first (a small set) instead of folding every non-terminal order."""
+    candidate_ids = await order_events_service.order_ids_with_event(
+        OrderEventType.RIDER_DISPOSITION, outlet_id)
+    if not candidate_ids:
+        return {"riders": []}
+    filters = {"uid": candidate_ids,
+               "order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
     if outlet_id:
         filters["assigned_outlet_id"] = outlet_id
     if delivery_person_id:
         filters["delivery_person_id"] = delivery_person_id
     orders = (await order_manager.fetch_all(filters=filters, limit=100000)).items
+    events_by_order = await order_events_service.load_events_bulk([o.uid for o in orders])
 
     now = datetime.now(timezone.utc)
     groups = {}
     for o in orders:
-        events = await order_events_service.load_events(o.uid)
+        events = events_by_order.get(o.uid, [])
         state = fold_order_state(events)
         if state.custody != Custody.RIDER:
             continue
@@ -113,28 +121,47 @@ async def confirm_order_return(
     order = await order_manager.fetch(order_id)
     if order.order_status in TERMINAL_ORDER_STATUSES:
         raise HTTPException(status_code=400, detail="Order is already delivered or cancelled.")
-    await order_manager.update(order_id, {
-        "order_status": OrderStatus.PENDING, "delivery_person_id": None})
-    order.order_status = OrderStatus.PENDING
-    order.delivery_person_id = None
-    await order_events_service.record_event(
-        order, OrderEventType.RETURNED_TO_OUTLET,
-        actor_id=ctx.user_id, source="erp", status=OrderStatus.PENDING,
-        remarks="Undelivered goods received back at outlet.")
 
-    # Fold the full log and escalate if the fresh cycle of 3 is complete. Goods are
-    # physically back at the outlet before CRM ever sees the order (design §4).
-    events = await order_events_service.load_events(order_id)
-    state = fold_order_state(events)
-    if should_escalate(state):
+    # Decide escalation from the committed pre-return log. RETURNED_TO_OUTLET changes only
+    # custody, not attempt_count/escalation_count, so deciding before writing it is correct.
+    # Goods are physically back at the outlet before CRM ever sees the order (design §4).
+    state = fold_order_state(await order_events_service.load_events(order_id))
+
+    escalated = should_escalate(state)
+    # Atomic: the status update and the event write(s) share one transaction, so a failure
+    # can't leave the order PENDING with no RETURNED_TO_OUTLET event (or vice versa).
+    async with order_manager.session_factory() as session:
+        await order_manager.update(
+            order_id, {"order_status": OrderStatus.PENDING, "delivery_person_id": None},
+            session=session)
+        order.order_status = OrderStatus.PENDING
+        order.delivery_person_id = None
         await order_events_service.record_event(
-            order, OrderEventType.ESCALATED_CRM,
-            actor_id=ctx.user_id, source="erp",
-            status=order.order_status,
-            remarks=f"Auto-escalated to CRM on return after {state.attempt_count} attempts.",
-            payload={"attempt_count": state.attempt_count,
-                     "escalation_count": state.escalation_count},
-        )
+            order, OrderEventType.RETURNED_TO_OUTLET,
+            actor_id=ctx.user_id, source="erp", status=OrderStatus.PENDING,
+            remarks="Undelivered goods received back at outlet.", session=session)
+        if escalated:
+            await order_events_service.record_event(
+                order, OrderEventType.ESCALATED_CRM,
+                actor_id=ctx.user_id, source="erp", status=OrderStatus.PENDING,
+                remarks=f"Auto-escalated to CRM on return after {state.attempt_count} attempts.",
+                payload={"attempt_count": state.attempt_count,
+                         "escalation_count": state.escalation_count},
+                session=session)
+        await session.commit()
+
+    # Mirror the escalation onto the linked lead's activity feed (best-effort, post-commit
+    # so a lead-logging failure can't roll back the return). Resolves lead by id or phone.
+    if escalated:
+        await leadService.log_order_lead_activity(
+            engine, order,
+            body=(f"Order {order.order_number} escalated to CRM for verification after "
+                  f"{state.attempt_count} failed delivery attempts."),
+            activity_type=LeadActivityType.ORDER_ESCALATED,
+            user_id=ctx.user_id,
+            details={"order_id": order.uid, "order_number": order.order_number,
+                     "event": "ESCALATED_CRM", "attempt_count": state.attempt_count,
+                     "escalation_count": state.escalation_count})
     return {"status": "ok"}
 
 
@@ -143,15 +170,23 @@ async def get_crm_queue(
     outlet_id: Optional[str] = None,
     ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ)),
 ):
-    """Orders escalated to CRM and awaiting a confirm/decline/unreachable outcome."""
-    filters = {"order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
+    """Orders escalated to CRM and awaiting a confirm/decline/unreachable outcome.
+    Only orders with an ESCALATED_CRM event can be in CRM_REVIEW, so narrow to those
+    order_ids first instead of folding every non-terminal order."""
+    candidate_ids = await order_events_service.order_ids_with_event(
+        OrderEventType.ESCALATED_CRM, outlet_id)
+    if not candidate_ids:
+        return {"orders": []}
+    filters = {"uid": candidate_ids,
+               "order_status": [s for s in OrderStatus if s not in TERMINAL_ORDER_STATUSES]}
     if outlet_id:
         filters["assigned_outlet_id"] = outlet_id
     orders = (await order_manager.fetch_all(filters=filters, limit=100000)).items
+    events_by_order = await order_events_service.load_events_bulk([o.uid for o in orders])
     now = datetime.now(timezone.utc)
     out = []
     for o in orders:
-        state = fold_order_state(await order_events_service.load_events(o.uid))
+        state = fold_order_state(events_by_order.get(o.uid, []))
         if state.escalation_state != EscalationState.CRM_REVIEW:
             continue
         days_left = None
@@ -203,4 +238,21 @@ async def submit_crm_outcome(
             payload={"crm_outcome": "unreachable"})
     else:
         raise HTTPException(status_code=400, detail=f"Unknown outcome: {outcome}")
+
+    # Mirror the CRM decision onto the linked lead's activity feed (best-effort; the else
+    # above already returned for an invalid outcome, so this only runs for a real decision).
+    _crm_body = {
+        "confirm": (f"CRM verified order {order.order_number}: customer confirmed — "
+                    "sent back to logistics for re-delivery."),
+        "decline": (f"CRM verified order {order.order_number}: customer declined — "
+                    "order cancelled."),
+        "unreachable": (f"CRM could not reach the customer for order {order.order_number} — "
+                        "kept in the verification queue."),
+    }
+    await leadService.log_order_lead_activity(
+        engine, order, body=_crm_body.get(outcome, f"CRM outcome: {outcome}"),
+        activity_type=LeadActivityType.ORDER_VERIFICATION,
+        user_id=ctx.user_id, outcome=outcome,
+        details={"order_id": order.uid, "order_number": order.order_number,
+                 "crm_outcome": outcome, "remark": payload.remark})
     return {"status": "ok", "outcome": outcome}

@@ -10,6 +10,15 @@ except Exception:
     pass
 import path_setup  # noqa
 
+# order_lifecycle mirrors escalation / CRM outcomes onto the lead activity feed via
+# leadService.log_order_lead_activity (which would hit the DB). Patch it to a recorder so
+# these tests stay DB-free; assert against LEAD_ACTIVITY.
+import services.leadService as _leadService  # noqa
+LEAD_ACTIVITY = []
+async def _fake_log_order_lead_activity(engine, order, body, **kw):
+    LEAD_ACTIVITY.append({"order_number": getattr(order, "order_number", None), "body": body, **kw})
+_leadService.log_order_lead_activity = _fake_log_order_lead_activity
+
 
 class FakeTracking:
     """Mimics DeliveryTrackingManager for one order: fetch_all(sorts) + create."""
@@ -23,10 +32,18 @@ class FakeTracking:
         return row
 
 
+class _FakeSession:
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+    async def commit(self): pass
+
+
 class FakeOrderManager:
     def __init__(self, order):
         self.order = order
         self.updates = []
+    def session_factory(self):
+        return _FakeSession()
     async def fetch(self, uid, **kw):
         return self.order
     async def fetch_all(self, limit=0, offset=0, filters=None, sorts=None, **kw):
@@ -138,9 +155,9 @@ def test_returns_lists_rider_custody_orders():
     now = datetime.now(timezone.utc)
     order = _order(order_status="attempted")
     fom = FakeOrderManager(order)
-    ev = [SimpleNamespace(event_type="ASSIGNED", status_changed_to=None, created_at=now, payload=None),
+    ev = [SimpleNamespace(event_type="ASSIGNED", status_changed_to=None, created_at=now, payload=None, order_id="o1"),
           SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
-                          created_at=now, payload=None, changed_by="d1", remarks=None, source="rider_app")]
+                          created_at=now, payload=None, changed_by="d1", remarks=None, source="rider_app", order_id="o1")]
     ftrack = FakeTracking(rows=ev)
     orig = (L.order_manager, SVC.tracking_manager)
     L.order_manager = fom
@@ -188,6 +205,7 @@ def test_return_confirm_escalates_after_three_attempts():
                              created_at=now, payload=None, changed_by="d1", remarks=None,
                              source="rider_app") for _ in range(3)]
     ftrack = FakeTracking(rows=list(prior))
+    LEAD_ACTIVITY.clear()
     orig = (L.order_manager, SVC.tracking_manager)
     L.order_manager = fom
     SVC.tracking_manager = ftrack
@@ -200,6 +218,8 @@ def test_return_confirm_escalates_after_three_attempts():
     assert "RETURNED_TO_OUTLET" in types
     assert "ESCALATED_CRM" in types
     assert order.order_status == "pending"
+    # escalation was mirrored onto the lead activity feed
+    assert any("escalated to crm" in a["body"].lower() for a in LEAD_ACTIVITY)
     print("OK: test_return_confirm_escalates_after_three_attempts")
 
 
@@ -214,6 +234,7 @@ def test_return_confirm_no_escalation_under_three():
                              created_at=now, payload=None, changed_by="d1", remarks=None,
                              source="rider_app") for _ in range(2)]
     ftrack = FakeTracking(rows=list(prior))
+    LEAD_ACTIVITY.clear()
     orig = (L.order_manager, SVC.tracking_manager)
     L.order_manager = fom
     SVC.tracking_manager = ftrack
@@ -226,16 +247,20 @@ def test_return_confirm_no_escalation_under_three():
     assert "RETURNED_TO_OUTLET" in types
     assert "ESCALATED_CRM" not in types
     assert order.order_status == "pending"
+    # under 3 attempts -> no escalation -> nothing mirrored to the lead feed
+    assert LEAD_ACTIVITY == []
     print("OK: test_return_confirm_no_escalation_under_three")
 
 
 def _escalated_order_rows():
     now = datetime.now(timezone.utc)
     rows = [SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
-                            created_at=now, payload=None, changed_by="d1", remarks=None, source="rider_app")
+                            created_at=now, payload=None, changed_by="d1", remarks=None,
+                            source="rider_app", order_id="o1")
             for _ in range(3)]
     rows.append(SimpleNamespace(event_type="ESCALATED_CRM", status_changed_to="attempted",
-                                created_at=now, payload=None, changed_by=None, remarks=None, source="system"))
+                                created_at=now, payload=None, changed_by="mgr", remarks=None,
+                                source="erp", order_id="o1"))
     return rows
 
 
@@ -246,6 +271,7 @@ def test_crm_confirm_bounces_to_logistics():
     order = _order(order_status="attempted", delivery_person_id="d1")
     fom = FakeOrderManager(order)
     ftrack = FakeTracking(rows=_escalated_order_rows())
+    LEAD_ACTIVITY.clear()
     orig = (L.order_manager, SVC.tracking_manager)
     L.order_manager = fom; SVC.tracking_manager = ftrack
     try:
@@ -255,6 +281,8 @@ def test_crm_confirm_bounces_to_logistics():
         L.order_manager, SVC.tracking_manager = orig
     assert order.order_status == "pending"
     assert any(r.event_type == "ESCALATED_LOGISTICS" for r in ftrack.rows)
+    # CRM decision mirrored onto the lead feed with the outcome tag
+    assert any(a.get("outcome") == "confirm" for a in LEAD_ACTIVITY)
     print("OK: test_crm_confirm_bounces_to_logistics")
 
 
@@ -276,6 +304,26 @@ def test_crm_decline_cancels_with_reason():
     cancel = [r for r in ftrack.rows if r.event_type == "CANCELLED"][0]
     assert cancel.payload["cancellation_reason"] == "CUSTOMER_DECLINED"
     print("OK: test_crm_decline_cancels_with_reason")
+
+
+def test_crm_queue_lists_escalated_orders():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    order = _order(order_status="pending")
+    fom = FakeOrderManager(order)
+    ftrack = FakeTracking(rows=_escalated_order_rows())   # 3 dispositions + ESCALATED_CRM
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom
+    SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="tc1", role="TELECALLER", scope_level="GLOBAL")
+        resp = asyncio.run(L.get_crm_queue(outlet_id="out1", ctx=ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    assert resp["orders"] and resp["orders"][0]["order_number"] == "ORD-1"
+    assert resp["orders"][0]["attempt_count"] == 3
+    print("OK: test_crm_queue_lists_escalated_orders")
 
 
 def test_crm_outcome_rejects_non_review_order():
@@ -313,5 +361,6 @@ if __name__ == "__main__":
     test_return_confirm_no_escalation_under_three()
     test_crm_confirm_bounces_to_logistics()
     test_crm_decline_cancels_with_reason()
+    test_crm_queue_lists_escalated_orders()
     test_crm_outcome_rejects_non_review_order()
     print("All tests passed.")
