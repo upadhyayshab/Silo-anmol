@@ -54,11 +54,18 @@ async def login(payload: LoginRequest):
             )
         
         # Update last login
-        from datetime import datetime
+        from datetime import datetime, timezone
         await user_manager.update(
             user.uid,
             {"last_login": datetime.now()}
         )
+
+        # Attendance: stamp the true first-in for telecallers (before the first heartbeat).
+        # Best-effort — never let it block login. Gated to the billed roles (OWNER_ROLES).
+        from utils.constants import OWNER_ROLES
+        if user.role in {(r.value if hasattr(r, "value") else r) for r in OWNER_ROLES}:
+            from services import attendanceService
+            await attendanceService.record_seen_safe(engine, user.uid, datetime.now(timezone.utc))
         
         # Resolve multi-valued scope (a user may manage several clusters/states).
         assignments = await scope_assignment_manager.fetch_all(filters={"user_id": user.uid}, limit=0)
@@ -148,6 +155,17 @@ async def logout(user_id: str = Depends(get_current_user_id)):
     """
     Logout user (client should discard tokens)
     """
+    # Attendance: extend today's last-out to the logout instant (incl. the 15-min idle
+    # logout). Best-effort, telecaller roles only; never fail the logout on this.
+    from datetime import datetime, timezone
+    from utils.constants import OWNER_ROLES
+    try:
+        user = await user_manager.fetch(user_id)
+        if user.role in {(r.value if hasattr(r, "value") else r) for r in OWNER_ROLES}:
+            from services import attendanceService
+            await attendanceService.record_seen_safe(engine, user_id, datetime.now(timezone.utc))
+    except Exception:
+        pass  # logout must always succeed for the client to clear its tokens
     # In a production system, you might want to blacklist the token
     # For now, we just return success and let client handle token removal
     return StatusResponse(status="ok", message="Logged out successfully")

@@ -276,6 +276,31 @@ class TelecallerStatusManager(ERPGenericManager[TelecallerStatusSchema]):
     pass
 
 
+class AttendanceDaySchema(BaseSchema):
+    """One row per telecaller per IST work day — the durable source for the attendance/
+    billing dashboard. `first_seen`/`last_seen` bound the working span (first login or
+    heartbeat -> last logout or heartbeat); worked hours = last_seen - first_seen, and the
+    day is Present when that span >= 7h. Upserted by attendanceService.record_seen from the
+    presence heartbeat plus login/logout (LEAST/GREATEST), so a closed tab still bounds the
+    day via the last heartbeat."""
+    __tablename__ = "attendance_days"
+
+    user_id = db.Column(db.String, db.ForeignKey("users.uid"), nullable=False, index=True)
+    work_date = db.Column(db.Date, nullable=False, index=True)   # IST calendar day
+    first_seen = db.Column(db.DateTime(timezone=True), nullable=False)
+    last_seen = db.Column(db.DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "work_date", name="uq_attendance_user_day"),
+    )
+
+    user = relationship("UserSchema", foreign_keys=[user_id])
+
+
+class AttendanceDayManager(ERPGenericManager[AttendanceDaySchema]):
+    pass
+
+
 # ============================================================================
 # FACEBOOK LEAD ADS — leadgen forms catalog + field mapping (Default Mapping)
 # ============================================================================
@@ -374,6 +399,7 @@ __all__ = [
     "LeadActivitySchema", "LeadActivityManager",
     "LeadAssignmentSchema", "LeadAssignmentManager",
     "TelecallerStatusSchema", "TelecallerStatusManager",
+    "AttendanceDaySchema", "AttendanceDayManager",
     "FbLeadgenFormSchema", "FbLeadgenFormManager",
     "FbFieldMappingSchema", "FbFieldMappingManager",
     "LeadSegmentSchema", "LeadSegmentManager",

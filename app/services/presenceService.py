@@ -49,6 +49,11 @@ async def heartbeat(engine, telecaller_id: str, status: str = "available") -> No
         await session.execute(stmt)
         await session.commit()
 
+    # Attendance: every heartbeat extends today's working span (best-effort; never let it
+    # break presence). This is the workhorse signal — first/last heartbeat bound the day.
+    from services import attendanceService
+    await attendanceService.record_seen_safe(engine, telecaller_id, now)
+
 
 async def available_ids(engine, window_seconds: int = FRESHNESS_SECONDS) -> Set[str]:
     """Telecaller ids with a fresh 'available' heartbeat (eligible for an inbound call)."""
