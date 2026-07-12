@@ -52,6 +52,41 @@ async def _assert_collection_in_scope(ctx: AuthContext, collection):
     )
 
 
+async def _resolve_user_names(user_ids):
+    """Map user uid -> full_name for a set of ids (skips falsy, dedupes)."""
+    names = {}
+    for uid in {u for u in user_ids if u}:
+        try:
+            user = await user_manager.fetch(uid)
+            names[uid] = getattr(user, "full_name", None)
+        except Exception:
+            names[uid] = None
+    return names
+
+
+def _to_response(c, names=None) -> OutletCollectionResponse:
+    """Build the API response for one collection row, filling in actor names."""
+    names = names or {}
+    return OutletCollectionResponse(
+        uid=c.uid,
+        collection_date=c.date,
+        outlet_id=c.outlet_id,
+        amount=c.amount,
+        payment_mode=c.payment_mode,
+        payment_sub_mode=c.payment_sub_mode,
+        transaction_id=c.transaction_id,
+        remarks=c.remarks,
+        confirmation_status=c.confirmation_status,
+        created_by=c.created_by,
+        created_by_name=names.get(c.created_by),
+        confirmed_by=c.confirmed_by,
+        confirmed_by_name=names.get(c.confirmed_by),
+        confirmed_at=c.confirmed_at,
+        created_at=c.created_at,
+        updated_at=c.updated_at,
+    )
+
+
 @router.post("", response_model=OutletCollectionResponse)
 async def create_collection(
     payload: OutletCollectionCreateRequest,
@@ -73,6 +108,13 @@ async def create_collection(
                 )
             payload.outlet_id = ctx.outlet_id
 
+        # Global callers (finance/admin) must name the outlet explicitly.
+        if not payload.outlet_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="outlet_id is required",
+            )
+
         # Validate outlet exists
         try:
             await outlet_manager.fetch(payload.outlet_id)
@@ -92,28 +134,16 @@ async def create_collection(
             transaction_id=payload.transaction_id,
             remarks=payload.remarks,
             confirmation_status=OutletCollectionStatus.PENDING,
+            created_by=ctx.user_id,
             confirmed_by=None,
             confirmed_at=None
         )
-        
+
         collection = await collection_manager.create(collection_data)
-        
-        return OutletCollectionResponse(
-            uid=collection.uid,
-            collection_date=collection.date,
-            outlet_id=collection.outlet_id,
-            amount=collection.amount,
-            payment_mode=collection.payment_mode,
-            payment_sub_mode=collection.payment_sub_mode,
-            transaction_id=collection.transaction_id,
-            remarks=collection.remarks,
-            confirmation_status=collection.confirmation_status,
-            confirmed_by=collection.confirmed_by,
-            confirmed_at=collection.confirmed_at,
-            created_at=collection.created_at,
-            updated_at=collection.updated_at
-        )
-        
+
+        names = await _resolve_user_names([collection.created_by, collection.confirmed_by])
+        return _to_response(collection, names)
+
     except HTTPException:
         raise
     except Exception as e:
@@ -295,26 +325,13 @@ async def list_collections(
             # Apply pagination after filtering
             filtered_items = filtered_items[offset:offset + limit] if limit > 0 else filtered_items
         
-        # Convert to response models
-        items = [
-            OutletCollectionResponse(
-                uid=c.uid,
-                collection_date=c.date,
-                outlet_id=c.outlet_id,
-                amount=c.amount,
-                payment_mode=c.payment_mode,
-                payment_sub_mode=c.payment_sub_mode,
-                transaction_id=c.transaction_id,
-                remarks=c.remarks,
-                confirmation_status=c.confirmation_status,
-                confirmed_by=c.confirmed_by,
-                confirmed_at=c.confirmed_at,
-                created_at=c.created_at,
-                updated_at=c.updated_at
-            )
-            for c in filtered_items
-        ]
-        
+        # Resolve actor names once for the whole page (bounded: one outlet, <=500 rows)
+        names = await _resolve_user_names(
+            [c.created_by for c in filtered_items]
+            + [c.confirmed_by for c in filtered_items]
+        )
+        items = [_to_response(c, names) for c in filtered_items]
+
         return ListResponse(items=items, count=len(filtered_items))
         
     except Exception as e:
@@ -339,21 +356,8 @@ async def get_collection(
 
         await _assert_collection_in_scope(ctx, collection)
 
-        return OutletCollectionResponse(
-            uid=collection.uid,
-            collection_date=collection.date,
-            outlet_id=collection.outlet_id,
-            amount=collection.amount,
-            payment_mode=collection.payment_mode,
-            payment_sub_mode=collection.payment_sub_mode,
-            transaction_id=collection.transaction_id,
-            remarks=collection.remarks,
-            confirmation_status=collection.confirmation_status,
-            confirmed_by=collection.confirmed_by,
-            confirmed_at=collection.confirmed_at,
-            created_at=collection.created_at,
-            updated_at=collection.updated_at
-        )
+        names = await _resolve_user_names([collection.created_by, collection.confirmed_by])
+        return _to_response(collection, names)
 
     except HTTPException:
         raise
@@ -431,23 +435,12 @@ async def update_collection_status(
         
         # Fetch fresh copy to avoid session detachment issues
         updated_collection = await collection_manager.fetch(collection_id)
-        
-        return OutletCollectionResponse(
-            uid=updated_collection.uid,
-            collection_date=updated_collection.date,
-            outlet_id=updated_collection.outlet_id,
-            amount=updated_collection.amount,
-            payment_mode=updated_collection.payment_mode,
-            payment_sub_mode=updated_collection.payment_sub_mode,
-            transaction_id=updated_collection.transaction_id,
-            remarks=updated_collection.remarks,
-            confirmation_status=updated_collection.confirmation_status,
-            confirmed_by=updated_collection.confirmed_by,
-            confirmed_at=updated_collection.confirmed_at,
-            created_at=updated_collection.created_at,
-            updated_at=updated_collection.updated_at
+
+        names = await _resolve_user_names(
+            [updated_collection.created_by, updated_collection.confirmed_by]
         )
-        
+        return _to_response(updated_collection, names)
+
     except HTTPException:
         raise
     except Exception as e:

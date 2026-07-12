@@ -833,7 +833,9 @@ class SystemConfigurationResponse(BaseModel):
 
 class OutletCollectionCreateRequest(BaseModel):
     collection_date: date = Field(..., description="Collection date")
-    outlet_id: str = Field(..., description="Outlet UID")
+    # Optional: outlet managers omit it (the endpoint forces their own outlet).
+    # Global callers (finance/admin) must supply it.
+    outlet_id: Optional[str] = Field(None, description="Outlet UID")
     amount: Decimal = Field(..., gt=0, description="Amount collected")
     payment_mode: OutletPaymentMode = Field(..., description="Payment mode")
     payment_sub_mode: OutletPaymentSubMode = Field(..., description="Payment sub-mode")
@@ -855,7 +857,10 @@ class OutletCollectionResponse(BaseModel):
     transaction_id: Optional[str] = None
     remarks: Optional[str] = None
     confirmation_status: OutletCollectionStatus
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
     confirmed_by: Optional[str] = None
+    confirmed_by_name: Optional[str] = None
     confirmed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
