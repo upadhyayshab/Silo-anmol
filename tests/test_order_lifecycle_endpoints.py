@@ -46,7 +46,7 @@ def _order(**kw):
     return SimpleNamespace(**base)
 
 
-def test_third_disposition_writes_escalation_event():
+def test_webhook_writes_disposition_no_escalation():
     import routers.v1.delivery_guys as W
     import services.order_events_service as SVC
     from fastapi import BackgroundTasks
@@ -68,16 +68,15 @@ def test_third_disposition_writes_escalation_event():
         bt = BackgroundTasks()
         payload = [DeliveryStatusUpdatePayload(order_id="o1", status="customer_not_available",
                                                delivery_person_id="d1")]
-        # Auth is a FastAPI Depends() default — not invoked when calling the coroutine
-        # directly, so no ctx arg is needed here.
+        # The webhook has no auth dependency at all now (removed) — call it directly.
         asyncio.run(W.update_delivery_status(payload, bt))
     finally:
         W.order_manager, W.tracking_manager, SVC.tracking_manager = orig
 
     types = [r.event_type for r in ftrack.rows]
     assert types.count("RIDER_DISPOSITION") == 3   # 2 prior + this one
-    assert "ESCALATED_CRM" in types                # 3rd attempt escalated
-    print("OK: test_third_disposition_writes_escalation_event")
+    assert "ESCALATED_CRM" not in types             # escalation no longer happens at the webhook
+    print("OK: test_webhook_writes_disposition_no_escalation")
 
 
 def test_delete_writes_snapshot_event_before_delete():
@@ -178,6 +177,58 @@ def test_return_confirm_sets_pending_and_logs_event():
     print("OK: test_return_confirm_sets_pending_and_logs_event")
 
 
+def test_return_confirm_escalates_after_three_attempts():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    now = datetime.now(timezone.utc)
+    order = _order(order_status="attempted", delivery_person_id="d1")
+    fom = FakeOrderManager(order)
+    prior = [SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
+                             created_at=now, payload=None, changed_by="d1", remarks=None,
+                             source="rider_app") for _ in range(3)]
+    ftrack = FakeTracking(rows=list(prior))
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom
+    SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="mgr", role="OUTLET_MANAGER", scope_level="GLOBAL")
+        asyncio.run(L.confirm_order_return("o1", ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    types = [r.event_type for r in ftrack.rows]
+    assert "RETURNED_TO_OUTLET" in types
+    assert "ESCALATED_CRM" in types
+    assert order.order_status == "pending"
+    print("OK: test_return_confirm_escalates_after_three_attempts")
+
+
+def test_return_confirm_no_escalation_under_three():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    now = datetime.now(timezone.utc)
+    order = _order(order_status="attempted", delivery_person_id="d1")
+    fom = FakeOrderManager(order)
+    prior = [SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
+                             created_at=now, payload=None, changed_by="d1", remarks=None,
+                             source="rider_app") for _ in range(2)]
+    ftrack = FakeTracking(rows=list(prior))
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom
+    SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="mgr", role="OUTLET_MANAGER", scope_level="GLOBAL")
+        asyncio.run(L.confirm_order_return("o1", ctx))
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    types = [r.event_type for r in ftrack.rows]
+    assert "RETURNED_TO_OUTLET" in types
+    assert "ESCALATED_CRM" not in types
+    assert order.order_status == "pending"
+    print("OK: test_return_confirm_no_escalation_under_three")
+
+
 def _escalated_order_rows():
     now = datetime.now(timezone.utc)
     rows = [SimpleNamespace(event_type="RIDER_DISPOSITION", status_changed_to="attempted",
@@ -227,12 +278,40 @@ def test_crm_decline_cancels_with_reason():
     print("OK: test_crm_decline_cancels_with_reason")
 
 
+def test_crm_outcome_rejects_non_review_order():
+    import routers.v1.order_lifecycle as L
+    import services.order_events_service as SVC
+    from utils.auth import AuthContext
+    from fastapi import HTTPException
+    order = _order(order_status="attempted")
+    fom = FakeOrderManager(order)
+    # No ESCALATED_CRM event anywhere in the log -> escalation_state stays NONE.
+    ftrack = FakeTracking(rows=[])
+    orig = (L.order_manager, SVC.tracking_manager)
+    L.order_manager = fom; SVC.tracking_manager = ftrack
+    try:
+        ctx = AuthContext(user_id="tc1", role="TELECALLER", scope_level="GLOBAL")
+        try:
+            asyncio.run(L.submit_crm_outcome("o1", SimpleNamespace(outcome="confirm", remark="x"), ctx))
+            raised = False
+        except HTTPException as e:
+            raised = True
+            assert e.status_code == 400
+    finally:
+        L.order_manager, SVC.tracking_manager = orig
+    assert raised
+    print("OK: test_crm_outcome_rejects_non_review_order")
+
+
 if __name__ == "__main__":
-    test_third_disposition_writes_escalation_event()
+    test_webhook_writes_disposition_no_escalation()
     test_delete_writes_snapshot_event_before_delete()
     test_timeline_returns_events_and_state()
     test_returns_lists_rider_custody_orders()
     test_return_confirm_sets_pending_and_logs_event()
+    test_return_confirm_escalates_after_three_attempts()
+    test_return_confirm_no_escalation_under_three()
     test_crm_confirm_bounces_to_logistics()
     test_crm_decline_cancels_with_reason()
+    test_crm_outcome_rejects_non_review_order()
     print("All tests passed.")

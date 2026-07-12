@@ -17,10 +17,9 @@ from models import (
     ListResponse, StatusResponse, UserResponse, OutletResponse
 )
 from services import order_events_service
-from services.order_events_service import fold_order_state, should_escalate
 from utils.auth import require_permission, apply_scope, get_password_hash, AuthContext
 from utils.permissions import Permission, ScopeLevel
-from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod, OrderEventType, SYSTEM_USER_UID
+from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod, OrderEventType
 from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
 from utils.smartping_utils import trigger_smartping_event_bg
@@ -280,10 +279,6 @@ async def delete_delivery_guy(
 async def update_delivery_status(
     payload: List[DeliveryStatusUpdatePayload],
     background_tasks: BackgroundTasks,
-    # The captain backend's ErpClient authenticates as a microservice via X-API-Key,
-    # which SDKMiddleware resolves to scopes on request.state.scopes. Mirrors the same
-    # rider-facing bulk-assign endpoint (orders.py's bulk/assign-delivery).
-    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_STATUS, allow_scopes=["delivery:work"])),
 ):
     """
     Webhook endpoint to receive delivery status updates for multiple orders.
@@ -405,18 +400,6 @@ async def update_delivery_status(
                 remarks=item.remarks,
                 postpone_date=item.postpone_date,
             )
-            # Fold the full log and escalate if the fresh cycle of 3 is complete.
-            events = await order_events_service.load_events(order_uid)
-            state = fold_order_state(events)
-            if should_escalate(state):
-                await order_events_service.record_event(
-                    order, OrderEventType.ESCALATED_CRM,
-                    actor_id=SYSTEM_USER_UID, source="system",
-                    status=order.order_status,
-                    remarks=f"Auto-escalated to CRM after {state.attempt_count} attempts.",
-                    payload={"attempt_count": state.attempt_count,
-                             "escalation_count": state.escalation_count},
-                )
 
             if did_auto_reconcile:
                 item_crm_tasks.append((order_uid, ActivityType.PAYMENT_STATUS))

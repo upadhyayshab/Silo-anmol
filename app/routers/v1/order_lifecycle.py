@@ -10,7 +10,7 @@ from config import get_settings, get_engine
 from managers import CustomerOrderManager, UserManager
 from models import CrmOutcomeRequest
 from services import order_events_service
-from services.order_events_service import fold_order_state
+from services.order_events_service import fold_order_state, should_escalate
 from services.order_aging_service import AGE_LIMIT
 from utils.auth import AuthContext, require_permission
 from utils.constants import (
@@ -87,12 +87,16 @@ async def get_rider_returns(
         last_disp = max((e.created_at for e in events
                          if e.event_type == OrderEventType.RIDER_DISPOSITION), default=None)
         hours = round((now - last_disp).total_seconds() / 3600, 1) if last_disp else None
+        days_left = None
+        if state.escalated_at:
+            days_left = max(0, (AGE_LIMIT - (now - state.escalated_at)).days)
         g = groups.setdefault(o.delivery_person_id, {
             "delivery_person_id": o.delivery_person_id, "orders": []})
         g["orders"].append({
             "uid": o.uid, "order_number": o.order_number,
             "customer_name": getattr(o, "customer_name", None), "attempt_count": state.attempt_count,
             "with_rider_hours": hours,
+            "escalated_at": state.escalated_at, "days_left": days_left,
         })
     names = await _actor_names(list(groups.keys()))
     for pid, g in groups.items():
@@ -117,6 +121,20 @@ async def confirm_order_return(
         order, OrderEventType.RETURNED_TO_OUTLET,
         actor_id=ctx.user_id, source="erp", status=OrderStatus.PENDING,
         remarks="Undelivered goods received back at outlet.")
+
+    # Fold the full log and escalate if the fresh cycle of 3 is complete. Goods are
+    # physically back at the outlet before CRM ever sees the order (design §4).
+    events = await order_events_service.load_events(order_id)
+    state = fold_order_state(events)
+    if should_escalate(state):
+        await order_events_service.record_event(
+            order, OrderEventType.ESCALATED_CRM,
+            actor_id=ctx.user_id, source="erp",
+            status=order.order_status,
+            remarks=f"Auto-escalated to CRM on return after {state.attempt_count} attempts.",
+            payload={"attempt_count": state.attempt_count,
+                     "escalation_count": state.escalation_count},
+        )
     return {"status": "ok"}
 
 
@@ -156,6 +174,9 @@ async def submit_crm_outcome(
 ):
     """CRM disposition for an order sitting in escalation_state=CRM_REVIEW."""
     order = await order_manager.fetch(order_id)
+    state = fold_order_state(await order_events_service.load_events(order_id))
+    if state.escalation_state != EscalationState.CRM_REVIEW:
+        raise HTTPException(status_code=400, detail="Order is not under CRM review.")
     outcome = payload.outcome
     if outcome == "confirm":
         await order_manager.update(order_id, {

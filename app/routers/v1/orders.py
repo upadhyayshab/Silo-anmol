@@ -20,10 +20,11 @@ from models import (
 )
 from utils.auth import require_permission, apply_scope, apply_field_mask, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
-from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, payment_status_for, OrderEventType
+from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType, payment_status_for, OrderEventType, EscalationState
 from utils.crm_constants import ActivityType
 from utils.warehouse_utils import get_default_warehouse_id
 from services import CRMService, storeService, deliveryService, order_events_service
+from services.order_events_service import fold_order_state
 from services.deliveryService import ScheduledDeliveryRequest, ScheduledAssignment, ScheduledOrder
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
 from utils.crm_utils import sync_order_to_crm
@@ -983,6 +984,17 @@ async def bulk_assign_delivery_guy_to_orders(
                     ))
                      failed_count += 1
                      continue
+
+                # Mutual exclusion: an order under CRM review belongs to CRM, not logistics.
+                state = fold_order_state(await order_events_service.load_events(order_id))
+                if state.escalation_state == EscalationState.CRM_REVIEW:
+                    results.append(BulkAssignmentResult(
+                        order_id=order_id,
+                        status="failed",
+                        message="Order is under CRM review and cannot be assigned"
+                    ))
+                    failed_count += 1
+                    continue
 
                 # Skip ERP update if already assigned to this person and already in DELIVERY_ALLOTTED status
                 if order.delivery_person_id == user.uid and order.order_status == OrderStatus.DELIVERY_ALLOTTED:
