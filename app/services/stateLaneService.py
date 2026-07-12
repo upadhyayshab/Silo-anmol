@@ -12,7 +12,6 @@ import sqlalchemy as db
 
 from managers import LeadManager, LeadSchema, UserSchema, FacebookPageSchema
 from services import leadService
-from utils.crm_enums import LeadStage
 from utils.constants import TELECALLER_ROLES
 
 # "online" = seen within this window (matches assignmentService auto-assign).
@@ -115,8 +114,9 @@ def _role_value(role):
 
 async def state_lane_overview(engine, *, from_date: Optional[date] = None,
                               to_date: Optional[date] = None) -> Dict[str, Any]:
-    """Batched GROUP BY reads -> assemble_lanes. The date range only moves the
-    'leads_in' counts; backlog/load/quota/online are always live."""
+    """Batched GROUP BY reads -> assemble_lanes. The date range (default: today) scopes
+    both 'leads_in' and each telecaller's 'load' (leads assigned in-window); backlog
+    (unassigned), quota and online are always live."""
     gte, lte = _day_bounds(from_date, to_date)
     telecaller_role_vals = {_role_value(r) for r in TELECALLER_ROLES}
     lm = LeadManager(engine)
@@ -146,15 +146,16 @@ async def state_lane_overview(engine, *, from_date: Optional[date] = None,
                 LeadSchema.deleted_at.is_(None), LeadSchema.owner_id.is_(None))
               .group_by(LeadSchema.state))).all()}
 
-        # Load = FRESH (untouched, New Lead) leads only — the same currency the quota
-        # engine caps (assignmentService._fresh_counts). Counting the whole open book here
-        # made a telecaller's historical LSQ backlog (worked FTU/RTU/Engaged leads) show as
-        # over-quota (e.g. 349/30 red) when their real fresh backlog was ~2. The quota gates
-        # un-started leads, so the bar must measure those.
+        # Load = leads ASSIGNED to the owner in this window (owner set), using the SAME
+        # created_at range as leads_in above. Defaults to today (see _day_bounds), so the
+        # bar reads "assigned today / quota" — the metric an admin uses to see who the day's
+        # leads went to (whose share ran high). It pairs with the lane's "N in": of the N
+        # leads that came in this window, each telecaller got `load` of them.
+        # (Previously counted only fresh New-Lead backlog — pendency, which hid the day's
+        # distribution; a fast worker who cleared their leads showed 0 despite a heavy day.)
         load_by_owner = {o: int(c) for o, c in (await session.execute(
             db.select(LeadSchema.owner_id, db.func.count()).where(
-                LeadSchema.deleted_at.is_(None), LeadSchema.owner_id.isnot(None),
-                LeadSchema.stage == LeadStage.NEW_LEAD.value)
+                *range_conds, LeadSchema.owner_id.isnot(None))
               .group_by(LeadSchema.owner_id))).all()}
 
         telecallers = [
