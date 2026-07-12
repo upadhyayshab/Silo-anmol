@@ -1503,13 +1503,17 @@ class OutletDailyCollectionSchema(BaseSchema):
     transaction_id = db.Column(db.String(255), nullable=True)
     remarks = db.Column(db.Text, nullable=True)
     
+    # Who recorded it (the outlet manager) — for lifecycle history
+    created_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True, index=True)
+
     # Status tracking
     confirmation_status = db.Column(db.Enum(OutletCollectionStatus), nullable=False, default=OutletCollectionStatus.PENDING, index=True)
     confirmed_by = db.Column(db.String, db.ForeignKey("users.uid"), nullable=True)
     confirmed_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    
+
     # Relationships
     outlet = relationship("OutletSchema", foreign_keys=[outlet_id])
+    creator = relationship("UserSchema", foreign_keys=[created_by])
     confirmer = relationship("UserSchema", foreign_keys=[confirmed_by])
 
 
