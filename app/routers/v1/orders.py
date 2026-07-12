@@ -1976,6 +1976,17 @@ async def _apply_status_change(
     """
     old_status = order.order_status
 
+    # Mutual exclusion: an order under CRM review belongs to CRM, not logistics.
+    # Block any logistics-driven status change (assign/cancel/postpone/etc.) on it —
+    # CRM resolves it via the CRM queue (crm-outcome), which does not go through here.
+    # ponytail: one fold per status change; fine at this call rate.
+    _crm_state = fold_order_state(await order_events_service.load_events(order.uid))
+    if _crm_state.escalation_state == EscalationState.CRM_REVIEW:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Order is under CRM review and cannot be changed by logistics. Resolve it via the CRM queue.",
+        )
+
     # Validate status transition
     if not _transition_allowed(order.order_status, new_status, allow_uncancel=allow_uncancel):
         raise HTTPException(

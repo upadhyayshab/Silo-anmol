@@ -98,6 +98,7 @@ class FakeTracking:
 def _run_bulk(orders, **payload_kw):
     """Patch orders.py module globals, run the endpoint, restore in finally."""
     import routers.v1.orders as O
+    import services.order_events_service as SVC
     from fastapi import BackgroundTasks
     from models import BulkOrderStatusUpdateRequest
     from utils.auth import AuthContext
@@ -105,14 +106,15 @@ def _run_bulk(orders, **payload_kw):
     fom, fstore, ftrack = FakeOrderManager(orders), FakeStore(), FakeTracking()
     bt = BackgroundTasks()
     ctx = AuthContext(user_id="super", role="SUPER_ADMIN", scope_level="GLOBAL")
-    orig = (O.order_manager, O.store_service, O.tracking_manager)
+    orig = (O.order_manager, O.store_service, O.tracking_manager, SVC.tracking_manager)
     O.order_manager, O.store_service, O.tracking_manager = fom, fstore, ftrack
+    SVC.tracking_manager = ftrack  # _apply_status_change's CRM-review guard folds events via SVC
     try:
         resp = asyncio.run(O.bulk_update_order_status(
             BulkOrderStatusUpdateRequest(**payload_kw), bt, ctx))
         return resp, fom, fstore, ftrack, bt
     finally:
-        O.order_manager, O.store_service, O.tracking_manager = orig
+        O.order_manager, O.store_service, O.tracking_manager, SVC.tracking_manager = orig
 
 
 def _expect_400(fn):
