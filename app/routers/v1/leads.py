@@ -372,6 +372,22 @@ async def agent_performance_report(
     return {"items": rows, "total": len(rows)}
 
 
+@router.get("/state-pivot")
+async def state_pivot_report(
+    from_date: Optional[date] = Query(None, description="Lead created on/after (inclusive)"),
+    to_date: Optional[date] = Query(None, description="Lead created on/before (inclusive)"),
+    source: Optional[str] = Query(None),
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
+):
+    """State x stage pivot (the Google-Sheet the business uses): per-state lead-stage
+    counts + Grand Total, Attempted/Connected/Conversion/Not-Connected % and Avg
+    Lead/Day. Agency-scoped for agency admins via _report_scope_owner."""
+    return await crmReportService.state_stage_pivot(
+        engine, from_date=from_date, to_date=to_date, source=source,
+        scope_owner_id=await _report_scope_owner(ctx),
+    )
+
+
 class AgencyReassignRequest(BaseModel):
     mobile: str
     telecaller_id: str

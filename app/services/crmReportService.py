@@ -410,3 +410,93 @@ async def agent_performance(
         })
     rows.sort(key=lambda r: r["conversion_pct"])  # match the sheet (ascending by conv%)
     return rows
+
+
+# --- State × stage pivot ("Prospect Pivot" dashboard) -----------------------
+# Same three stage ratios as agent_performance, but pivoted per lead-inflow STATE
+# (Telangana kept separate, unlike the AP-folded region filter) with Grand Total,
+# Not-Connected%, and Avg Lead/Day rows — the Google-Sheet pivot the business uses.
+
+_PIVOT_STAGES = [s.value for s in LeadStage]  # row order = enum order
+
+
+def _state_label(state: Optional[str]) -> str:
+    return (state or "").strip().title() or "Blank"
+
+
+def _pct(numer: float, denom: float) -> float:
+    return round(100 * numer / denom, 1) if denom else 0.0
+
+
+def _pivot_days(from_date: Optional[date], to_date: Optional[date]) -> int:
+    # Avg Lead/Day divides by the window's inclusive day count; default 1 (no window)
+    # so it degrades to "leads in total" rather than dividing by zero.
+    if from_date and to_date:
+        return max(1, (to_date - from_date).days + 1)
+    return 1
+
+
+def build_state_pivot(counts: Dict[Tuple[str, str], int],
+                      from_date: Optional[date] = None,
+                      to_date: Optional[date] = None) -> Dict[str, Any]:
+    """Assemble the SS-shaped pivot from a ``(state_label, stage_value) -> count`` map.
+    Columns = states present (Blank first, then A→Z) + Grand Total; rows = the stages
+    present (enum order) then the derived %/avg rows. Percentages are stage ratios over
+    each column's own Grand Total, identical to agent_performance."""
+    days = _pivot_days(from_date, to_date)
+    present = {s for (s, _stg) in counts}
+    state_cols = (["Blank"] if "Blank" in present else []) + sorted(s for s in present if s != "Blank")
+    columns = state_cols + ["Grand Total"]
+
+    def cell(col: str, stage: str) -> int:
+        if col == "Grand Total":
+            return sum(counts.get((s, stage), 0) for s in state_cols)
+        return counts.get((col, stage), 0)
+
+    stages = [stg for stg in _PIVOT_STAGES if any(cell(c, stg) for c in columns)]
+    totals = {c: sum(cell(c, stg) for stg in stages) for c in columns}
+
+    rows: List[Dict[str, Any]] = [
+        {"label": stg, "type": "count", "values": {c: cell(c, stg) for c in columns if cell(c, stg)}}
+        for stg in stages
+    ]
+    rows.append({"label": "Grand Total", "type": "total", "values": totals})
+
+    NEW, NR = LeadStage.NEW_LEAD.value, LeadStage.NOT_REACHABLE.value
+    FTU, RTU = LeadStage.FTU.value, LeadStage.RTU.value
+
+    def metric(label, kind, fn):
+        return {"label": label, "type": kind, "values": {c: fn(c, totals[c]) for c in columns}}
+
+    rows.append(metric("Attempted %", "pct", lambda c, T: _pct(T - cell(c, NEW), T)))
+    rows.append(metric("Lead to Connected %", "pct", lambda c, T: _pct(T - cell(c, NEW) - cell(c, NR), T)))
+    rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(cell(c, FTU) + cell(c, RTU), T)))
+    rows.append(metric("Not Connected", "warn", lambda c, T: _pct(cell(c, NR), T)))
+    rows.append(metric("Avg Lead/Day", "num", lambda c, T: round(T / days)))
+
+    return {"columns": columns, "rows": rows, "days": days}
+
+
+async def state_stage_pivot(
+    engine, *,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    source: Optional[str] = None,
+    scope_owner_id=None,
+) -> Dict[str, Any]:
+    """Count leads created in the window per (state, stage) and assemble the pivot.
+    Grouped by the raw lead.state (no AP-folding), so Telangana is its own column."""
+    conds, _ = _lead_filter_conds(
+        from_date=from_date, to_date=to_date, source=source,
+        scope_owner_id=scope_owner_id, gate_order_date=False)
+    lm = LeadManager(engine)
+    async with lm.session_factory() as session:
+        rows = (await session.execute(
+            db.select(LeadSchema.state, LeadSchema.stage, db.func.count())
+              .where(*conds).group_by(LeadSchema.state, LeadSchema.stage)
+        )).all()
+    counts: Dict[Tuple[str, str], int] = {}
+    for state, stage, cnt in rows:
+        sv = stage.value if hasattr(stage, "value") else stage
+        counts[(_state_label(state), sv)] = counts.get((_state_label(state), sv), 0) + int(cnt)
+    return build_state_pivot(counts, from_date, to_date)
