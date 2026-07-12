@@ -162,6 +162,22 @@ async def create_handover(
         except Exception:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
 
+        # Dedup guard: a rider may have only ONE open (PENDING) handover per outlet at a time.
+        # Both the rider ("send request") and the outlet manager ("collect") POST here, so this
+        # is the single choke point that stops a double — whether from a rider double-tap, a
+        # manager collecting instead of confirming, or two devices. Confirm/reject the open one
+        # first. (A race between two simultaneous POSTs still needs the partial unique index.)
+        existing = await handover_manager.fetch_all(filters={
+            "delivery_guy_id": dg_id,
+            "outlet_id": payload.outlet_id,
+            "status": OutletCollectionStatus.PENDING,
+        })
+        if existing.items:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An open handover already exists for this rider — confirm or reject it first.",
+            )
+
         handover_data = DeliveryGuyHandoverSchema(
             delivery_guy_id=dg_id,
             outlet_id=payload.outlet_id,
