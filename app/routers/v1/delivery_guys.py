@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from decimal import Decimal
 import re
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from utils import dependencies as D
 from config import get_settings, get_engine
 from managers import (
@@ -23,6 +23,7 @@ from utils.constants import UserRole, OrderStatus, PaymentStatus, PaymentMethod,
 from utils.crm_constants import ActivityType
 from utils.crm_utils import sync_order_to_crm
 from utils.smartping_utils import trigger_smartping_event_bg
+from utils.timeutils import ist_today
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -309,7 +310,12 @@ async def update_delivery_status(
 
             if item.status == "delivered":
                 new_status = OrderStatus.DELIVERED
-                updates["actual_delivery_date"] = datetime.utcnow()
+                # actual_delivery_date is a plain DATE column in prod (not
+                # timestamptz, despite the ORM's DateTime(timezone=True)
+                # declaration) — write the IST calendar day, not a UTC-naive
+                # datetime that Postgres would truncate to the wrong day for
+                # deliveries between IST midnight and 05:30 IST.
+                updates["actual_delivery_date"] = ist_today()
 
                 item_crm_tasks.append((order_uid, ActivityType.DELIVERY_STATUS))
                 # Process reconciliation and inventory only if order status is changing to delivered
@@ -341,7 +347,7 @@ async def update_delivery_status(
                             await inventory_manager.update(inv.uid, {
                                 "quantity": new_qty,
                                 "reserved_quantity": new_reserved,
-                                "last_updated": datetime.utcnow()
+                                "last_updated": datetime.now(timezone.utc)
                             })
                     
                     # Calculate rider earning based on rate card
@@ -360,7 +366,9 @@ async def update_delivery_status(
                 if item.status in ["postponed", "payment_not_ready"] and item.postpone_date:
                     updates["expected_delivery_date"] = item.postpone_date
                 else:
-                    updates["expected_delivery_date"] = datetime.utcnow().date() + timedelta(days=1)
+                    # IST "tomorrow" — a UTC-derived date() would still read as
+                    # today during the IST-midnight-to-05:30 window.
+                    updates["expected_delivery_date"] = ist_today() + timedelta(days=1)
                 updates["priority_level"] = (order.priority_level or 0) + 10
                 
             elif item.status == "cancelled":
@@ -377,7 +385,7 @@ async def update_delivery_status(
                         new_reserved = max(0, inv.reserved_quantity - order_item.quantity)
                         await inventory_manager.update(inv.uid, {
                             "reserved_quantity": new_reserved,
-                            "last_updated": datetime.utcnow()
+                            "last_updated": datetime.now(timezone.utc)
                         })
             else:
                 results.append({"order_id": item.order_id, "status": "failed", "message": f"Unknown status: {item.status}"})

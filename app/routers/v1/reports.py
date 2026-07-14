@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional, Dict, Any
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy import text, bindparam, String, ARRAY
 
@@ -16,6 +16,7 @@ from utils.auth import require_permission, apply_scope, AuthContext, outlet_ids_
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import OrderStatus, TransferStatus, PaymentStatus, PaymentMethod, OutletCollectionStatus
 from utils.functions import ensure_date
+from utils.timeutils import ist_range_bounds, ist_today
 import calendar
 from utils import dependencies as D
 
@@ -245,7 +246,7 @@ async def get_outlet_dashboard(
                 detail="Access denied: You can only view your outlet's dashboard"
             )
 
-        today = date.today()
+        today = ist_today()
         month_start = today.replace(day=1)
         
         # Get outlet data
@@ -300,7 +301,7 @@ async def get_outlet_dashboard(
             "total_inventory_items": len(inventory.items),
             "low_stock_count": len(low_stock_items),
             "low_stock_items": low_stock_items[:5],  # Top 5 low stock items
-            "last_updated": datetime.utcnow()
+            "last_updated": datetime.now(timezone.utc)
         }
     
     except HTTPException:
@@ -326,9 +327,9 @@ async def get_sales_summary(
     try:
         # Set default date range
         if not from_date:
-            from_date = date.today().replace(day=1)
+            from_date = ist_today().replace(day=1)
         if not to_date:
-            to_date = date.today()
+            to_date = ist_today()
 
         # Honor an explicit outlet_id for global callers; apply_scope then OVERRIDES
         # it for scoped roles (invoices key on outlet_id) so they can't query outside scope.
@@ -475,9 +476,9 @@ async def get_order_performance(
     """
     try:
         if not from_date:
-            from_date = date.today().replace(day=1)
+            from_date = ist_today().replace(day=1)
         if not to_date:
-            to_date = date.today()
+            to_date = ist_today()
 
         # Scope by the order's assigned outlet (global callers see all).
         filters = await apply_scope({}, ctx, outlet_column="assigned_outlet_id")
@@ -549,9 +550,9 @@ async def get_financial_summary(
     """
     try:
         if not from_date:
-            from_date = date.today().replace(day=1)
+            from_date = ist_today().replace(day=1)
         if not to_date:
-            to_date = date.today()
+            to_date = ist_today()
 
         filters = {"is_cancelled": False}
         if outlet_id:
@@ -638,9 +639,9 @@ async def get_product_performance(
     """
     try:
         if not from_date:
-            from_date = date.today().replace(day=1)
+            from_date = ist_today().replace(day=1)
         if not to_date:
-            to_date = date.today()
+            to_date = ist_today()
 
         # SENSITIVE (cost/profit/margin): gated behind FINANCE_READ. Holders are
         # GLOBAL-scoped, so honor an explicit outlet_id filter if provided.
@@ -765,9 +766,9 @@ async def get_activity_logs(
     """
     try:
         if not from_date:
-            from_date = date.today() - timedelta(days=7)  # Last 7 days
+            from_date = ist_today() - timedelta(days=7)  # Last 7 days
         if not to_date:
-            to_date = date.today()
+            to_date = ist_today()
         
         filters = {}
         if user_id:
@@ -869,9 +870,9 @@ async def get_transfer_efficiency(
     """
     try:
         if not from_date:
-            from_date = date.today().replace(day=1)
+            from_date = ist_today().replace(day=1)
         if not to_date:
-            to_date = date.today()
+            to_date = ist_today()
         
         transfers = await transfer_manager.fetch_all()
         
@@ -1497,8 +1498,12 @@ async def get_outlet_financial_summary(
         FROM customer_orders
         WHERE order_status = 'DELIVERED'
           AND assigned_outlet_id IS NOT NULL
-          AND (CAST(:from_date AS DATE) IS NULL OR (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date >= CAST(:from_date AS DATE))
-          AND (CAST(:to_date AS DATE) IS NULL OR (actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date <= CAST(:to_date AS DATE))
+          -- actual_delivery_date is a plain DATE column in prod (not timestamptz,
+          -- despite the ORM's DateTime(timezone=True) declaration — verified against
+          -- prod schema), so no AT TIME ZONE shift belongs here: it was silently
+          -- pulling every delivery date back by one day.
+          AND (CAST(:from_date AS DATE) IS NULL OR actual_delivery_date >= CAST(:from_date AS DATE))
+          AND (CAST(:to_date AS DATE) IS NULL OR actual_delivery_date <= CAST(:to_date AS DATE))
         GROUP BY assigned_outlet_id
     ),
     all_orders AS (
@@ -1630,15 +1635,16 @@ async def get_daily_collection_tracker(
     WITH delivery_data AS (
         SELECT
             co.assigned_outlet_id,
-            (co.actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date AS activity_date,
+            -- actual_delivery_date is a plain DATE in prod, not timestamptz — no
+            -- AT TIME ZONE shift (see outlet-financial-summary above).
+            co.actual_delivery_date AS activity_date,
             SUM(co.total_amount) AS to_collect,
             COUNT(co.uid)        AS order_count
         FROM customer_orders co
         WHERE co.order_status = 'DELIVERED'
           AND co.assigned_outlet_id IS NOT NULL
           AND co.actual_delivery_date IS NOT NULL
-          AND (co.actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date
-                  BETWEEN :from_date AND :to_date
+          AND co.actual_delivery_date BETWEEN :from_date AND :to_date
         GROUP BY co.assigned_outlet_id, 2
     ),
     collection_data AS (
@@ -1688,7 +1694,7 @@ async def get_daily_collection_tracker(
         WHERE co.order_status = 'DELIVERED'
           AND co.assigned_outlet_id IS NOT NULL
           AND co.actual_delivery_date IS NOT NULL
-          AND (co.actual_delivery_date AT TIME ZONE 'Asia/Kolkata')::date < :from_date
+          AND co.actual_delivery_date < :from_date
         GROUP BY co.assigned_outlet_id
     ),
     pre_paid AS (
@@ -1884,12 +1890,15 @@ async def get_outlet_product_summary(
         # Build filters
         filters = {}
 
-        # Date range filtering (nested under 'order' relationship)
+        # Date range filtering (nested under 'order' relationship). IST day bounds,
+        # converted to UTC — order_date is timestamptz, so a naive bound here would
+        # be interpreted on the UTC calendar day instead of IST.
+        gte, lte = ist_range_bounds(from_date, to_date)
         date_filter = {}
-        if from_date:
-            date_filter["$gte"] = datetime.combine(from_date, datetime.min.time())
-        if to_date:
-            date_filter["$lte"] = datetime.combine(to_date, datetime.max.time())
+        if gte is not None:
+            date_filter["$gte"] = gte
+        if lte is not None:
+            date_filter["$lte"] = lte
 
         if date_filter:
             filters["order.order_date"] = date_filter

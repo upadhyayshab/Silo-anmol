@@ -1,8 +1,11 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from .config import JOBS_CONFIG
 
-# Initialize fully async scheduler (defaults to MemoryJobStore)
-scheduler_app = AsyncIOScheduler()
+# Initialize fully async scheduler (defaults to MemoryJobStore). Explicit IST
+# timezone so CronTrigger hour/minute values in config.py mean IST wall-clock
+# directly, instead of implicitly depending on the container's system tz
+# (which happens to be UTC today, but was never guaranteed).
+scheduler_app = AsyncIOScheduler(timezone="Asia/Kolkata")
 
 # Dynamically register all tasks from the config file
 def load_jobs():

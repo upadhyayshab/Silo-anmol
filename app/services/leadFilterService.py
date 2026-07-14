@@ -26,6 +26,7 @@ from managers import LeadSchema, CustomerOrderSchema, LeadActivitySchema
 from utils.crm_enums import LeadStage, LeadActivityType, CallOutcome
 from utils.crm_constants import LeadSource
 from utils.constants import OrderStatus, PaymentMethod
+from utils.timeutils import ist_date
 
 
 class FilterValidationError(ValueError):
@@ -178,8 +179,14 @@ def _resolve_col(field):
 def _date_clause(col, operator, value):
     """The date/datetime operator logic, factored out so linked-table date fields
     reuse the exact same comparisons on a child-table column. Returns None if the
-    operator isn't a date operator (caller decides how to error)."""
-    dcol = func.date(col)
+    operator isn't a date operator (caller decides how to error).
+
+    Every "date"/"datetime" catalog field maps to a timestamptz column
+    (created_at, follow_up_at, last_activity_at, or a linked table's
+    created_at) — shift to the IST calendar day before comparing, else the
+    session's UTC TimeZone buckets a pick like "on Jul 14" onto the wrong
+    day for anything after 18:30 IST."""
+    dcol = ist_date(col)
     if operator == "on":
         return dcol == _date(value)
     if operator == "before":

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from decimal import Decimal
 
 from config import get_settings, get_engine
@@ -16,6 +16,7 @@ from models import (
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import PaymentStatus, PaymentMethod, OrderStatus
+from utils.timeutils import IST, ist_today
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -82,17 +83,22 @@ async def record_order_payment(
             payment_method=payload.payment_method,
             amount_paid=payload.amount_paid,
             transaction_reference=payload.transaction_reference,
-            payment_date=datetime.now(),
+            payment_date=datetime.now(timezone.utc),
             received_by=ctx.user_id,
             notes=payload.notes
         )
-        
+
         created_transaction = await transaction_manager.create(transaction)
-        
-        # Update order status to delivered if payment received
+
+        # Update order status to delivered if payment received.
+        # actual_delivery_date is a plain DATE column (not timestamptz, despite
+        # the ORM's DateTime(timezone=True) declaration — verified against prod
+        # schema), so it must be written as the IST calendar day, not a UTC-naive
+        # datetime that Postgres would truncate to the wrong day for deliveries
+        # between IST midnight and 05:30 IST.
         await order_manager.update(payload.order_id, {
             "order_status": OrderStatus.DELIVERED,
-            "actual_delivery_date": datetime.now()
+            "actual_delivery_date": ist_today()
         })
         
         return OrderTransactionResponse(
@@ -127,26 +133,26 @@ async def get_daily_collection(
 ):
     """Get daily payment collections"""
     try:
-        from datetime import datetime, date as date_type
-        
-        # Parse date or use today
+        # Parse date or use today (IST calendar day)
         if date:
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
         else:
-            target_date = date_type.today()
-        
+            target_date = ist_today()
+
         # Build filters
         filters = {}
         if outlet_id:
             filters["outlet_id"] = outlet_id
-        
+
         # Get all transactions for the date
         all_transactions = await transaction_manager.fetch_all(filters=filters)
-        
-        # Filter by date
+
+        # Filter by date. payment_date is timestamptz (aware); shift to IST
+        # before taking the calendar date, else a payment made after 18:30 IST
+        # (past UTC midnight) is filed under tomorrow.
         daily_transactions = [
             t for t in all_transactions.items
-            if t.payment_date.date() == target_date
+            if t.payment_date.astimezone(IST).date() == target_date
         ]
         
         # Calculate totals by payment method
@@ -267,10 +273,12 @@ async def get_payment_transactions(
         filtered_transactions = []
 
         for transaction in transactions.items:
-            # Date filtering
-            if from_date and transaction.payment_date and transaction.payment_date.date() < from_date:
+            # Date filtering. payment_date is timestamptz; shift to IST before
+            # comparing calendar days (see get_daily_collection above).
+            pay_date = transaction.payment_date.astimezone(IST).date() if transaction.payment_date else None
+            if from_date and pay_date and pay_date < from_date:
                 continue
-            if to_date and transaction.payment_date and transaction.payment_date.date() > to_date:
+            if to_date and pay_date and pay_date > to_date:
                 continue
 
             # Scope-based access control: GLOBAL/microservice -> all; OUTLET -> own

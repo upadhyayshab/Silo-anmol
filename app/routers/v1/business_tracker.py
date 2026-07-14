@@ -10,14 +10,13 @@ from services.tracker_metrics import INPUT_KEYS, build_grid
 from services.tracker_queries import REGIONS, fetch_lead_facts, fetch_order_facts
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission, ScopeLevel
+from utils.timeutils import IST
 
 settings = get_settings()
 engine = get_engine(settings.name)
 input_manager = DailyTrackerInputManager(engine)
 
 router = APIRouter(prefix="/business-tracker", tags=["Business Daily Tracker"])
-
-IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _month_bounds(month: str):

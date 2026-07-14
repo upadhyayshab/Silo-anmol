@@ -12,6 +12,7 @@ from managers import (
 )
 from utils.constants import InvoiceType, PaymentStatus, PaymentMethod
 from services.pdf_service import InvoicePDFGenerator
+from utils.timeutils import ist_today
 
 
 class InvoiceService:
@@ -32,7 +33,7 @@ class InvoiceService:
         Generate sequential invoice number
         Format: INV-{OUTLET_CODE}-{YEAR}-{SEQUENTIAL}
         """
-        current_year = datetime.now().year
+        current_year = ist_today().year
         
         # Get last invoice for this outlet and year
         all_invoices = await self.invoice_manager.fetch_all()
@@ -205,7 +206,7 @@ class InvoiceService:
                 customer_address=customer_details.get('customer_address') if customer_details else None,
                 customer_gstin=customer_details.get('customer_gstin') if customer_details else None,
                 customer_state_code=customer_details.get('customer_state_code') if customer_details else None,
-                invoice_date=date.today(),
+                invoice_date=ist_today(),
                 invoice_type=InvoiceType.REGULAR,
                 payment_method=payment_method,
                 payment_status=PaymentStatus.PAID,

@@ -19,12 +19,9 @@ import sqlalchemy as db
 
 from managers import AttendanceDayManager, AttendanceDaySchema, UserSchema
 from utils.constants import OWNER_ROLES
+from utils.timeutils import IST
 
 logger = logging.getLogger(__name__)
-
-# India Standard Time — attendance is bucketed on the IST calendar day (the business is
-# India-wide and shifts are IST).
-IST = timezone(timedelta(hours=5, minutes=30))
 
 # A day counts as Present when the first-in -> last-out span reaches this many hours.
 PRESENT_HOURS = 7.0

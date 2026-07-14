@@ -19,6 +19,7 @@ from utils.permissions import Permission, ScopeLevel
 from utils.constants import OrderStatus, PayoutStatus, PayoutFrequency
 from utils import dependencies as D
 from utils.functions import ensure_date
+from utils.timeutils import ist_today
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -291,7 +292,7 @@ async def update_payout_status(
     }
     
     if payload.status == PayoutStatus.PAID:
-        updates["payment_date"] = date.today()
+        updates["payment_date"] = ist_today()
         updates["paid_by"] = current_user_id
         
     try:

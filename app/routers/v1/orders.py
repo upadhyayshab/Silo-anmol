@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query, BackgroundTasks
 from typing import List, Optional, Any, Dict
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
 from utils import dependencies as D
 from config import get_settings, get_engine
@@ -30,6 +30,7 @@ from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned
 from utils.crm_utils import sync_order_to_crm
 from utils.delivery_utils import build_cumulative_remarks
 from utils.smartping_utils import trigger_smartping_event_bg
+from utils.timeutils import ist_range_bounds, ist_today
 import uuid
 
 settings = get_settings()
@@ -1420,7 +1421,7 @@ openapi_examples={
                 if inv:
                     await inventory_manager.update(inv.uid, {
                         "quantity": inv.quantity + item.quantity,
-                        "last_updated": datetime.utcnow()
+                        "last_updated": datetime.now(timezone.utc)
                     })
 
         # 6. Replace items (delete old, create new)
@@ -1448,7 +1449,7 @@ openapi_examples={
                 if inv:
                     await inventory_manager.update(inv.uid, {
                         "quantity": max(0, inv.quantity - item_data["quantity"]),
-                        "last_updated": datetime.utcnow()
+                        "last_updated": datetime.now(timezone.utc)
                     })
                 
         # Commit order level updates to database
@@ -1572,13 +1573,15 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         if customer_phone:
             filters["customer_phone"] = customer_phone
 
-        # 3. Date range filters
+        # 3. Date range filters. order_date is timestamptz — build the range in IST
+        # so a picked calendar day means that day in IST, not UTC.
         if from_date or to_date:
+            gte, lte = ist_range_bounds(from_date, to_date)
             date_filter = {}
-            if from_date:
-                date_filter[">="] = datetime.combine(from_date, time.min)
-            if to_date:
-                date_filter["<="] = datetime.combine(to_date, time.max)
+            if gte is not None:
+                date_filter[">="] = gte
+            if lte is not None:
+                date_filter["<="] = lte
             filters["order_date"] = date_filter
 
         # 4. Handle type coercion for dynamic filters (Date-only columns or columns where date-level filtering is common)
@@ -2003,7 +2006,11 @@ async def _apply_status_change(
     update_order = lambda order_obj, update_dict: [setattr(order_obj, k, v) for k, v in update_dict.items()]
 
     if new_status == OrderStatus.DELIVERED:
-        update_data["actual_delivery_date"] = datetime.utcnow()
+        # actual_delivery_date is a plain DATE column in prod (not timestamptz,
+        # despite the ORM's DateTime(timezone=True) declaration) — write the IST
+        # calendar day, not a UTC-naive datetime Postgres would truncate wrong
+        # for deliveries between IST midnight and 05:30 IST.
+        update_data["actual_delivery_date"] = ist_today()
 
         # Update local object so model_dump() picks it up for CRM
         update_order(order, update_data)
@@ -2035,7 +2042,11 @@ async def _apply_status_change(
         # Stock reservation logic removed
 
     elif new_status == OrderStatus.DELIVERY_ALLOTTED:
-        update_data["actual_delivery_date"] = datetime.utcnow()
+        # actual_delivery_date is a plain DATE column in prod (not timestamptz,
+        # despite the ORM's DateTime(timezone=True) declaration) — write the IST
+        # calendar day, not a UTC-naive datetime Postgres would truncate wrong
+        # for deliveries between IST midnight and 05:30 IST.
+        update_data["actual_delivery_date"] = ist_today()
 
         # Update local object so model_dump() picks it up for CRM
         update_order(order, update_data)
@@ -2205,7 +2216,7 @@ async def consume_order_stock(order_id: str):
                 inventory_item.uid,
                 {
                     "quantity": max(0, inventory_item.quantity - item.quantity),
-                    "last_updated": datetime.utcnow()
+                    "last_updated": datetime.now(timezone.utc)
                 }
             )
 
@@ -2732,7 +2743,7 @@ async def revoke_order(
                             inventory_item.uid,
                             {
                                 "quantity": inventory_item.quantity + item.quantity,
-                                "last_updated": datetime.utcnow()
+                                "last_updated": datetime.now(timezone.utc)
                             }
                         )
                     # For CANCELLED orders, no stock was reserved/consumed, so no change

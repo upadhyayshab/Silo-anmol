@@ -13,6 +13,7 @@ import sqlalchemy as db
 from managers import LeadManager, LeadSchema, UserSchema, FacebookPageSchema
 from services import leadService
 from utils.constants import TELECALLER_ROLES
+from utils.timeutils import ist_day_bounds
 
 # "online" = seen within this window (matches assignmentService auto-assign).
 ONLINE_WINDOW_SECONDS = 1800
@@ -99,13 +100,11 @@ def assemble_lanes(*, pages: List[dict], leads_in_by_state: Dict, leads_in_by_pa
 
 
 def _day_bounds(from_date: Optional[date], to_date: Optional[date]):
-    """Inclusive UTC day bounds on lead.created_at. Neither given -> today."""
-    if from_date is None and to_date is None:
-        today = datetime.now(timezone.utc).date()
-        from_date = to_date = today
-    gte = datetime.combine(from_date, datetime.min.time(), tzinfo=timezone.utc) if from_date else None
-    lte = datetime.combine(to_date, datetime.max.time(), tzinfo=timezone.utc) if to_date else None
-    return gte, lte
+    """Inclusive IST day bounds on lead.created_at, converted to UTC for the
+    query. Neither given -> today (IST). Matches the quota gate in
+    assignmentService._ist_day_start_utc so the lane gauge and the daily
+    quota agree on what "today" means."""
+    return ist_day_bounds(from_date, to_date)
 
 
 def _role_value(role):

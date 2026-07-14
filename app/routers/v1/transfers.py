@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from config import get_settings, get_engine
 from managers import (
@@ -1144,7 +1144,7 @@ async def deduct_stock_from_source(transfer_id: str):
                 source_item.uid,
                 {
                     "quantity": source_item.quantity - qty,
-                    "last_updated": datetime.utcnow()
+                    "last_updated": datetime.now(timezone.utc)
                 }
             )
 
@@ -1168,7 +1168,7 @@ async def add_stock_to_destination(transfer_id: str):
                 dest_item.uid,
                 {
                     "quantity": dest_item.quantity + item.quantity_requested,
-                    "last_updated": datetime.utcnow()
+                    "last_updated": datetime.now(timezone.utc)
                 }
             )
         else:
@@ -1217,7 +1217,7 @@ async def revert_stock_to_source(transfer_id: str):
                     source_item.uid,
                     {
                         "quantity": source_item.quantity + item.quantity_requested,
-                        "last_updated": datetime.utcnow()
+                        "last_updated": datetime.now(timezone.utc)
                     }
                 )
             else:

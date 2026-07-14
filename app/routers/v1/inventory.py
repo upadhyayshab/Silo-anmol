@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import get_settings, get_engine
 from managers import (
@@ -422,7 +422,7 @@ async def adjust_stock(
                 inventory_item.uid,
                 {
                     "quantity": new_quantity,
-                    "last_updated": datetime.utcnow()
+                    "last_updated": datetime.now(timezone.utc)
                 }
             )
             
@@ -627,7 +627,7 @@ async def consume_reserved_stock(
             {
                 "quantity": new_quantity,
                 "outlet_id": target_outlet_id,
-                "last_updated": datetime.utcnow()
+                "last_updated": datetime.now(timezone.utc)
             }
         )
         

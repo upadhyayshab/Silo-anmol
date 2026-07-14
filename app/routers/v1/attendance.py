@@ -13,13 +13,12 @@ from config import get_settings, get_engine
 from utils.auth import require_permission, apply_scope, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from services import attendanceService
+from utils.timeutils import IST
 
 settings = get_settings()
 engine = get_engine(settings.name)
 
 router = APIRouter(prefix="/crm/attendance", tags=["CRM - Attendance"])
-
-IST = timezone(timedelta(hours=5, minutes=30))
 
 
 async def _scope_owner(ctx: AuthContext):

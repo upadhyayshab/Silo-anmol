@@ -9,6 +9,7 @@ from managers.erpManagers import (
     InventoryAuditSchema, InventoryAuditItemSchema
 )
 from models.erpModels import AuditStatus
+from utils.timeutils import ist_today
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class InventoryAuditService:
         Generate weekly inventory audit tasks for all active outlets.
         Runs every Saturday; the cycle's fill window closes the following Wednesday.
         """
-        today = date.today()
+        today = ist_today()
         # The Saturday that opens this cycle — the canonical key for "this week's" audit.
         week_start = cycle_start(today)
         logger.info(f"Starting weekly inventory audit generation for cycle starting {week_start}")
@@ -113,7 +114,7 @@ class InventoryAuditService:
         already closed is moved to CLOSED (a "missed" record) so it stops being
         fillable and no longer lingers next to the new cycle's audit.
         """
-        today = date.today()
+        today = ist_today()
         # A cycle that opened on `week_start` closes on week_start + CYCLE_LENGTH_DAYS
         # (the Wednesday). It is overdue once today is past that date.
         cutoff = today - timedelta(days=CYCLE_LENGTH_DAYS)

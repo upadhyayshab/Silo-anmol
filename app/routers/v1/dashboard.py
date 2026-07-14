@@ -18,6 +18,8 @@ from utils.auth import require_permission, get_auth_context, AuthContext, outlet
 from utils.permissions import Permission, ScopeLevel
 from utils.constants import OrderStatus, TransferStatus, PaymentStatus, OutletType
 from utils.warehouse_utils import get_default_warehouse_id
+from utils.timeutils import ist_today, ist_range_bounds
+from utils.functions import ensure_date
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -46,7 +48,7 @@ async def get_super_admin_dashboard(
     try:
         if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
             raise HTTPException(403, "Org-wide dashboard requires global scope")
-        today = date.today()
+        today = ist_today()
         month_start = today.replace(day=1)
 
         # Optional state narrowing: resolve to outlet uids, sentinel so a
@@ -195,12 +197,12 @@ async def get_orders_geography_overview(
                 ids = await outlet_ids_for_state(state)
                 query = query.where(CustomerOrderSchema.assigned_outlet_id.in_(ids or ["__none__"]))
                 
-            # Apply Date filters directly to SQL
-            if filter_from_date:
-                start_dt = datetime.combine(filter_from_date, time.min)
+            # Apply Date filters directly to SQL. order_date is timestamptz — build
+            # the range in IST so a picked calendar day means that day in IST.
+            start_dt, end_dt = ist_range_bounds(filter_from_date, filter_to_date)
+            if start_dt is not None:
                 query = query.where(CustomerOrderSchema.order_date >= start_dt)
-            if filter_to_date:
-                end_dt = datetime.combine(filter_to_date, time.max)
+            if end_dt is not None:
                 query = query.where(CustomerOrderSchema.order_date <= end_dt)
 
             # Group the results in the database
@@ -355,12 +357,11 @@ async def get_inventory_overview(
                 ids = await outlet_ids_for_state(state)
                 query = query.where(InventorySchema.outlet_id.in_(ids or ["__none__"]))
 
-            # Apply Date Filters on last_updated
-            if filter_from_date:
-                start_dt = datetime.combine(filter_from_date, time.min)
+            # Apply Date Filters on last_updated (timestamptz) — IST day bounds.
+            start_dt, end_dt = ist_range_bounds(filter_from_date, filter_to_date)
+            if start_dt is not None:
                 query = query.where(InventorySchema.last_updated >= start_dt)
-            if filter_to_date:
-                end_dt = datetime.combine(filter_to_date, time.max)
+            if end_dt is not None:
                 query = query.where(InventorySchema.last_updated <= end_dt)
 
             # Execute the optimized query
@@ -472,12 +473,12 @@ async def get_district_outlets_overview(
                 .outerjoin(OutletSchema, CustomerOrderSchema.assigned_outlet_id == OutletSchema.uid)
             )
 
-            # Apply date filters directly to the SQL WHERE clause
-            if filter_from_date:
-                start_dt = datetime.combine(filter_from_date, time.min)
+            # Apply date filters directly to the SQL WHERE clause. order_date is
+            # timestamptz — IST day bounds.
+            start_dt, end_dt = ist_range_bounds(filter_from_date, filter_to_date)
+            if start_dt is not None:
                 query = query.where(CustomerOrderSchema.order_date >= start_dt)
-            if filter_to_date:
-                end_dt = datetime.combine(filter_to_date, time.max)
+            if end_dt is not None:
                 query = query.where(CustomerOrderSchema.order_date <= end_dt)
 
             # Optional state narrowing by assigned outlet's state (sentinel so a
@@ -724,7 +725,7 @@ async def get_outlet_manager_dashboard(
                 detail="Access denied to this outlet"
             )
 
-        today = date.today()
+        today = ist_today()
         
         # Get outlet-specific data
         outlet_orders = await order_manager.fetch_all(
@@ -738,7 +739,7 @@ async def get_outlet_manager_dashboard(
         )
         
         # Today's data
-        today_orders = [o for o in outlet_orders.items if o.order_date.date() == today]
+        today_orders = [o for o in outlet_orders.items if ensure_date(o.order_date) == today]
         today_invoices = [i for i in outlet_invoices.items if i.invoice_date == today]
         
         # Calculate metrics
@@ -839,7 +840,7 @@ async def get_telecaller_dashboard(
                     detail="Invalid to_date format. Use YYYY-MM-DD"
                 )
         
-        today = date.today()
+        today = ist_today()
         month_start = today.replace(day=1)
         
         # Get telecaller's orders with items
@@ -874,23 +875,23 @@ async def get_telecaller_dashboard(
             
             order_items_map[order.uid] = order_items_with_products
         
-        # Apply date filters
+        # Apply date filters. order_date is timestamptz — compare IST calendar days.
         filtered_orders = my_orders.items
         if filter_from_date:
-            filtered_orders = [o for o in filtered_orders if o.order_date.date() >= filter_from_date]
+            filtered_orders = [o for o in filtered_orders if ensure_date(o.order_date) >= filter_from_date]
         if filter_to_date:
-            filtered_orders = [o for o in filtered_orders if o.order_date.date() <= filter_to_date]
-        
+            filtered_orders = [o for o in filtered_orders if ensure_date(o.order_date) <= filter_to_date]
+
         # Calculate performance metrics
         total_orders = len(filtered_orders)
-        today_orders = len([o for o in filtered_orders if o.order_date.date() == today])
-        month_orders = len([o for o in filtered_orders if o.order_date.date() >= month_start])
+        today_orders = len([o for o in filtered_orders if ensure_date(o.order_date) == today])
+        month_orders = len([o for o in filtered_orders if ensure_date(o.order_date) >= month_start])
         delivered_orders = len([o for o in filtered_orders if o.order_status == OrderStatus.DELIVERED])
-        
+
         total_revenue = sum([float(o.total_amount) for o in filtered_orders if o.order_status == OrderStatus.DELIVERED])
         month_revenue = sum([
-            float(o.total_amount) for o in filtered_orders 
-            if o.order_status == OrderStatus.DELIVERED and o.order_date.date() >= month_start
+            float(o.total_amount) for o in filtered_orders
+            if o.order_status == OrderStatus.DELIVERED and ensure_date(o.order_date) >= month_start
         ])
         
         # Build product-wise summary
@@ -1030,7 +1031,7 @@ async def get_accountant_dashboard(
     Accountant Dashboard - Financial overview and reports
     """
     try:
-        today = date.today()
+        today = ist_today()
         month_start = today.replace(day=1)
         
         # Get financial data

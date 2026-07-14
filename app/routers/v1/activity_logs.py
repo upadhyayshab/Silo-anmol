@@ -6,6 +6,7 @@ from config import get_settings, get_engine
 from managers import ActivityLogManager, UserManager, ActivityLogSchema
 from utils.auth import require_permission, AuthContext
 from utils.permissions import Permission
+from utils.functions import ensure_date
 from pydantic import BaseModel
 
 settings = get_settings()
@@ -272,9 +273,10 @@ async def get_activity_logs(
             user_name = user_cache[log.user_id]
             
             # Apply date filtering if specified
-            if start_date and log.created_at.date() < start_date:
+            log_date = ensure_date(log.created_at)
+            if start_date and log_date < start_date:
                 continue
-            if end_date and log.created_at.date() > end_date:
+            if end_date and log_date > end_date:
                 continue
             
             log_responses.append(ActivityLogResponse(
@@ -404,9 +406,10 @@ async def get_activity_logs(
         # Filter by date if specified
         filtered_logs = []
         for log in all_logs.items:
-            if start_date and log.created_at.date() < start_date:
+            log_date = ensure_date(log.created_at)
+            if start_date and log_date < start_date:
                 continue
-            if end_date and log.created_at.date() > end_date:
+            if end_date and log_date > end_date:
                 continue
             filtered_logs.append(log)
         

@@ -22,6 +22,7 @@ from managers import (
 )
 from utils.crm_enums import LeadActivityType, CallOutcome, LeadStage
 from utils.crm_constants import LeadSource
+from utils.timeutils import IST
 
 
 def _enum_or_raw(enum_cls, val):
@@ -75,9 +76,10 @@ def _disposition_label(details: dict, outcome: Optional[str]) -> str:
 # The business runs on IST; created_at/order_date are stored UTC timestamptz. Build
 # day bounds in IST so a picked calendar day means that day in IST, not UTC (else a
 # "to Jul 4" filter leaks in leads created early Jul 5 IST = late Jul 4 UTC).
-IST = timezone(timedelta(hours=5, minutes=30))
-
-
+#
+# NOTE: unlike utils.timeutils.ist_day_bounds, this does NOT default to "today"
+# when both args are None — an optional report filter with no range means "no
+# filter", not "today only". Keep this local (don't swap to the shared helper).
 def _day_bounds(from_date: Optional[date], to_date: Optional[date]):
     """Inclusive IST calendar-day bounds, tz-aware; the DB compares instants so the
     IST offset resolves to the correct UTC window against the UTC-stored columns."""

@@ -32,13 +32,10 @@ from utils.crm_enums import (LeadStage, LeadActivityType, AssignmentReason,
                              DISPOSITION_OUTCOME, DNC_SUB_DISPOSITIONS,
                              DISPOSITION_STAGE, PROTECTED_STAGES)
 from utils import dedup_utils
+from utils.timeutils import IST
 from services import assignmentService, presenceService
 
 logger = logging.getLogger(__name__)
-
-# India Standard Time — the business is India-wide, so "today" for the working
-# queue is bucketed on the IST calendar day.
-IST = timezone(timedelta(hours=5, minutes=30))
 
 
 def _start_of_ist_day(now: datetime) -> datetime:

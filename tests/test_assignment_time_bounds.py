@@ -23,8 +23,9 @@ sys.path.insert(0, os.path.join(_here, "..", "app"))
 sys.path.insert(0, os.path.join(_here, "..", "SharedBackend", "src"))
 
 from services.assignmentService import (  # noqa: E402
-    IST, CALL_ACCESS_TTL, _ist_day_start_utc, _ttl_cutoff,
+    CALL_ACCESS_TTL, _ist_day_start_utc, _ttl_cutoff,
 )
+from utils.timeutils import IST  # noqa: E402 — canonical home; assignmentService re-exports the helper, not the constant
 
 
 def _aware_utc(dt) -> bool:

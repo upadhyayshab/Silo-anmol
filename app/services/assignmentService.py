@@ -24,6 +24,7 @@ from managers import (
 from utils.constants import UserRole, TELECALLER_ROLES
 from utils.crm_enums import AssignmentReason
 from utils.outlet_assignment import auto_assign_outlet
+from utils.timeutils import ist_day_start_utc
 
 logger = logging.getLogger(__name__)
 
@@ -164,9 +165,6 @@ async def _active_assignment_counts(engine, telecaller_ids: List[str]) -> dict:
         return {tid: int(cnt) for tid, cnt in rows.all()}
 
 
-IST = timezone(timedelta(hours=5, minutes=30))
-
-
 def _ist_day_start_utc() -> datetime:
     """UTC instant of 00:00 IST today, tz-AWARE.
 
@@ -174,10 +172,12 @@ def _ist_day_start_utc() -> datetime:
     aware datetimes. Returning a naive bound here blew up the moment a caller compared it in
     Python rather than in SQL ("can't compare offset-naive and offset-aware datetimes" —
     leadService.distribute_leads._counts), and left the SQL bound leaning on the session's
-    TimeZone to be interpreted. Aware is correct for both."""
-    now_ist = datetime.now(IST)
-    midnight_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
-    return midnight_ist.astimezone(timezone.utc)
+    TimeZone to be interpreted. Aware is correct for both.
+
+    Delegates to the canonical app.utils.timeutils implementation; kept here
+    (and re-exported) since leadService/stateLaneService call it as
+    assignmentService._ist_day_start_utc()."""
+    return ist_day_start_utc()
 
 
 async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
