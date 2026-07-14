@@ -319,7 +319,7 @@ async def create_lead(engine, payload, by_user_id: str,
         picked = await assignmentService.pick_telecaller(
             engine, outlet_id, routing_state, only_ids=present,
             allow_cross_state=False,  # no in-region agent -> stays unassigned for manual (super-admin) assignment
-            enforce_quota=True,  # cap fresh backlog at assignment_quota; overflow waits for the sweep
+            enforce_quota=True,  # hard daily cap: stop at assignment_quota leads/day; overflow waits for a super admin
         )
         owner_id = picked.uid if picked else None
         reason = AssignmentReason.ROUND_ROBIN.value
@@ -845,8 +845,7 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     now = datetime.now(timezone.utc)
     today_start = assignmentService._ist_day_start_utc()
     pool_objects = []
-    fresh_loads = {}      # untouched New-Lead backlog -> gates the quota cap
-    current_loads = {}    # leads given today -> fairness balance (incremented as we assign)
+    current_loads = {}    # leads received today -> gates the daily quota AND balances the batch
     # An explicit target pool (admin picked telecallers) is honored as-is — a super admin can
     # place any lead on any telecaller. An automatic distribution (sweep / no pool given) stays
     # strictly within each lead's own state; a lead with no in-region agent is left unassigned
@@ -854,42 +853,39 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     auto = not telecaller_ids
 
     async def _counts(uid: str):
-        """(fresh New-Lead backlog, leads given today) for one agent, from a single fetch.
-        Fresh is the quota currency (untouched leads; working one frees its slot). Today-count
-        is the fairness metric — same split as the create path (assignmentService), so both
-        assignment paths spread leads equally instead of balancing on a fresh count that fast
-        workers keep at 0. Fresh twin: assignmentService._fresh_counts — keep in sync."""
+        """Leads this agent RECEIVED today (created_at >= 00:00 IST). Both gates the daily
+        quota — a worked lead no longer frees a slot, so assignment hard-stops at the quota
+        and the overflow waits for a super admin — and balances the batch (fewest-given wins).
+        Twin: assignmentService._received_today_counts — keep in sync."""
         rows = await lead_manager.fetch_all(filters={"owner_id": uid})
-        fresh = today = 0
+        today = 0
         for l in rows.items:
             if l.deleted_at is not None:
                 continue
-            stage = l.stage.value if hasattr(l.stage, "value") else l.stage
-            if stage == LeadStage.NEW_LEAD.value:
-                fresh += 1
             if l.created_at and l.created_at >= today_start:
                 today += 1
-        return fresh, today
+        return today
 
     async def add_to_pool(u):
         # Auto/sweep round-robin is telecallers only; an explicit admin pick (Change
         # Owner popup, auto=False) may also land on an agency admin — they can own leads.
         if u.role not in (OWNER_ROLES if not auto else TELECALLER_ROLES) or not u.is_active:
             return
-        fresh, today = await _counts(u.uid)
+        today = await _counts(u.uid)
         # Explicit admin pick (Change Owner / chosen pool, auto=False): honor it regardless
-        # of online status or quota — the super admin deliberately chose this telecaller.
+        # of online status or quota — the super admin deliberately chose this telecaller
+        # (this is the path that places the overflow the daily cap leaves unassigned).
         if not auto:
             pool_objects.append(u)
-            fresh_loads[u.uid], current_loads[u.uid] = fresh, today
+            current_loads[u.uid] = today
             return
         # Auto/sweep only: skip offline telecallers (no heartbeat > 30m) and those at quota.
         if not u.last_active_at or (now - u.last_active_at.replace(tzinfo=timezone.utc)).total_seconds() > 1800:
             return
-        if u.assignment_quota and u.assignment_quota > 0 and fresh >= u.assignment_quota:
+        if u.assignment_quota and u.assignment_quota > 0 and today >= u.assignment_quota:
             return
         pool_objects.append(u)
-        fresh_loads[u.uid], current_loads[u.uid] = fresh, today
+        current_loads[u.uid] = today
 
     # Build the validated target pool
     if telecaller_ids:
@@ -925,7 +921,7 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
         # Re-evaluate pool to exclude those who just hit their quota (auto/sweep only;
         # an explicit admin pick is honored regardless of quota).
         if auto:
-            valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and fresh_loads[u.uid] >= u.assignment_quota)]
+            valid_pool = [u for u in pool_objects if not (u.assignment_quota and u.assignment_quota > 0 and current_loads[u.uid] >= u.assignment_quota)]
         else:
             valid_pool = list(pool_objects)
 
@@ -952,13 +948,8 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
 
         await reassign(engine, lead, selected_tc.uid, by_user_id, reason=AssignmentReason.ROUND_ROBIN.value)
 
-        current_loads[selected_tc.uid] += 1   # +1 to their today-share (balances the batch)
-        # A freshly-assigned New lead also grows their fresh backlog, so the in-batch quota
-        # re-check stays honest; a reassigned already-worked lead does not.
-        lead_stage = getattr(lead, "stage", None)
-        stage_val = lead_stage.value if hasattr(lead_stage, "value") else lead_stage
-        if stage_val == LeadStage.NEW_LEAD.value:
-            fresh_loads[selected_tc.uid] += 1
+        current_loads[selected_tc.uid] += 1   # +1 to today's tally: balances the batch AND
+                                               # keeps the in-batch daily-quota re-check honest.
         assigned += 1
         by_tc[selected_tc.uid] = by_tc.get(selected_tc.uid, 0) + 1
 

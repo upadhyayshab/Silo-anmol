@@ -22,7 +22,7 @@ from managers import (
     LeadManager, LeadSchema,
 )
 from utils.constants import UserRole, TELECALLER_ROLES
-from utils.crm_enums import AssignmentReason, LeadStage
+from utils.crm_enums import AssignmentReason
 from utils.outlet_assignment import auto_assign_outlet
 
 logger = logging.getLogger(__name__)
@@ -164,29 +164,6 @@ async def _active_assignment_counts(engine, telecaller_ids: List[str]) -> dict:
         return {tid: int(cnt) for tid, cnt in rows.all()}
 
 
-async def _fresh_counts(engine, telecaller_ids: List[str]) -> dict:
-    """Map telecaller_id -> count of UNTOUCHED leads they own (stage still New Lead).
-
-    This is the assignment_quota currency: a lead frees its slot the moment it's
-    worked (any disposition moves the stage off New Lead), so the quota caps how many
-    un-started leads an agent may hold, not their total open book. Twin of
-    leadService.distribute_leads.get_active_count — keep the two definitions in sync."""
-    if not telecaller_ids:
-        return {}
-    mgr = LeadManager(engine)
-    async with mgr.session_factory() as session:
-        rows = await session.execute(
-            db.select(LeadSchema.owner_id, db.func.count())
-            .where(
-                LeadSchema.owner_id.in_(telecaller_ids),
-                LeadSchema.stage == LeadStage.NEW_LEAD.value,
-                LeadSchema.deleted_at.is_(None),
-            )
-            .group_by(LeadSchema.owner_id)
-        )
-        return {oid: int(cnt) for oid, cnt in rows.all()}
-
-
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
@@ -206,9 +183,10 @@ def _ist_day_start_utc() -> datetime:
 async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
     """Map telecaller_id -> leads assigned to them since 00:00 IST today (by created_at).
 
-    This is the create-path FAIRNESS metric. Unlike fresh backlog — which fast workers keep
-    at 0, so balancing on it collapses to the uid tie-break and one agent hogs — today-count
-    keeps everyone logged in within ~1 lead of each other over the day."""
+    Both the quota GATE and the fairness BALANCE run off this: an agent is capped once
+    they've received assignment_quota leads today (working them doesn't free a slot), and
+    among under-cap agents the fewest-given-today wins so everyone logged in gets an equal
+    share. Resets at IST midnight. Twin: leadService.distribute_leads._counts."""
     if not telecaller_ids:
         return {}
     cutoff = _ist_day_start_utc()
@@ -226,9 +204,9 @@ async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
         return {oid: int(cnt) for oid, cnt in rows.all()}
 
 
-def _at_quota(u: UserSchema, fresh_n: int) -> bool:
-    """True if this agent is at/over their fresh-lead quota. quota 0/None = uncapped."""
-    return bool(u.assignment_quota and u.assignment_quota > 0 and fresh_n >= u.assignment_quota)
+def _at_quota(u: UserSchema, today_n: int) -> bool:
+    """True if this agent has hit their daily quota (leads received today). 0/None = uncapped."""
+    return bool(u.assignment_quota and u.assignment_quota > 0 and today_n >= u.assignment_quota)
 
 
 def _pick_min(pool: List[UserSchema], counts: dict) -> UserSchema:
@@ -274,13 +252,15 @@ async def pick_telecaller(engine, outlet_id: Optional[str],
     if random_pick:
         return random.choice(pool)
     if enforce_quota:
-        fresh = await _fresh_counts(engine, [u.uid for u in pool])
-        pool = [u for u in pool if not _at_quota(u, fresh.get(u.uid, 0))]
+        # Quota is a HARD daily cap on leads RECEIVED today (created_at >= 00:00 IST), NOT on
+        # the still-untouched backlog: working a lead no longer frees a slot, so assignment
+        # stops at exactly assignment_quota and the overflow waits unassigned for a super
+        # admin to place. Same metric gates the pool AND balances it (fewest-given-today).
+        today = await _received_today_counts(engine, [u.uid for u in pool])
+        pool = [u for u in pool if not _at_quota(u, today.get(u.uid, 0))]
         if not pool:
-            return None  # everyone in-region at quota -> unassigned; the 5-min sweep retries
-        # Quota FILTERS on fresh backlog, but we BALANCE on leads-given-today so everyone
-        # logged in gets an equal share (see _received_today_counts / _pick_min).
-        counts = await _received_today_counts(engine, [u.uid for u in pool])
+            return None  # everyone in-region at today's quota -> unassigned; sweep/admin places it
+        counts = today
     else:
         counts = await _active_assignment_counts(engine, [u.uid for u in pool])
     return _pick_min(pool, counts)
