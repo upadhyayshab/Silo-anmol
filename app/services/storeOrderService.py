@@ -50,6 +50,9 @@ def parse_medusa_order(payload: dict) -> dict:
         "items": items,
         "total": _dec(payload.get("total")),
         "payment_status": payload.get("payment_status"),
+        # Optional channel set by the storefront/app (metadata.channel:
+        # "app" | "website"); None when the frontend doesn't send it.
+        "channel": (payload.get("metadata") or {}).get("channel"),
     }
 
 
@@ -99,7 +102,7 @@ def _lead_payload(parsed: dict):
         district=parsed.get("district"),
         state=parsed.get("state"),
         pincode=parsed.get("pincode"),
-        source=LeadSource.WEB_VISIT_LOGIN,
+        source=LeadSource.MEDUSA,
     )
 
 
@@ -175,6 +178,7 @@ async def process_store_order(engine, payload: dict) -> None:
         state=parsed.get("state") or "karnataka",
         pincode=parsed.get("pincode"),
         telecaller_id=admin.uid if admin else None,
+        source=parsed.get("channel"),
         order_status=OrderStatus.PENDING,
         collection_type=CollectionType.DOORSTEP,
         payment_method=PaymentMethod.ONLINE,
