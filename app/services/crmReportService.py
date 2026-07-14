@@ -114,7 +114,7 @@ def order_window_clause(order_from_date=None, order_to_date=None):
 def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
                        order_to_date=None, region=None, regions=None, owner_id=None,
                        owner_ids=None, stage=None, source=None, lead_numbers=None,
-                       scope_owner_id=None, extra_clause=None, gate_order_date=True):
+                       scope_owner_id=None, agency_id=None, extra_clause=None, gate_order_date=True):
     """Shared WHERE conds for the lead-based reports (prospect + agent performance).
 
     Returns ``(conds, order_date_conds)``. `region`/`regions` fold through canon_state
@@ -152,6 +152,11 @@ def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
         conds.append(LeadSchema.source == _enum_or_raw(LeadSource, source))
     if lead_numbers:
         conds.append(LeadSchema.lead_number.in_(lead_numbers))
+    # Agency filter: leads whose owner belongs to this agency (owner_id -> users.agency_id).
+    # Same correlated-subquery shape as the Manage Leads list, so both agree on membership.
+    if agency_id:
+        conds.append(LeadSchema.owner_id.in_(
+            db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)))
     if scope_owner_id is not None:
         conds.append(LeadSchema.owner_id.in_(scope_owner_id)
                      if isinstance(scope_owner_id, (list, tuple, set))
@@ -175,6 +180,7 @@ async def prospect_report(
     source: Optional[str] = None,
     lead_numbers: Optional[List[str]] = None,
     scope_owner_id: Optional[str] = None,
+    agency_id: Optional[str] = None,
     extra_clause=None,
     limit: int = 50,
     offset: int = 0,
@@ -194,7 +200,8 @@ async def prospect_report(
             order_from_date=order_from_date, order_to_date=order_to_date,
             region=region, regions=regions, owner_id=owner_id, owner_ids=owner_ids,
             stage=stage, source=source, lead_numbers=lead_numbers,
-            scope_owner_id=scope_owner_id, extra_clause=extra_clause, gate_order_date=True)
+            scope_owner_id=scope_owner_id, agency_id=agency_id,
+            extra_clause=extra_clause, gate_order_date=True)
 
         total = int((await session.execute(
             db.select(db.func.count()).select_from(LeadSchema).where(*conds)
@@ -330,6 +337,7 @@ async def agent_performance(
     owner_ids: Optional[List[str]] = None,
     source: Optional[str] = None,
     scope_owner_id=None,
+    agency_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Per-owner lead-stage pivot + order rollup — the LSQ-style "agent performance"
     sheet. The three percentages are pure stage ratios (no call data):
@@ -342,7 +350,7 @@ async def agent_performance(
         from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date,
         region=region, regions=regions, owner_ids=owner_ids, source=source,
-        scope_owner_id=scope_owner_id, gate_order_date=False)
+        scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
     order_conds = list(conds) + list(order_date_conds)
 
     lm = LeadManager(engine)
@@ -464,6 +472,7 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
 
     NEW, NR = LeadStage.NEW_LEAD.value, LeadStage.NOT_REACHABLE.value
     FTU, RTU = LeadStage.FTU.value, LeadStage.RTU.value
+    NQ = LeadStage.NOT_QUALIFIED.value
 
     def metric(label, kind, fn):
         return {"label": label, "type": kind, "values": {c: fn(c, totals[c]) for c in columns}}
@@ -472,6 +481,7 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
     rows.append(metric("Lead to Connected %", "pct", lambda c, T: _pct(T - cell(c, NEW) - cell(c, NR), T)))
     rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(cell(c, FTU) + cell(c, RTU), T)))
     rows.append(metric("Not Connected", "warn", lambda c, T: _pct(cell(c, NR), T)))
+    rows.append(metric("Not Qualified %", "warn", lambda c, T: _pct(cell(c, NQ), T)))
     rows.append(metric("Avg Lead/Day", "num", lambda c, T: round(T / days)))
 
     return {"columns": columns, "rows": rows, "days": days}
@@ -483,12 +493,13 @@ async def state_stage_pivot(
     to_date: Optional[date] = None,
     source: Optional[str] = None,
     scope_owner_id=None,
+    agency_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Count leads created in the window per (state, stage) and assemble the pivot.
     Grouped by the raw lead.state (no AP-folding), so Telangana is its own column."""
     conds, _ = _lead_filter_conds(
         from_date=from_date, to_date=to_date, source=source,
-        scope_owner_id=scope_owner_id, gate_order_date=False)
+        scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
     lm = LeadManager(engine)
     async with lm.session_factory() as session:
         rows = (await session.execute(

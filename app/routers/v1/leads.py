@@ -2,7 +2,8 @@
 
 Role model:
   - SUPER_ADMIN / ADMIN : see and manage all leads; bulk-distribute and delete.
-  - TELECALLER          : see and edit only leads they own (auto-scoped; other leads 404);
+  - TELECALLER          : browse only leads they own; may SEARCH and VIEW any lead
+                          (read-only) but edit only leads they own;
                           may hand off a lead they own to another telecaller.
 
 Ownership on create: a lead is attributed to whoever creates it (telecaller/admin).
@@ -131,10 +132,11 @@ async def list_leads(
     plain page column). `order_from_date`/`order_to_date` narrow to leads with at
     least one order in that IST day window (same window the reports use).
     """
-    # Telecallers see leads they own OR leads they were granted call-access to (handled a
-    # routed inbound call). GLOBAL/microservice see all.
+    # Browsing (no `q`) shows a telecaller only leads they own OR were granted call-access
+    # to. An explicit search spans ALL leads so an agent can look up any caller and open
+    # the record read-only. GLOBAL/microservice always see all.
     scope_owner_id, scope_uids = None, None
-    if not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
+    if not q and not (ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value):
         scope_owner_id = ctx.user_id
         scope_uids = await assignmentService.call_access_lead_ids(engine, ctx.user_id)
     items, total = await lead_manager.search_leads(
@@ -260,7 +262,7 @@ async def _report_scope_owner(ctx):
 async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
                         source, lead_numbers, limit, offset, extra_clause=None,
                         order_from_date=None, order_to_date=None, owner_ids=None,
-                        regions=None):
+                        regions=None, agency_id=None):
     nums = [n.strip() for n in lead_numbers.split(",")] if lead_numbers else None
     nums = [n for n in nums if n] if nums else None
     return await crmReportService.prospect_report(
@@ -268,8 +270,8 @@ async def _build_report(ctx, *, from_date, to_date, region, owner_id, stage,
         order_from_date=order_from_date, order_to_date=order_to_date,
         region=region, regions=regions,
         owner_id=owner_id, owner_ids=owner_ids, stage=stage, source=source, lead_numbers=nums,
-        scope_owner_id=await _report_scope_owner(ctx), limit=limit, offset=offset,
-        extra_clause=extra_clause,
+        scope_owner_id=await _report_scope_owner(ctx), agency_id=agency_id,
+        limit=limit, offset=offset, extra_clause=extra_clause,
     )
 
 
@@ -286,6 +288,7 @@ async def prospect_report(
     stage: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
     lead_numbers: Optional[str] = Query(None, description="Comma-separated prospect ids"),
+    agency_id: Optional[str] = Query(None, description="Scope to leads whose owner belongs to this agency"),
     limit: int = Query(50, ge=0, le=200, description="0 = all matched rows (for client-side export)"),
     offset: int = Query(0, ge=0),
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
@@ -296,7 +299,8 @@ async def prospect_report(
         ctx, from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date,
         region=region, regions=regions, owner_id=owner_id, owner_ids=owner_ids,
-        stage=stage, source=source, lead_numbers=lead_numbers, limit=limit, offset=offset,
+        stage=stage, source=source, lead_numbers=lead_numbers, agency_id=agency_id,
+        limit=limit, offset=offset,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
 
@@ -318,6 +322,7 @@ class ReportQueryRequest(BaseModel):
     stage: Optional[str] = None
     source: Optional[str] = None
     lead_numbers: Optional[str] = None
+    agency_id: Optional[str] = None
     limit: int = 50
     offset: int = 0
 
@@ -342,7 +347,7 @@ async def prospect_report_query(
         ctx, from_date=body.from_date, to_date=body.to_date,
         order_from_date=body.order_from_date, order_to_date=body.order_to_date,
         region=body.region, regions=body.regions, owner_id=body.owner_id, owner_ids=body.owner_ids,
-        stage=body.stage, source=body.source,
+        stage=body.stage, source=body.source, agency_id=body.agency_id,
         lead_numbers=body.lead_numbers, limit=limit, offset=offset, extra_clause=clause,
     )
     return {"items": rows, "total": total, "limit": limit, "offset": offset}
@@ -358,6 +363,7 @@ async def agent_performance_report(
     regions: Optional[List[str]] = Query(None, description="Regions (repeatable, multi-select); overrides region"),
     owner_ids: Optional[List[str]] = Query(None, description="Scope to these owners (repeatable)"),
     source: Optional[str] = Query(None),
+    agency_id: Optional[str] = Query(None, description="Scope to owners belonging to this agency"),
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """Per-owner agent-performance pivot: lead-stage counts, Grand Total, attempted /
@@ -367,7 +373,7 @@ async def agent_performance_report(
         engine, from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date,
         region=region, regions=regions, owner_ids=owner_ids, source=source,
-        scope_owner_id=await _report_scope_owner(ctx),
+        scope_owner_id=await _report_scope_owner(ctx), agency_id=agency_id,
     )
     return {"items": rows, "total": len(rows)}
 
@@ -377,6 +383,7 @@ async def state_pivot_report(
     from_date: Optional[date] = Query(None, description="Lead created on/after (inclusive)"),
     to_date: Optional[date] = Query(None, description="Lead created on/before (inclusive)"),
     source: Optional[str] = Query(None),
+    agency_id: Optional[str] = Query(None, description="Scope to owners belonging to this agency"),
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """State x stage pivot (the Google-Sheet the business uses): per-state lead-stage
@@ -384,7 +391,7 @@ async def state_pivot_report(
     Lead/Day. Agency-scoped for agency admins via _report_scope_owner."""
     return await crmReportService.state_stage_pivot(
         engine, from_date=from_date, to_date=to_date, source=source,
-        scope_owner_id=await _report_scope_owner(ctx),
+        scope_owner_id=await _report_scope_owner(ctx), agency_id=agency_id,
     )
 
 
@@ -434,9 +441,9 @@ async def agency_reassign(body: AgencyReassignRequest,
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
 async def get_lead(lead_id: str,
                    ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ))):
-    """Full lead profile incl. activity timeline."""
+    """Full lead profile incl. activity timeline. View is open to any LEADS_READ user
+    (search lets an agent open any lead); editing stays owner-scoped on the write routes."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead, allow_agency=True)  # agency admins may view their roster's leads
     return await leadService.build_lead_response(engine, lead, include_activities=True)
 
 
@@ -446,9 +453,8 @@ async def list_lead_activities(
     limit: int = Query(100, ge=1, le=500),
     ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
 ):
-    """Lead activity timeline (newest first)."""
+    """Lead activity timeline (newest first). Read-open, same as GET /{lead_id}."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead, allow_agency=True)  # agency admins may view their roster's leads
     return await leadService.fetch_activities(engine, lead.uid, limit=limit)
 
 

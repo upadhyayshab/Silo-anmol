@@ -65,6 +65,11 @@ def test_percentages_match_sheet():
     assert (att["Karnataka"], con["Karnataka"], conv["Karnataka"], ncon["Karnataka"]) == (99.8, 61.4, 13.7, 38.4)
     assert (att["Blank"], con["Blank"], conv["Blank"], ncon["Blank"]) == (100.0, 77.0, 32.8, 23.0)
     assert ncon["Telangana"] == 0.0  # no Not Reachable
+    # Not Qualified % = Not Qualified / Grand Total (red warn row, like Not Connected)
+    nq = _row(p, "Not Qualified %")["values"]
+    assert nq["Grand Total"] == 14.7   # 661 / 4497
+    assert nq["Karnataka"] == 7.8      # 206 / 2628
+    assert nq["Telangana"] == 0.0      # no Not Qualified
 
 
 def test_avg_lead_per_day_divides_by_window_days():

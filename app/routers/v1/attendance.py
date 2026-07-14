@@ -35,6 +35,7 @@ async def _scope_owner(ctx: AuthContext):
 @router.get("")
 async def attendance_month(
     month: Optional[str] = Query(None, description="YYYY-MM (IST); defaults to the current month"),
+    agency_id: Optional[str] = Query(None, description="Scope to telecallers belonging to this agency"),
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
     """Monthly attendance matrix: per telecaller, each day's worked hours + Present flag
@@ -51,4 +52,4 @@ async def attendance_month(
         year, mon = now_ist.year, now_ist.month
 
     return await attendanceService.month_overview(
-        engine, year=year, month=mon, scope_owner_id=await _scope_owner(ctx))
+        engine, year=year, month=mon, scope_owner_id=await _scope_owner(ctx), agency_id=agency_id)

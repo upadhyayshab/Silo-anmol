@@ -89,7 +89,7 @@ async def record_seen_safe(engine, user_id: str, ts: Optional[datetime] = None) 
         logger.warning("attendance: could not record for %s: %s", user_id, e)
 
 
-async def month_overview(engine, *, year: int, month: int, scope_owner_id=None) -> Dict[str, Any]:
+async def month_overview(engine, *, year: int, month: int, scope_owner_id=None, agency_id=None) -> Dict[str, Any]:
     """Per-telecaller attendance for the month: each day's span/hours/present + a summary.
 
     Scoped to telecaller roles (OWNER_ROLES). `scope_owner_id` None = all (superadmin), a
@@ -106,6 +106,8 @@ async def month_overview(engine, *, year: int, month: int, scope_owner_id=None) 
             uq = uq.where(UserSchema.uid.in_(list(scope_owner_id)))
         elif scope_owner_id:
             uq = uq.where(UserSchema.uid == scope_owner_id)
+        if agency_id:
+            uq = uq.where(UserSchema.agency_id == agency_id)
         users = [(uid, name or email or uid)
                  for uid, name, email, role in (await session.execute(uq)).all()
                  if _role_value(role) in role_vals]
