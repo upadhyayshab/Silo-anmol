@@ -18,7 +18,7 @@ from typing import Optional, List, Dict, Any
 import sqlalchemy as db
 
 from managers import AttendanceDayManager, AttendanceDaySchema, UserSchema
-from utils.constants import OWNER_ROLES
+from utils.constants import TELECALLER_ROLES
 from utils.timeutils import IST
 
 logger = logging.getLogger(__name__)
@@ -89,11 +89,13 @@ async def record_seen_safe(engine, user_id: str, ts: Optional[datetime] = None) 
 async def month_overview(engine, *, year: int, month: int, scope_owner_id=None, agency_id=None) -> Dict[str, Any]:
     """Per-telecaller attendance for the month: each day's span/hours/present + a summary.
 
-    Scoped to telecaller roles (OWNER_ROLES). `scope_owner_id` None = all (superadmin), a
-    list = agency roster, a single id = one agent. Agents with no rows this month still
-    appear (0 days present) so an all-absent agent is visible for billing."""
+    Scoped to telecaller roles (TELECALLER_ROLES) — NOT OWNER_ROLES, which also includes
+    AGENCY_ADMIN (a lead-owner role, not a billed-hours role); agency admins don't clock
+    in/out so they must not show up in the billing table. `scope_owner_id` None = all
+    (superadmin), a list = agency roster, a single id = one agent. Agents with no rows this
+    month still appear (0 days present) so an all-absent agent is visible for billing."""
     first, last = _month_bounds(year, month)
-    role_vals = {_role_value(r) for r in OWNER_ROLES}
+    role_vals = {_role_value(r) for r in TELECALLER_ROLES}
 
     mgr = AttendanceDayManager(engine)
     async with mgr.session_factory() as session:
