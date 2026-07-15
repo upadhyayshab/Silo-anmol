@@ -158,6 +158,18 @@ def test_empty_rows_is_safe():
     assert pivot["columns"] == ["Grand Total"]
 
 
+def test_no_order_rows_task_f():
+    # Task F added 4 order/revenue rows to the STATE pivot (state_stage_pivot) only.
+    # call_direction_pivot calls build_state_pivot without order_by_state, so its
+    # output must never contain them, even with call/lead rows present.
+    rows = [
+        (_activity("a1", "lead_1", "inbound", DAY1), _lead("lead_1", "FTU")),
+    ]
+    pivot, _session = _run(rows, direction="inbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
+    labels = {r["label"] for r in pivot["rows"]}
+    assert not ({"No. of Orders", "Total Qty", "Booked Revenue", "Avg Booked Rev/Day"} & labels)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

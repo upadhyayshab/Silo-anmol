@@ -113,6 +113,25 @@ def order_window_clause(order_from_date=None, order_to_date=None):
     return db.exists().where(CustomerOrderSchema.lead_id == LeadSchema.uid, *conds)
 
 
+def _owner_scope_conds(scope_owner_id=None, agency_id: Optional[str] = None) -> list:
+    """Owner-scope conds shared by every report: `agency_id` restricts to leads whose
+    owner belongs to that agency (owner_id -> users.agency_id, same correlated-subquery
+    shape as the Manage Leads list); `scope_owner_id` restricts to one owner or a list of
+    owners (agency admins' roster). Conds are against `LeadSchema.owner_id` — a caller
+    scoping a DIFFERENT table (e.g. customer_orders, see `_order_state_aggregate`) must
+    join `LeadSchema` in first. Factored out of `_lead_filter_conds` so both reuse the
+    identical scope logic instead of it drifting between two hand-copies."""
+    conds = []
+    if agency_id:
+        conds.append(LeadSchema.owner_id.in_(
+            db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)))
+    if scope_owner_id is not None:
+        conds.append(LeadSchema.owner_id.in_(scope_owner_id)
+                     if isinstance(scope_owner_id, (list, tuple, set))
+                     else LeadSchema.owner_id == scope_owner_id)
+    return conds
+
+
 def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
                        order_to_date=None, region=None, regions=None, owner_id=None,
                        owner_ids=None, stage=None, source=None, lead_numbers=None,
@@ -156,13 +175,7 @@ def _lead_filter_conds(*, from_date=None, to_date=None, order_from_date=None,
         conds.append(LeadSchema.lead_number.in_(lead_numbers))
     # Agency filter: leads whose owner belongs to this agency (owner_id -> users.agency_id).
     # Same correlated-subquery shape as the Manage Leads list, so both agree on membership.
-    if agency_id:
-        conds.append(LeadSchema.owner_id.in_(
-            db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)))
-    if scope_owner_id is not None:
-        conds.append(LeadSchema.owner_id.in_(scope_owner_id)
-                     if isinstance(scope_owner_id, (list, tuple, set))
-                     else LeadSchema.owner_id == scope_owner_id)
+    conds.extend(_owner_scope_conds(scope_owner_id, agency_id))
     if extra_clause is not None:
         conds.append(extra_clause)
     return conds, order_date_conds
@@ -367,31 +380,34 @@ async def agent_performance(
             db.select(LeadSchema.owner_id, LeadSchema.stage, db.func.count())
               .where(*conds).group_by(LeadSchema.owner_id, LeadSchema.stage)
         )).all()
-        # Order rollup per owner — order-level (no item fan-out): count / gross / net.
+        # Order rollup per TELECALLER (the order's creator, not the lead owner) —
+        # order-level (no item fan-out): count / gross / net. Join to leads is kept so
+        # the region/lead-created/scope filters still gate which orders count.
         ord_rows = (await session.execute(
-            db.select(LeadSchema.owner_id,
+            db.select(CustomerOrderSchema.telecaller_id,
                       db.func.count(CustomerOrderSchema.uid),
                       db.func.coalesce(db.func.sum(CustomerOrderSchema.gross_amount), 0),
                       db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0))
               .select_from(LeadSchema)
               .join(CustomerOrderSchema, CustomerOrderSchema.lead_id == LeadSchema.uid)
-              .where(*order_conds).group_by(LeadSchema.owner_id)
+              .where(*order_conds).group_by(CustomerOrderSchema.telecaller_id)
         )).all()
-        # Quantity per owner — item-level, in its own query so summing items can't fan
-        # out the gross/net above.
+        # Quantity per telecaller — item-level, in its own query so summing items can't
+        # fan out the gross/net above.
         qty_rows = (await session.execute(
-            db.select(LeadSchema.owner_id, db.func.coalesce(db.func.sum(OrderItemSchema.quantity), 0))
+            db.select(CustomerOrderSchema.telecaller_id, db.func.coalesce(db.func.sum(OrderItemSchema.quantity), 0))
               .select_from(LeadSchema)
               .join(CustomerOrderSchema, CustomerOrderSchema.lead_id == LeadSchema.uid)
               .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
-              .where(*order_conds).group_by(LeadSchema.owner_id)
+              .where(*order_conds).group_by(CustomerOrderSchema.telecaller_id)
         )).all()
-        owner_ids_present = {r[0] for r in stage_rows if r[0]}
+        # People to show: lead owners + telecallers who created in-window orders.
+        people = {r[0] for r in stage_rows if r[0]} | {r[0] for r in ord_rows if r[0]}
         owners: Dict[str, str] = {}
-        if owner_ids_present:
+        if people:
             for uid, name, email in (await session.execute(
                 db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email)
-                  .where(UserSchema.uid.in_(owner_ids_present))
+                  .where(UserSchema.uid.in_(people))
             )).all():
                 owners[uid] = name or email or uid
 
@@ -402,6 +418,9 @@ async def agent_performance(
     for owner_id, stage, cnt in stage_rows:
         sv = stage.value if hasattr(stage, "value") else stage
         per.setdefault(owner_id, {})[sv] = per.setdefault(owner_id, {}).get(sv, 0) + int(cnt)
+    # Telecallers who created orders but own no in-window leads still get a row.
+    for tid in ord_map:
+        per.setdefault(tid, {})
 
     rows: List[Dict[str, Any]] = []
     for owner_id, counts in per.items():
@@ -453,14 +472,26 @@ def _pivot_days(from_date: Optional[date], to_date: Optional[date]) -> int:
 
 def build_state_pivot(counts: Dict[Tuple[str, str], int],
                       from_date: Optional[date] = None,
-                      to_date: Optional[date] = None) -> Dict[str, Any]:
+                      to_date: Optional[date] = None,
+                      order_by_state: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Assemble the SS-shaped pivot from a ``(state_label, stage_value) -> count`` map.
     Columns = states present (Blank first, then A→Z) + Grand Total; rows = the stages
     present (enum order) then the derived %/avg rows. Percentages are stage ratios over
-    each column's own Grand Total, identical to agent_performance."""
+    each column's own Grand Total, identical to agent_performance.
+
+    `order_by_state` is optional: a ``state_label -> {"orders", "booked", "qty"}`` map
+    (see `_order_state_aggregate`). When given (the state pivot's case), 4 more rows are
+    appended after "Avg Lead/Day": No. of Orders / Total Qty / Booked Revenue / Avg
+    Booked Rev/Day, and its state labels are unioned into the column set so an
+    order-only state (no leads in the window) still gets a column. When None (the call
+    pivot's case — `call_direction_pivot` never passes this), no order rows are added at
+    all, columns are unaffected, and behavior is identical to before this param existed."""
     days = _pivot_days(from_date, to_date)
     present = {s for (s, _stg) in counts}
-    state_cols = (["Blank"] if "Blank" in present else []) + sorted(s for s in present if s != "Blank")
+    has_order_rows = order_by_state is not None  # distinguishes "passed but empty" from "never passed"
+    order_by_state = order_by_state or {}
+    all_states = present | set(order_by_state.keys())
+    state_cols = (["Blank"] if "Blank" in all_states else []) + sorted(s for s in all_states if s != "Blank")
     columns = state_cols + ["Grand Total"]
 
     def cell(col: str, stage: str) -> int:
@@ -491,7 +522,101 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
     rows.append(metric("Not Qualified %", "warn", lambda c, T: _pct(cell(c, NQ), T)))
     rows.append(metric("Avg Lead/Day", "num", lambda c, T: round(T / days)))
 
+    if has_order_rows:
+        def ocell(col: str, field: str):
+            if col == "Grand Total":
+                return sum(order_by_state.get(s, {}).get(field, 0) for s in state_cols)
+            return order_by_state.get(col, {}).get(field, 0)
+
+        orders_vals = {c: ocell(c, "orders") for c in columns}
+        qty_vals = {c: ocell(c, "qty") for c in columns}
+        # Booked Revenue summed at full precision (see ocell's Grand Total sum-of-raw-
+        # per-state values), rounded to cents only here for display — matches
+        # prospect_report's `round(booked, 2)` convention for the same figure.
+        booked_vals = {c: round(ocell(c, "booked"), 2) for c in columns}
+
+        # 0/absent -> blank, same convention as the stage-count rows above.
+        rows.append({"label": "No. of Orders", "type": "num",
+                     "values": {c: v for c, v in orders_vals.items() if v}})
+        rows.append({"label": "Total Qty", "type": "num",
+                     "values": {c: v for c, v in qty_vals.items() if v}})
+        rows.append({"label": "Booked Revenue", "type": "currency",
+                     "values": {c: v for c, v in booked_vals.items() if v}})
+        rows.append({"label": "Avg Booked Rev/Day", "type": "currency",
+                     "values": {c: round(v / days) for c, v in booked_vals.items() if v}})
+
     return {"columns": columns, "rows": rows, "days": days}
+
+
+async def _order_state_aggregate(
+    session, *,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    scope_owner_id=None,
+    agency_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Per-state order aggregate for the Prospect Pivot's 4 order rows — mirrors the
+    Daily-Rev `placed` CTE (app/routers/v1/reports.py:1261-1285) EXACTLY so the pivot's
+    Grand Total ties out to Daily-Rev's "Placed" figures:
+      - `orders` = COUNT(uid), `booked` = SUM(gross_amount - discount_applied), filtered
+        to `created_at` IST-in-window (`_day_bounds`, same helper the rest of this module
+        uses) — NO order_status filter (placed = every order created in the window).
+      - NO deleted_at filter either: the `placed` CTE (raw SQL against customer_orders)
+        has none, so adding `CustomerOrderSchema.deleted_at.is_(None)` here would silently
+        diverge the two totals whenever a soft-deleted order falls in the window. If
+        Daily-Rev is ever changed to exclude soft-deleted orders, this must change too.
+      - `qty` = SUM(order_items.quantity) via a SEPARATE grouped query (same idiom as
+        prospect_report's qty rollup, crmReportService.py:291-299) — joining order_items
+        into the same query as the gross/discount SUM would fan out one row per item and
+        inflate `booked` for any multi-item order.
+    Keyed by `_state_label(order.state)` (additive: two raw spellings that fold to the
+    same label are summed together, same as the lead-count side).
+
+    Scope: when `scope_owner_id`/`agency_id` is set, orders are joined to `leads` and
+    restricted via `_owner_scope_conds` — the exact same scope logic `_lead_filter_conds`
+    applies to the lead side, so an agency admin's order rows match their lead rows'
+    scope. When BOTH are None (superadmin/all-agencies — the case that must match
+    Daily-Rev), NO lead join happens and every order in the window counts, because
+    Daily-Rev's `placed` CTE has no owner/agency scoping at all — adding one here would
+    break the tie-out for exactly the case the acceptance criterion is about.
+    """
+    gte, lte = _day_bounds(from_date, to_date)
+    window_conds = []
+    if gte is not None:
+        window_conds.append(CustomerOrderSchema.created_at >= gte)
+    if lte is not None:
+        window_conds.append(CustomerOrderSchema.created_at <= lte)
+
+    scope_conds = _owner_scope_conds(scope_owner_id, agency_id)
+    conds = [*window_conds, *scope_conds]
+
+    orders_q = (db.select(
+        CustomerOrderSchema.state,
+        db.func.count(CustomerOrderSchema.uid),
+        db.func.sum(CustomerOrderSchema.gross_amount - CustomerOrderSchema.discount_applied),
+    ).select_from(CustomerOrderSchema))
+    qty_q = (db.select(
+        CustomerOrderSchema.state,
+        db.func.sum(OrderItemSchema.quantity),
+    ).select_from(CustomerOrderSchema)
+     .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid))
+
+    if scope_conds:
+        orders_q = orders_q.join(LeadSchema, LeadSchema.uid == CustomerOrderSchema.lead_id)
+        qty_q = qty_q.join(LeadSchema, LeadSchema.uid == CustomerOrderSchema.lead_id)
+
+    orders_q = orders_q.where(*conds).group_by(CustomerOrderSchema.state)
+    qty_q = qty_q.where(*conds).group_by(CustomerOrderSchema.state)
+
+    agg: Dict[str, Dict[str, Any]] = {}
+    for state, cnt, booked in (await session.execute(orders_q)).all():
+        a = agg.setdefault(_state_label(state), {"orders": 0, "booked": 0.0, "qty": 0})
+        a["orders"] += int(cnt or 0)
+        a["booked"] += _num(booked)
+    for state, qty in (await session.execute(qty_q)).all():
+        a = agg.setdefault(_state_label(state), {"orders": 0, "booked": 0.0, "qty": 0})
+        a["qty"] += int(qty or 0)
+    return agg
 
 
 async def state_stage_pivot(
@@ -503,7 +628,11 @@ async def state_stage_pivot(
     agency_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Count leads created in the window per (state, stage) and assemble the pivot.
-    Grouped by the raw lead.state (no AP-folding), so Telangana is its own column."""
+    Grouped by the raw lead.state (no AP-folding), so Telangana is its own column.
+    Also aggregates `customer_orders` per-state (`_order_state_aggregate`) and passes it
+    to `build_state_pivot` as `order_by_state`, adding the 4 order/revenue rows — unlike
+    `call_direction_pivot`, which calls `build_state_pivot` without this param and so
+    never gets those rows."""
     conds, _ = _lead_filter_conds(
         from_date=from_date, to_date=to_date, source=source,
         scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
@@ -513,11 +642,14 @@ async def state_stage_pivot(
             db.select(LeadSchema.state, LeadSchema.stage, db.func.count())
               .where(*conds).group_by(LeadSchema.state, LeadSchema.stage)
         )).all()
+        order_by_state = await _order_state_aggregate(
+            session, from_date=from_date, to_date=to_date,
+            scope_owner_id=scope_owner_id, agency_id=agency_id)
     counts: Dict[Tuple[str, str], int] = {}
     for state, stage, cnt in rows:
         sv = stage.value if hasattr(stage, "value") else stage
         counts[(_state_label(state), sv)] = counts.get((_state_label(state), sv), 0) + int(cnt)
-    return build_state_pivot(counts, from_date, to_date)
+    return build_state_pivot(counts, from_date, to_date, order_by_state=order_by_state)
 
 
 # --- Call Log report (Task B2: SA/AA cross-lead call-log view) --------------
