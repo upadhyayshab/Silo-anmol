@@ -33,6 +33,15 @@ from utils.smartping_utils import trigger_smartping_event_bg
 from utils.timeutils import ist_range_bounds, ist_today
 import uuid
 
+
+def _canon_order_state(value):
+    """Canonicalize an order's state (casing + misspellings) but keep the TRUE state —
+    NO Telangana->AP fold, since orders are revenue. Falls back to the raw value when
+    nothing canonicalizes (e.g. junk text with no match) so we never null a state.
+    Lazy import dodges the leadService<->orders circular import."""
+    from services.leadService import canon_state
+    return canon_state(value, apply_alias=False) or value
+
 settings = get_settings()
 engine = get_engine(settings.name)
 
@@ -296,7 +305,7 @@ async def create_order(
             hobli=payload.hobli,
             taluk=payload.taluk,
             district=payload.district,
-            state=payload.state,
+            state=_canon_order_state(payload.state),
             pincode=payload.pincode,
             telecaller_id=current_user_id,
             lead_id=payload.lead_id,
@@ -744,7 +753,7 @@ async def create_proxy_order(
             hobli=payload.hobli,
             taluk=payload.taluk,
             district=payload.district,
-            state=payload.state,
+            state=_canon_order_state(payload.state),
             pincode=payload.pincode,
             telecaller_id=payload.telecaller_id,  # Use telecaller from payload, not current_user_id
             lead_id=payload.lead_id,
@@ -1929,7 +1938,7 @@ async def update_order(
         if payload.district:
             update_data["district"] = payload.district
         if payload.state:
-            update_data["state"] = payload.state
+            update_data["state"] = _canon_order_state(payload.state)
         if payload.pincode:
             update_data["pincode"] = payload.pincode
         if payload.expected_delivery_date:

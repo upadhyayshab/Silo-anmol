@@ -116,14 +116,17 @@ _STATE_LC = [s.lower() for s in INDIAN_STATES]
 STATE_ALIASES = {"telangana": "andhra pradesh"}
 
 
-def canon_state(value):
+def canon_state(value, apply_alias=True):
     """Canonical LOWERCASE state for lead/user/page state fields. Casing AND
     misspellings fold to a real state ('Karnataka'/'karnatka'/'ಕರ್ನಾಟಕ' -> 'karnataka');
     an operational alias then routes served-elsewhere states (Telangana -> andhra pradesh);
     a real word that isn't a state passes through lowercased (a district like 'Tumkur'
     -> 'tumkur', still surfaced for manual mapping); pure garbage ('...', pincodes, 'NA')
     -> None. Pure (no I/O), unit-testable. Twin of scripts/lsq/lsq_backfill_leads.
-    derive_state (that one returns title-case for its own display) — keep in sync."""
+    derive_state (that one returns title-case for its own display) — keep in sync.
+
+    apply_alias=False skips the operational fold so the TRUE state is kept — used by
+    the order-write path, where Telangana is real revenue and must not merge into AP."""
     if not isinstance(value, str):
         return value
     v = value.strip()
@@ -133,7 +136,8 @@ def canon_state(value):
         return "karnataka"
     hit = difflib.get_close_matches(v.lower(), _STATE_LC, n=1, cutoff=0.75)
     if hit:
-        return STATE_ALIASES.get(hit[0], hit[0])  # canonical lowercase, aliased if served elsewhere
+        h = hit[0]
+        return STATE_ALIASES.get(h, h) if apply_alias else h  # aliased only when asked
     return v.lower() if re.fullmatch(r"[A-Za-z][A-Za-z ]{2,}", v) else None
 
 
