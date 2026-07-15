@@ -553,7 +553,9 @@ async def update_lead(lead_id: str, payload: LeadUpdateRequest,
                       ctx: AuthContext = Depends(require_permission(Permission.LEADS_WRITE))):
     """Patch editable fields. Logs a single FIELD_UPDATE diff to the timeline."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead)
+    # ponytail: any telecaller can service a lead they found via search (owner unchanged,
+    # action attributed via activity.user_id) — same open policy as order-booking. Only
+    # ownership-changing routes (assign) still gate on _assert_lead_in_scope.
     changes = payload.model_dump(exclude_unset=True)
     await leadService.update_lead(engine, lead, changes, by_user_id=ctx.user_id)
     fresh = await lead_manager.fetch(lead_id)
@@ -565,7 +567,6 @@ async def change_lead_stage(lead_id: str, payload: StageChangeRequest,
                             ctx: AuthContext = Depends(require_permission(Permission.LEADS_WRITE))):
     """Change a lead's stage. Logs STAGE_CHANGE (from -> to)."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead)
     await leadService.change_stage(engine, lead, payload.stage, by_user_id=ctx.user_id, note=payload.note)
     fresh = await lead_manager.fetch(lead_id)
     return await leadService.build_lead_response(engine, fresh, include_activities=True)
@@ -576,7 +577,6 @@ async def add_lead_note(lead_id: str, payload: NoteRequest,
                         ctx: AuthContext = Depends(require_permission(Permission.LEADS_WRITE))):
     """Add a free-text note to the lead's timeline."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead)
     actor = await _crm_actor(ctx)
     activity = await leadService.add_note(engine, lead.uid, payload.body, by_user_id=ctx.user_id)
     resp = LeadActivityResponse.model_validate(activity)
@@ -592,7 +592,6 @@ async def log_lead_call(lead_id: str, payload: CallLogRequest, background_tasks:
     body carries the Exotel `call_sid`; we then pull the CDR (recording + real duration)
     in the background and fold it into THIS entry — one call, one timeline row."""
     lead = await _get_lead_or_404(lead_id)
-    await _assert_lead_in_scope(ctx, lead)
     actor = await _crm_actor(ctx)
     activity = await leadService.log_call(
         engine, lead, payload.outcome.value if payload.outcome else None,
