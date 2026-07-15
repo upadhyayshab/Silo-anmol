@@ -306,6 +306,7 @@ async def update_delivery_status(
                 updates["delivery_person_id"] = item.delivery_person_id
 
             new_status = order.order_status
+            old_status = order.order_status   # captured before the setattr() mutation below
             item_crm_tasks = []
 
             if item.status == "delivered":
@@ -417,6 +418,16 @@ async def update_delivery_status(
             
             if new_status == OrderStatus.DELIVERED:
                 background_tasks.add_task(trigger_smartping_event_bg, order_uid, "order_delivered")
+
+            # Mirror the rider disposition onto the linked lead's internal timeline
+            # (no-op when the order isn't lead-linked). Webhook actor -> user_id=None.
+            # Without this, rider-driven cancellations never showed on the lead.
+            if new_status != old_status:
+                from services import leadService
+                background_tasks.add_task(
+                    leadService.log_order_status_change, engine, order,
+                    new_status, None, old_status=old_status, remarks=item.remarks,
+                )
 
             results.append({"order_id": item.order_id, "status": "success", "new_status": new_status})
 
