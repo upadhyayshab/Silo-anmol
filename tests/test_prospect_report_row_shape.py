@@ -112,6 +112,45 @@ def _run_report(lead):
     return rows, total
 
 
+def _order(gross, discount, total):
+    """A minimal customer_order fake — only the fields prospect_report's order
+    rollup loop touches (uid deliberately omitted; not read by the loop)."""
+    return SimpleNamespace(
+        lead_id="lead_1",
+        gross_amount=gross,
+        discount_applied=discount,
+        total_amount=total,
+        order_status=None,
+        payment_method=None,
+        assigned_outlet_id=None,
+        delivery_person_id=None,
+        status_remarks=None,
+    )
+
+
+def _run_report_with_orders(lead, orders, from_date=None, to_date=None):
+    import services.crmReportService as R
+
+    session = _FakeSession([
+        _FakeResult(1),                              # total count
+        _FakeResult([lead]),                          # leads
+        _FakeResult([("owner_1", "Asha Rao", "asha@example.com")]),  # owners
+        _FakeResult([]),                               # call activities
+        _FakeResult(orders),                           # orders
+        _FakeResult([]),                               # outlets
+        _FakeResult([]),                               # delivery people
+        _FakeResult([]),                               # quantity group-by
+    ])
+
+    orig = R.LeadManager
+    R.LeadManager = lambda engine: _FakeLeadManager(session)
+    try:
+        rows, total = asyncio.run(R.prospect_report(engine=None, from_date=from_date, to_date=to_date))
+    finally:
+        R.LeadManager = orig
+    return rows, total
+
+
 def test_row_has_owner_and_owner_email_and_lead_name():
     rows, _ = _run_report(_lead())
     assert len(rows) == 1
@@ -139,9 +178,33 @@ def test_row_has_created_at_iso():
     assert rows[0]["created_at"] == "2026-07-04T12:00:00+00:00"  # raw UTC ISO; UI formats to IST
 
 
+def test_booked_rev_is_gross_minus_discount_over_the_window():
+    """booked_rev = SUM(gross_amount - discount_applied) — the Daily Revenue tab's
+    'placed' formula (reports.py `placed` CTE), NOT total_amount (that's `net`).
+    avg_booked_rev_per_day divides by the inclusive from/to window's day count."""
+    from datetime import date
+    orders = [_order(1000, 100, 950), _order(2000, 200, 1900)]  # G=3000, D=300, N=1900+950 net
+    rows, _ = _run_report_with_orders(
+        _lead(), orders, from_date=date(2026, 7, 1), to_date=date(2026, 7, 5))  # 5-day window
+    row = rows[0]
+    assert row["booked_rev"] == 2700.0            # round(3000 - 300, 2)
+    assert row["avg_booked_rev_per_day"] == 540.0  # round(2700 / 5, 2)
+    assert row["net"] == 2850.0                   # untouched: still sum(total_amount)
+
+
+def test_avg_booked_rev_per_day_defaults_to_total_when_no_window():
+    orders = [_order(1000, 100, 950)]
+    rows, _ = _run_report_with_orders(_lead(), orders)  # no from_date/to_date -> _pivot_days == 1
+    row = rows[0]
+    assert row["booked_rev"] == 900.0
+    assert row["avg_booked_rev_per_day"] == 900.0  # 900 / 1
+
+
 if __name__ == "__main__":
     test_row_has_owner_and_owner_email_and_lead_name()
     test_phone_is_the_leads_mobile_not_the_owners()
     test_email_key_no_longer_present()
     test_row_has_created_at_iso()
+    test_booked_rev_is_gross_minus_discount_over_the_window()
+    test_avg_booked_rev_per_day_defaults_to_total_when_no_window()
     print("OK")

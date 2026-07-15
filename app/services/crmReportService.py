@@ -254,12 +254,15 @@ async def prospect_report(
         )).scalars().all()
         for o in orders:
             agg = order_agg.setdefault(o.lead_id, {
-                "count": 0, "gross": 0.0, "net": 0.0, "status": None, "payment": None,
+                "count": 0, "gross": 0.0, "net": 0.0, "booked": 0.0, "status": None, "payment": None,
                 "outlet_id": None, "delivery_id": None, "remarks": None,
             })
             agg["count"] += 1
             agg["gross"] += _num(o.gross_amount)
             agg["net"] += _num(o.total_amount)
+            # Booked/placed revenue = gross - discount (the Daily Revenue tab's formula,
+            # reports.py:1263,1281 `placed` CTE) — distinct from `net` (total_amount).
+            agg["booked"] += _num(o.gross_amount) - _num(o.discount_applied)
             if agg["status"] is None:   # newest-first -> first seen is latest
                 agg["status"] = o.order_status.value if o.order_status else None
                 agg["payment"] = o.payment_method.value if o.payment_method else None
@@ -320,6 +323,8 @@ async def prospect_report(
                 "quantity": qty.get(l.uid, 0),
                 "gross": round(agg.get("gross", 0.0), 2),
                 "net": round(agg.get("net", 0.0), 2),
+                "booked_rev": round(agg.get("booked", 0.0), 2),
+                "avg_booked_rev_per_day": round(agg.get("booked", 0.0) / _pivot_days(from_date, to_date), 2),
                 "order_status": agg.get("status") or "",
                 "mode_of_payment": agg.get("payment") or "",
                 "call_attempts": call_count.get(l.uid, 0),
@@ -605,3 +610,66 @@ async def call_log_activities(
                 "duration_seconds": details.get("duration_seconds"),
             })
         return rows, truncated
+
+
+# --- Inbound/outbound call pivot (Task C1) -----------------------------------
+# Same stage x column pivot as state_stage_pivot (via build_state_pivot), but
+# columns are ISO call-dates instead of states, and the window gates the CALL's
+# created_at (like call_log_activities) — not the lead's created_at. A lead
+# counts once per (call-day, its CURRENT stage), even with multiple calls that
+# day in that direction ("unique inflow").
+#
+# ponytail: aggregates the distinct-per-day count in Python over the raw
+# activity+lead join (same query shape as call_log_activities) rather than a SQL
+# COUNT(DISTINCT ...) GROUP BY — keeps the dedup logic a plain Python set, DB-free
+# testable, and fine at the report's day/week window scale.
+
+async def call_direction_pivot(
+    engine, *,
+    direction: str,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    scope_owner_id=None,
+    agency_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Stage x call-date pivot for one call direction ("inbound"/"outbound") — the
+    inbound/outbound call pivot the business uses. `direction` compares the JSON
+    `details->>'direction'`, same idiom as call_log_activities. The date window
+    gates the call's created_at (when it happened, IST), not the lead's created_at."""
+    # Scope-only conds (own leads / agency roster) — no lead-created-at window,
+    # same split call_log_activities uses.
+    lead_conds, _ = _lead_filter_conds(
+        scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
+
+    conds = [
+        LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG,
+        LeadActivitySchema.details["direction"].as_string() == direction,
+        *lead_conds,
+    ]
+    gte, lte = _day_bounds(from_date, to_date)
+    if gte is not None:
+        conds.append(LeadActivitySchema.created_at >= gte)
+    if lte is not None:
+        conds.append(LeadActivitySchema.created_at <= lte)
+
+    lm = LeadManager(engine)
+    async with lm.session_factory() as session:
+        pairs = (await session.execute(
+            db.select(LeadActivitySchema, LeadSchema)
+              .select_from(LeadActivitySchema)
+              .join(LeadSchema, LeadActivitySchema.lead_id == LeadSchema.uid)
+              .where(*conds)
+        )).all()
+
+    # Unique lead per (call-day, stage): a lead calling twice the same day in the
+    # same direction still counts once — "unique inflow" like the sheet.
+    seen: Dict[Tuple[str, str], set] = {}
+    for a, l in pairs:
+        if a.created_at is None:
+            continue
+        iso_day = a.created_at.astimezone(IST).date().isoformat()
+        stage = l.stage.value if hasattr(l.stage, "value") else l.stage
+        seen.setdefault((iso_day, stage), set()).add(l.uid)
+
+    counts = {key: len(uids) for key, uids in seen.items()}
+    return build_state_pivot(counts, from_date, to_date)
