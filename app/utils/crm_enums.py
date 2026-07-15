@@ -19,6 +19,7 @@ class LeadStage(str, Enum):
     FTU = "FTU"            # First Time User (placed first order)
     NOT_QUALIFIED = "Not Qualified"
     NOT_REACHABLE = "Not Reachable"
+    MAX_CALL_DONE = "Max Call Done"  # manual pick only, once a lead hits >=20 Not-Connected calls
 
 
 class LeadActivityType(str, Enum):
@@ -62,6 +63,12 @@ DISPOSITION_OUTCOME = {
     "Do Not Call": CallOutcome.ANSWERED.value,
     "Wrong Number": CallOutcome.WRONG_NUMBER.value,
     "Invalid Number": CallOutcome.WRONG_NUMBER.value,
+    # Connected-but-dead-end calls (Task A) — same bucket as "Not Interested".
+    "Farmer - Just Browsing": CallOutcome.ANSWERED.value,
+    "Non-Farmer - Random Visitor": CallOutcome.ANSWERED.value,
+    # Not-Connected, manual pick once a lead hits the 20-call threshold (Task A) — same
+    # bucket as its Not-Connected siblings above.
+    "Max Call Attempts (20 calls)": CallOutcome.NOT_ANSWERED.value,
 }
 DNC_SUB_DISPOSITIONS = {"Do Not Call"}
 
@@ -76,12 +83,18 @@ DISPOSITION_STAGE = {
     "Not Reachable/Out of Coverage": LeadStage.NOT_REACHABLE,
     "Call dropped": LeadStage.NOT_REACHABLE,
     "Invalid Number": LeadStage.NOT_QUALIFIED,
+    # Max Call Attempts is a UI-gated MANUAL pick (only offered once a lead already has
+    # >=20 Not-Connected calls) — it is NOT an automatic count-triggered flip. It goes
+    # through the same generic disposition->stage mechanism as every other sub below.
+    "Max Call Attempts (20 calls)": LeadStage.MAX_CALL_DONE,
     # Connected
     "Call Back": LeadStage.ENGAGED,
     "Interested": LeadStage.ENGAGED,
     "Not Interested": LeadStage.NOT_QUALIFIED,
     "Do Not Call": LeadStage.NOT_QUALIFIED,
     "Wrong Number": LeadStage.NOT_QUALIFIED,
+    "Farmer - Just Browsing": LeadStage.NOT_QUALIFIED,
+    "Non-Farmer - Random Visitor": LeadStage.NOT_QUALIFIED,
 }
 # Converted stages we never auto-demote on a later disposition (value strings for easy compare).
 PROTECTED_STAGES = {LeadStage.FTU.value, LeadStage.RTU.value}

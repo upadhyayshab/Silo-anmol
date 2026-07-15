@@ -1190,6 +1190,37 @@ async def call_counts(engine, lead_ids: List[str]) -> Dict[str, int]:
     return {lead_id: int(n or 0) for lead_id, n in rows}
 
 
+def _is_not_connected_call(details: Optional[dict], outcome: Optional[str]) -> bool:
+    """Whether a CALL_LOG activity counts toward `not_connected_count` — the running
+    tally that gates the "Max Call Attempts (20 calls)" picker option (Task A req 3;
+    that sub-disposition is offered manually, only once this count already reaches 20 —
+    there is no automatic count-triggered stage change).
+
+    Pure / DB-free: reuses crmReportService._disposition_label, the same Connected /
+    Not-Connected classification already used for the report and latest_dispositions,
+    so the two never drift apart."""
+    from services import crmReportService
+    return crmReportService._disposition_label(details or {}, outcome) == "Not Connected"
+
+
+async def not_connected_counts(engine, lead_ids: List[str]) -> Dict[str, int]:
+    """Map lead_id -> number of CALL_LOG activities classified Not Connected. Mirrors
+    call_counts; wired in wherever calls_attempted is (see leads.py _leads_to_responses)."""
+    if not lead_ids:
+        return {}
+    async with LeadActivityManager(engine).session_factory() as session:
+        rows = (await session.execute(
+            db.select(LeadActivitySchema.lead_id, LeadActivitySchema.details, LeadActivitySchema.outcome)
+              .where(LeadActivitySchema.lead_id.in_(lead_ids),
+                     LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG)
+        )).all()
+    out: Dict[str, int] = {}
+    for lead_id, details, outcome in rows:
+        if _is_not_connected_call(details, outcome):
+            out[lead_id] = out.get(lead_id, 0) + 1
+    return out
+
+
 async def order_rollups(engine, lead_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """Per-lead lifetime order rollup -> {qty, gross, net}, computed fresh from orders
     (net = sum(total_amount), same as the prospect report — not the lead's incremental

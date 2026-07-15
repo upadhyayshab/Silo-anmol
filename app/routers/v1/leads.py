@@ -160,6 +160,7 @@ async def _leads_to_responses(items):
     lead_ids = [lead.uid for lead in items]
     dispositions = await leadService.latest_dispositions(engine, lead_ids)
     counts = await leadService.call_counts(engine, lead_ids)
+    nc_counts = await leadService.not_connected_counts(engine, lead_ids)
     rollups = await leadService.order_rollups(engine, lead_ids)
     for resp in responses:
         d = dispositions.get(resp.uid)
@@ -167,6 +168,7 @@ async def _leads_to_responses(items):
             resp.disposition = d["disposition"]
             resp.sub_disposition = d["sub_disposition"]
         resp.calls_attempted = counts.get(resp.uid, 0)
+        resp.not_connected_count = nc_counts.get(resp.uid, 0)
         r = rollups.get(resp.uid)
         if r:
             resp.order_quantity = r["qty"]

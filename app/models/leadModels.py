@@ -199,6 +199,10 @@ class LeadResponse(BaseModel):
     disposition: Optional[str] = None
     sub_disposition: Optional[str] = None
     calls_attempted: int = 0  # count of CALL_LOG activities; enriched at list-build time
+    # Count of CALL_LOG activities classified Not-Connected; enriched at list-build time.
+    # Gates the "Max Call Attempts (20 calls)" sub-disposition in the picker (frontend
+    # shows it only once this reaches 20) — a manual pick, never an auto stage-flip.
+    not_connected_count: int = 0
     order_count: int = 0
     order_value: Decimal = Decimal("0")
     # Lifetime order rollup, computed fresh from orders at list-build time (matches
