@@ -498,7 +498,7 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
     has_order_rows = order_by_state is not None  # distinguishes "passed but empty" from "never passed"
     order_by_state = order_by_state or {}
     all_states = present | set(order_by_state.keys())
-    state_cols = (["Blank"] if "Blank" in all_states else []) + sorted(s for s in all_states if s != "Blank")
+    state_cols = (["Unknown"] if "Unknown" in all_states else []) + sorted(s for s in all_states if s != "Unknown")
     columns = state_cols + ["Grand Total"]
 
     def cell(col: str, stage: str) -> int:
