@@ -513,3 +513,95 @@ async def state_stage_pivot(
         sv = stage.value if hasattr(stage, "value") else stage
         counts[(_state_label(state), sv)] = counts.get((_state_label(state), sv), 0) + int(cnt)
     return build_state_pivot(counts, from_date, to_date)
+
+
+# --- Call Log report (Task B2: SA/AA cross-lead call-log view) --------------
+# Flat list of activity rows (default CALL_LOG) across the caller's scope, newest
+# first — unlike the reports above, the date window here gates the ACTIVITY's
+# created_at (when the call happened), not the lead's created_at, so the same
+# `_day_bounds` window means "calls logged in this range" not "leads created in
+# this range".
+
+# ponytail: hard cap so a broad filter (or none) never pulls the whole activity
+# table into memory on the single-task box; paginate if this ever needs to grow
+# past a screenful. `truncated` tells the caller more rows were cut off.
+CALL_LOG_LIMIT = 5000
+
+
+async def call_log_activities(
+    engine, *,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    direction: Optional[str] = None,
+    outcome: Optional[str] = None,
+    activity_type: Optional[str] = None,
+    owner_ids: Optional[List[str]] = None,
+    scope_owner_id=None,
+    agency_id: Optional[str] = None,
+    limit: int = CALL_LOG_LIMIT,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Return (rows, truncated). Rows are lead_activities joined to their lead,
+    restricted to the SAME scope the other reports use (`scope_owner_id` /
+    `agency_id` via `_lead_filter_conds`) plus the explicit `owner_ids` filter.
+    `direction` compares the JSON `details->>'direction'`; `outcome` compares the
+    plain `outcome` column. Defaults to `LeadActivityType.CALL_LOG` when
+    `activity_type` is not given."""
+    at = _enum_or_raw(LeadActivityType, activity_type) if activity_type else LeadActivityType.CALL_LOG
+
+    # Scope-only conds (no lead-created-at window — that's not what this report
+    # filters by); reuses the exact same owner/agency scoping the other reports do.
+    lead_conds, _ = _lead_filter_conds(
+        owner_ids=owner_ids, scope_owner_id=scope_owner_id, agency_id=agency_id,
+        gate_order_date=False)
+
+    conds = [LeadActivitySchema.activity_type == at, *lead_conds]
+    gte, lte = _day_bounds(from_date, to_date)
+    if gte is not None:
+        conds.append(LeadActivitySchema.created_at >= gte)
+    if lte is not None:
+        conds.append(LeadActivitySchema.created_at <= lte)
+    if direction:
+        conds.append(LeadActivitySchema.details["direction"].as_string() == direction)
+    if outcome:
+        conds.append(LeadActivitySchema.outcome == outcome)
+
+    lm = LeadManager(engine)
+    async with lm.session_factory() as session:
+        pairs = (await session.execute(
+            db.select(LeadActivitySchema, LeadSchema)
+              .select_from(LeadActivitySchema)
+              .join(LeadSchema, LeadActivitySchema.lead_id == LeadSchema.uid)
+              .where(*conds)
+              .order_by(LeadActivitySchema.created_at.desc())
+              .limit(limit + 1)
+        )).all()
+
+        truncated = len(pairs) > limit
+        pairs = pairs[:limit]
+
+        owner_ids_present = {l.owner_id for (_a, l) in pairs if l.owner_id}
+        owners: Dict[str, str] = {}
+        if owner_ids_present:
+            for uid, name, email in (await session.execute(
+                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email)
+                  .where(UserSchema.uid.in_(owner_ids_present))
+            )).all():
+                owners[uid] = name or email or uid
+
+        rows: List[Dict[str, Any]] = []
+        for a, l in pairs:
+            details = a.details or {}
+            rows.append({
+                "activity_id": a.uid,
+                "created_at": a.created_at.isoformat() if a.created_at else "",
+                "lead_id": l.uid,
+                "lead_number": l.lead_number,
+                "lead_name": " ".join(p for p in (l.first_name, l.last_name) if p),
+                "owner_id": l.owner_id,
+                "owner_name": owners.get(l.owner_id, ""),
+                "direction": details.get("direction") or "",
+                "outcome": a.outcome or "",
+                "disposition": _disposition_label(details, a.outcome),
+                "duration_seconds": details.get("duration_seconds"),
+            })
+        return rows, truncated

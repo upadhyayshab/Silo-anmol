@@ -397,6 +397,28 @@ async def state_pivot_report(
     )
 
 
+@router.get("/call-logs")
+async def call_log_report(
+    from_date: Optional[date] = Query(None, description="Call logged on/after (inclusive, IST)"),
+    to_date: Optional[date] = Query(None, description="Call logged on/before (inclusive, IST)"),
+    direction: Optional[str] = Query(None, description="inbound|outbound"),
+    outcome: Optional[str] = Query(None, description="CallOutcome value"),
+    activity_type: Optional[str] = Query("call_log", description="Activity type to list; defaults to call_log"),
+    owner_ids: Optional[List[str]] = Query(None, description="Scope to these owners (repeatable)"),
+    ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
+):
+    """Cross-lead call-log list (Task B2): every logged call activity across the
+    caller's scope, newest first. Agency-scoped for agency admins, own-leads-only
+    for other scoped callers, unrestricted for SA/global — same scoping mechanism
+    as the other reports via _report_scope_owner."""
+    rows, truncated = await crmReportService.call_log_activities(
+        engine, from_date=from_date, to_date=to_date,
+        direction=direction, outcome=outcome, activity_type=activity_type,
+        owner_ids=owner_ids, scope_owner_id=await _report_scope_owner(ctx),
+    )
+    return {"items": rows, "total": len(rows), "truncated": truncated}
+
+
 class AgencyReassignRequest(BaseModel):
     mobile: str
     telecaller_id: str
