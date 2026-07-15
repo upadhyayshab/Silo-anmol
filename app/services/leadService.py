@@ -1144,12 +1144,14 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
         activities = await fetch_activities(engine, lead.uid, user_cache=user_cache)
         resp = LeadDetailResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
         resp.activities = activities
-        # Single-lead fetch: enrich not_connected_count here so the detail page + softphone
-        # DispositionGate can gate the "Max Call Attempts (20 calls)" picker option. The LIST
-        # path (include_activities=False, below) intentionally skips this — _leads_to_responses
-        # batches not_connected_counts(engine, lead_ids) for the whole page, so computing it
-        # per-lead here would reintroduce an N+1 it already avoids.
+        # Single-lead fetch: enrich not_connected_count / outbound_call_count here so the
+        # detail page + softphone DispositionGate can gate the "Max Call Attempts (20 calls)"
+        # picker option and show "Calls Attempted (Outbound)". The LIST path
+        # (include_activities=False, below) intentionally skips this — _leads_to_responses
+        # batches its own counts for the whole page, so computing them per-lead here would
+        # reintroduce an N+1 it already avoids.
         resp.not_connected_count = (await not_connected_counts(engine, [lead.uid])).get(lead.uid, 0)
+        resp.outbound_call_count = (await outbound_call_counts(engine, [lead.uid])).get(lead.uid, 0)
         return resp
 
     return LeadResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
@@ -1223,6 +1225,34 @@ async def not_connected_counts(engine, lead_ids: List[str]) -> Dict[str, int]:
     out: Dict[str, int] = {}
     for lead_id, details, outcome in rows:
         if _is_not_connected_call(details, outcome):
+            out[lead_id] = out.get(lead_id, 0) + 1
+    return out
+
+
+def _is_outbound_call(details: Optional[dict]) -> bool:
+    """Whether a CALL_LOG activity was outbound-direction, for outbound_call_counts
+    ("Calls Attempted (Outbound)" on the lead detail page).
+
+    Pure / DB-free, mirroring _is_not_connected_call above; same `details["direction"]`
+    field the SQL-side idiom (`LeadActivitySchema.details["direction"].as_string()`) reads
+    in crmReportService, so the two never drift apart."""
+    return (details or {}).get("direction") == "outbound"
+
+
+async def outbound_call_counts(engine, lead_ids: List[str]) -> Dict[str, int]:
+    """Map lead_id -> number of CALL_LOG activities with direction == 'outbound'.
+    Mirrors not_connected_counts; wired into build_lead_response's detail path."""
+    if not lead_ids:
+        return {}
+    async with LeadActivityManager(engine).session_factory() as session:
+        rows = (await session.execute(
+            db.select(LeadActivitySchema.lead_id, LeadActivitySchema.details)
+              .where(LeadActivitySchema.lead_id.in_(lead_ids),
+                     LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG)
+        )).all()
+    out: Dict[str, int] = {}
+    for lead_id, details in rows:
+        if _is_outbound_call(details):
             out[lead_id] = out.get(lead_id, 0) + 1
     return out
 

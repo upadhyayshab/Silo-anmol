@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(_here, "..", "SharedBackend", "src"))
 
 from utils.crm_enums import (CallOutcome, LeadStage, DISPOSITION_OUTCOME,  # noqa: E402
                              DNC_SUB_DISPOSITIONS, DISPOSITION_STAGE, PROTECTED_STAGES)
-from services.leadService import _is_not_connected_call  # noqa: E402
+from services.leadService import _is_not_connected_call, _is_outbound_call  # noqa: E402
 
 # Mirror of the frontend taxonomy (leadEnums.js DISPOSITIONS) — keep in sync.
 EXPECTED_SUBS = {
@@ -100,6 +100,32 @@ def test_not_connected_predicate_false_for_connected():
     assert _is_not_connected_call(details, DISPOSITION_OUTCOME.get("Farmer - Just Browsing")) is False
 
 
+# ---- Task G: outbound call count (lead detail page) ------------------------------------
+
+def test_outbound_predicate_counts_correctly():
+    # 3 outbound, 2 inbound, 1 with no direction at all -> predicate picks exactly 3.
+    activities = (
+        [{"details": {"direction": "outbound"}} for _ in range(3)]
+        + [{"details": {"direction": "inbound"}} for _ in range(2)]
+        + [{"details": {}}]
+    )
+    count = sum(1 for a in activities if _is_outbound_call(a["details"]))
+    assert count == 3
+
+
+def test_outbound_predicate_false_for_inbound():
+    assert _is_outbound_call({"direction": "inbound"}) is False
+
+
+def test_outbound_predicate_false_for_missing_direction():
+    assert _is_outbound_call({}) is False
+    assert _is_outbound_call(None) is False
+
+
+def test_outbound_predicate_true_for_outbound():
+    assert _is_outbound_call({"direction": "outbound"}) is True
+
+
 if __name__ == "__main__":
     test_every_sub_is_mapped()
     test_all_outcomes_valid()
@@ -112,4 +138,8 @@ if __name__ == "__main__":
     test_not_connected_predicate_counts_correctly()
     test_not_connected_predicate_true_for_max_call_attempts_pick()
     test_not_connected_predicate_false_for_connected()
+    test_outbound_predicate_counts_correctly()
+    test_outbound_predicate_false_for_inbound()
+    test_outbound_predicate_false_for_missing_direction()
+    test_outbound_predicate_true_for_outbound()
     print("OK")

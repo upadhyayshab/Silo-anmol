@@ -203,6 +203,9 @@ class LeadResponse(BaseModel):
     # Gates the "Max Call Attempts (20 calls)" sub-disposition in the picker (frontend
     # shows it only once this reaches 20) — a manual pick, never an auto stage-flip.
     not_connected_count: int = 0
+    # Count of CALL_LOG activities with details.direction == "outbound" ("Calls Attempted
+    # (Outbound)" on the lead detail page); enriched at detail-build time.
+    outbound_call_count: int = 0
     order_count: int = 0
     order_value: Decimal = Decimal("0")
     # Lifetime order rollup, computed fresh from orders at list-build time (matches
