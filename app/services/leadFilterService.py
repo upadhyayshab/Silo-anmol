@@ -20,7 +20,7 @@ conditions via ``source: "linked"`` fields, translated to correlated ``EXISTS`` 
 """
 from datetime import date, datetime, timezone, timedelta
 
-from sqlalchemy import and_, or_, func, exists
+from sqlalchemy import and_, or_, func, exists, select
 
 from managers import LeadSchema, CustomerOrderSchema, LeadActivitySchema
 from utils.crm_enums import LeadStage, LeadActivityType, CallOutcome
@@ -123,6 +123,21 @@ FIELD_CATALOG = [
     _f("last_call_on", "Last Call On", "Activity", "date",
        source="linked", linked_schema=LeadActivitySchema, linked_col="created_at",
        linked_where=(LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG)),
+    # direction lives in details JSON (not a plain column), so this linked field carries
+    # linked_json_col/linked_json_key instead of linked_col — _linked_clause resolves it
+    # the same way _resolve_col does for LEAD json fields.
+    _f("call_direction", "Call Direction", "Activity", "enum",
+       source="linked", linked_schema=LeadActivitySchema,
+       linked_where=(LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG),
+       linked_json_col="details", linked_json_key="direction",
+       options=[{"value": "inbound", "label": "Inbound"}, {"value": "outbound", "label": "Outbound"}]),
+
+    # Calls Attempted: a COUNT threshold rather than an EXISTS check — "source": "count"
+    # short-circuits in _apply to a correlated scalar subquery (mirrors
+    # leadService.call_counts, which tallies CALL_LOG rows per lead the same way).
+    _f("calls_attempted", "Calls Attempted", "Activity", "number",
+       source="count", count_schema=LeadActivitySchema,
+       count_where=(LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG)),
 ]
 _CATALOG_BY_KEY = {f["key"]: f for f in FIELD_CATALOG}
 
@@ -221,7 +236,12 @@ def _linked_clause(field, operator, value):
     comparison); over a one-to-many link, "not equal" only makes sense as the
     absence of a matching child row."""
     LinkedSchema = field["linked_schema"]
-    linked_col = getattr(LinkedSchema, field["linked_col"])
+    if field.get("linked_json_col"):
+        # JSON path on the child table (e.g. lead_activities.details->>'direction'),
+        # resolved the same way _resolve_col does for LEAD-level json fields.
+        linked_col = getattr(LinkedSchema, field["linked_json_col"])[field["linked_json_key"]].as_string()
+    else:
+        linked_col = getattr(LinkedSchema, field["linked_col"])
     conds = [LinkedSchema.lead_id == LeadSchema.uid]
     if field.get("linked_where") is not None:
         conds.append(field["linked_where"])
@@ -259,6 +279,27 @@ def _linked_clause(field, operator, value):
     return ~clause if negate else clause
 
 
+def _count_clause(field, operator, value):
+    """Translate a ``source: "count"`` rule into a NUMBER-operator comparison against a
+    correlated ``COUNT(*)`` scalar subquery over a child table (e.g. "Calls Attempted"
+    counts lead_activities rows restricted to CALL_LOG) — mirrors leadService.call_counts.
+    ``is_empty`` has no NULL to check against a count, so it's treated as ``== 0``."""
+    count_schema = field["count_schema"]
+    conds = [count_schema.lead_id == LeadSchema.uid]
+    if field.get("count_where") is not None:
+        conds.append(field["count_where"])
+    sub = select(func.count()).select_from(count_schema).where(and_(*conds)).scalar_subquery()
+
+    if operator == "is_empty":
+        return sub == 0
+    if operator == "between":
+        lo, hi = _pair(value)
+        return sub.between(_num(lo), _num(hi))
+    n = _num(value)
+    return {"eq": sub == n, "neq": sub != n, "gt": sub > n,
+            "gte": sub >= n, "lt": sub < n, "lte": sub <= n}[operator]
+
+
 def _apply(field, operator, value):
     ftype = field["type"]
 
@@ -266,6 +307,11 @@ def _apply(field, operator, value):
     # comparison lives inside a correlated subquery, not on a leads column.
     if field.get("source") == "linked":
         return _linked_clause(field, operator, value)
+
+    # Count (scalar-subquery) fields likewise short-circuit: there's no leads column to
+    # resolve, `col` is a correlated COUNT(*) over the child table.
+    if field.get("source") == "count":
+        return _count_clause(field, operator, value)
 
     col = _resolve_col(field)
 

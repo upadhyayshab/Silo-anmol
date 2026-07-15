@@ -147,6 +147,42 @@ def test_linked_enum_membership_rejects_bogus():
     assert _raises(lambda: F.build_filter_clause(rule("call_outcome", "in", ["nope"])))
 
 
+def test_linked_call_direction_json_path_exists():
+    # direction lives in lead_activities.details (JSON), scoped to CALL_LOG rows.
+    c = F.build_filter_clause(rule("call_direction", "eq", "inbound"))
+    text = s(c)
+    assert "EXISTS" in text.upper()
+    assert "lead_activities" in text
+    assert "details" in text                  # JSON column resolved, not a plain linked_col
+    assert "inbound" in lit(c)
+
+
+def test_linked_call_direction_neq_is_not_exists():
+    # neq => NOT EXISTS any linked row whose details->>'direction' == 'inbound'.
+    text = s(F.build_filter_clause(rule("call_direction", "neq", "inbound"))).upper()
+    assert "NOT" in text and "EXISTS" in text
+
+
+def test_call_direction_membership_enforced():
+    assert _raises(lambda: F.build_filter_clause(rule("call_direction", "eq", "sideways")))
+
+
+def test_calls_attempted_count_subquery():
+    c = F.build_filter_clause(rule("calls_attempted", "gte", 20))
+    text = s(c)
+    assert "COUNT" in text.upper()
+    assert "lead_activities" in text          # counts CALL_LOG rows over lead_activities
+    assert "leads.uid" in text                # correlated back to the lead
+    assert "20" in lit(c)
+
+
+def test_calls_attempted_between_and_is_empty():
+    text = s(F.build_filter_clause(rule("calls_attempted", "between", [1, 5]))).upper()
+    assert "COUNT" in text and "BETWEEN" in text
+    empty = lit(F.build_filter_clause(rule("calls_attempted", "is_empty")))
+    assert "COUNT" in empty.upper() and "= 0" in empty
+
+
 def test_is_empty_text():
     # text is_empty => NULL OR '' ; assert both branches present
     text = s(F.build_filter_clause(rule("email", "is_empty"))).upper()
