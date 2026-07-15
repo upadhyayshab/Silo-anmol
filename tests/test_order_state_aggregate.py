@@ -117,11 +117,13 @@ def test_states_are_labeled_and_additive_across_raw_spellings():
     assert agg == {"Karnataka": {"orders": 2, "booked": 300.0, "qty": 5}}
 
 
-def test_empty_state_folds_to_blank():
+def test_empty_state_folds_to_unknown():
+    # _state_label now routes through canon_state (Task T1.2); empty/garbage raw
+    # states collapse to "Unknown" rather than "Blank".
     orders_rows = [(None, 1, Decimal("50.00"))]
     agg, _session = _run([_FakeResult(orders_rows), _FakeResult([])])
-    assert agg["Blank"]["orders"] == 1
-    assert agg["Blank"]["booked"] == 50.0
+    assert agg["Unknown"]["orders"] == 1
+    assert agg["Unknown"]["booked"] == 50.0
 
 
 if __name__ == "__main__":

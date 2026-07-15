@@ -455,7 +455,14 @@ _PIVOT_STAGES = [s.value for s in LeadStage]  # row order = enum order
 
 
 def _state_label(state: Optional[str]) -> str:
-    return (state or "").strip().title() or "Blank"
+    """Canonical Title Case state label for the pivot (folds casing/misspellings/
+    regional aliases via ``canon_state``); ``None``/empty/unrecognized raw values
+    collapse to "Unknown" instead of a blank column. Lazy import dodges the
+    crmReportService<->leadService circular import (same idiom as
+    routers/v1/orders.py::_canon_order_state)."""
+    from services.leadService import canon_state
+    canon = canon_state(state)
+    return canon.title() if canon else "Unknown"
 
 
 def _pct(numer: float, denom: float) -> float:
