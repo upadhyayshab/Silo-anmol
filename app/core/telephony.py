@@ -127,6 +127,14 @@ class TelephonyProvider(ABC):
         in-browser softphone, whose SDK reports no outcome). None if unsupported/unavailable."""
         return None
 
+    async def fetch_recording(self, url: str):
+        """Download a call recording so the browser can play it: the <audio> element
+        can't carry the app's bearer token and the vendor gates the URL behind Basic
+        auth, so the backend fetches it with vendor creds and re-serves it. Returns
+        `(bytes, content_type)`, or None if unsupported or `url` isn't a recognized
+        recording host (SSRF guard). Default: unsupported."""
+        return None
+
 
 class MockTelephonyProvider(TelephonyProvider):
     """Null adapter: keeps routes and tests working when no Exotel creds are

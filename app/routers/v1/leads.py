@@ -438,6 +438,22 @@ async def agency_reassign(body: AgencyReassignRequest,
     return await leadService.build_lead_response(engine, fresh, include_activities=True)
 
 
+@router.get("/recording")
+async def proxy_recording(url: str = Query(..., description="Exotel recording URL stored on the call activity"),
+                          ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ)),
+                          provider: TelephonyProvider = Depends(get_telephony_provider)):
+    """Stream a call recording to an authorized listener. Exotel gates the URL behind
+    Basic auth (a bare <audio src> gets 401/403), so we fetch it server-side with vendor
+    creds and re-serve. The adapter rejects non-Exotel hosts (SSRF). Must stay ABOVE the
+    /{lead_id} route or 'recording' is captured as a lead id."""
+    result = await provider.fetch_recording(url)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording unavailable")
+    content, content_type = result
+    return Response(content=content, media_type=content_type,
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
 @router.get("/{lead_id}", response_model=LeadDetailResponse)
 async def get_lead(lead_id: str,
                    ctx: AuthContext = Depends(require_permission(Permission.LEADS_READ))):

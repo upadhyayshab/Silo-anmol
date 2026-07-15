@@ -85,6 +85,19 @@ def _extract_users(body: Any) -> List[dict]:
     return d if isinstance(d, list) else ([d] if isinstance(d, dict) else [])
 
 
+def _is_exotel_recording_url(url: str) -> bool:
+    """True only for https URLs on an Exotel host — SSRF guard for the recording proxy.
+    Recordings live on `*.exotel.com` / `*.exotel.in` (e.g. recordings.exotel.com, the
+    s3-backed CDR host); reject everything else so the proxy can't be pointed elsewhere."""
+    from urllib.parse import urlparse
+    try:
+        p = urlparse(url or "")
+    except Exception:
+        return False
+    host = (p.hostname or "").lower()
+    return p.scheme == "https" and (host.endswith(".exotel.com") or host.endswith(".exotel.in"))
+
+
 def _parse_overrides(raw: str) -> dict:
     """`a@x:b@y, c@x:d@y` -> {crm_email: exotel_email} (both lowercased), for the few
     agents whose CRM login email differs from their Exotel user email."""
@@ -286,6 +299,25 @@ class ExotelAdapter(TelephonyProvider):
             "recording_url": (call.get("RecordingUrl") or "").strip() or None,
             "raw_status": call.get("Status"),
         }
+
+    async def fetch_recording(self, url: str):
+        """Download a call recording with Basic auth so the browser can play it.
+        Guards against SSRF by only fetching Exotel hosts (the URL originates from a
+        CDR/webhook we stored, but never trust it blindly). Returns `(bytes,
+        content_type)` or None. ponytail: full download — call recordings are a few
+        MB of mono mp3; switch to streaming if that ever pressures memory."""
+        if not _is_exotel_recording_url(url):
+            logger.warning(f"[exotel] refusing to proxy non-Exotel recording url: {url!r}")
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, auth=self._auth) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+        except Exception as e:
+            logger.warning(f"[exotel] recording fetch failed for {url}: {e}")
+            return None
+        ctype = resp.headers.get("content-type") or "audio/mpeg"
+        return resp.content, ctype
 
     async def resolve_agent_email(self, agent_ref: str) -> Optional[str]:
         """Webhook agent ref -> the agent's CRM email (which matches a telecaller).
@@ -864,6 +896,14 @@ if __name__ == "__main__":
     # and the email->user_id / email->SIP mappings.
     assert _norm_status("No Answer") == CallStatus.NO_ANSWER
     assert _norm_status("completed") == CallStatus.COMPLETED
+
+    # recording-proxy SSRF guard: only https Exotel hosts pass.
+    assert _is_exotel_recording_url("https://recordings.exotel.com/a/b.mp3")
+    assert _is_exotel_recording_url("https://x.exotel.in/c.mp3")
+    assert not _is_exotel_recording_url("http://recordings.exotel.com/a.mp3")   # not https
+    assert not _is_exotel_recording_url("https://evil.com/a.mp3")
+    assert not _is_exotel_recording_url("https://recordings.exotel.com.evil.com/a.mp3")
+    assert not _is_exotel_recording_url("")
 
     a = ExotelAdapter("sid", "key", "token")
     assert a._device_url.endswith("/v2/integrations/device")   # device-status PUT target wired
