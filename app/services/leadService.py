@@ -1144,6 +1144,12 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
         activities = await fetch_activities(engine, lead.uid, user_cache=user_cache)
         resp = LeadDetailResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
         resp.activities = activities
+        # Single-lead fetch: enrich not_connected_count here so the detail page + softphone
+        # DispositionGate can gate the "Max Call Attempts (20 calls)" picker option. The LIST
+        # path (include_activities=False, below) intentionally skips this — _leads_to_responses
+        # batches not_connected_counts(engine, lead_ids) for the whole page, so computing it
+        # per-lead here would reintroduce an N+1 it already avoids.
+        resp.not_connected_count = (await not_connected_counts(engine, [lead.uid])).get(lead.uid, 0)
         return resp
 
     return LeadResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
