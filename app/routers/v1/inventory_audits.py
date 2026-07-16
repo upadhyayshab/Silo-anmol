@@ -18,7 +18,7 @@ from models.erpModels import (
     WeeklyInventoryAuditItemReportResponse, AuditOutletRef, AuditCycleRef,
     AuditStatus
 )
-from utils.auth import require_permission, apply_scope, AuthContext
+from utils.auth import require_permission, apply_scope, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
 from services.inventory_audit_service import inventory_audit_service
 
@@ -155,6 +155,7 @@ async def list_audits(
 @router.get("/admin/summary", response_model=WeeklyInventoryAuditSummaryResponse)
 async def get_audit_summary(
     week_start: Optional[date] = None,
+    state: Optional[str] = None,
     _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST))
 ):
     """Summarise audit completion for a cycle.
@@ -162,6 +163,10 @@ async def get_audit_summary(
     Defaults to the LATEST cycle that has audits (not today's calendar week) so
     the cards reflect the data actually on screen even if generation is off-cadence
     or audits were back-dated.
+
+    `state` is an optional additional narrowing (full state name, e.g. "Karnataka",
+    matched case-insensitively via the outlet's `state` column) — it restricts both
+    the denominator and the completed/pending lists to that state's outlets.
     """
     try:
         async with AsyncSession(engine) as session:
@@ -176,19 +181,34 @@ async def get_audit_summary(
             if target_week is None:
                 target_week = _cycle_start(date.today())
 
+            # Resolve the state filter to outlet ids once, reused across all three
+            # queries below. `state_outlet_ids is None` means "no state filter" —
+            # ids or ["__none__"] mirrors the sentinel convention used elsewhere
+            # (dashboard.py/orders.py/reports.py) so a state with zero outlets
+            # matches nothing instead of falling through to "all outlets".
+            state_outlet_ids = await outlet_ids_for_state(state) if state else None
+
             # Active outlets (id + name) — the denominator.
-            outlet_rows = (await session.execute(
+            outlet_query = (
                 select(OutletSchema.uid, OutletSchema.outlet_name)
                 .where(OutletSchema.is_active == True)
-            )).all()
+            )
+            if state_outlet_ids is not None:
+                outlet_query = outlet_query.where(OutletSchema.uid.in_(state_outlet_ids or ["__none__"]))
+            outlet_rows = (await session.execute(outlet_query)).all()
 
             # Outlets that COMPLETED the target cycle.
-            completed_rows = (await session.execute(
+            completed_query = (
                 select(InventoryAuditSchema.outlet_id, OutletSchema.outlet_name)
                 .join(OutletSchema, OutletSchema.uid == InventoryAuditSchema.outlet_id)
                 .where(InventoryAuditSchema.week_start == target_week)
                 .where(InventoryAuditSchema.status == AuditStatus.COMPLETED)
-            )).all()
+            )
+            if state_outlet_ids is not None:
+                completed_query = completed_query.where(
+                    InventoryAuditSchema.outlet_id.in_(state_outlet_ids or ["__none__"])
+                )
+            completed_rows = (await session.execute(completed_query)).all()
             completed_ids = {r[0] for r in completed_rows}
 
             completed_outlets = [AuditOutletRef(outlet_id=r[0], outlet_name=r[1]) for r in completed_rows]
@@ -197,11 +217,16 @@ async def get_audit_summary(
                 for uid, name in outlet_rows if uid not in completed_ids
             ]
 
-            avg_match = await session.scalar(
+            avg_match_query = (
                 select(func.avg(InventoryAuditSchema.match_percentage))
                 .where(InventoryAuditSchema.week_start == target_week)
                 .where(InventoryAuditSchema.status == AuditStatus.COMPLETED)
             )
+            if state_outlet_ids is not None:
+                avg_match_query = avg_match_query.where(
+                    InventoryAuditSchema.outlet_id.in_(state_outlet_ids or ["__none__"])
+                )
+            avg_match = await session.scalar(avg_match_query)
 
             _, iso_week, iso_year, week_label = _week_fields(target_week, None)
 
@@ -417,6 +442,7 @@ async def get_audit_report(
     week_start: Optional[date] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    state: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
     _: AuthContext = Depends(require_permission(Permission.INVENTORY_ADJUST))
@@ -424,12 +450,21 @@ async def get_audit_report(
     """Get a detailed flat report of audit items (Excel-like view).
 
     Pass `week_start` to scope to a single cycle (the table then matches the
-    summary). `start_date`/`end_date` still work for ad-hoc ranges.
+    summary). `start_date`/`end_date` still work for ad-hoc ranges. `state` is an
+    optional additional narrowing (full state name, matched case-insensitively via
+    the audit's outlet) — an explicit `outlet_id` is more specific and wins if both
+    are supplied.
     """
     try:
         filters = {}
         if outlet_id:
             filters["audit.outlet_id"] = outlet_id
+        elif state:
+            # Join audit -> outlet via the dotted relationship filter (expanded by
+            # ERPGenericManager._filter into {"audit": {"outlet_id": ids}}). Sentinel
+            # so a state with zero outlets matches nothing, not everything.
+            state_outlet_ids = await outlet_ids_for_state(state)
+            filters["audit.outlet_id"] = state_outlet_ids or ["__none__"]
         if product_id:
             filters["product_id"] = product_id
         if week_start:
