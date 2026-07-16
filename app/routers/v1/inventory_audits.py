@@ -9,17 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_engine, get_settings
 from managers.erpManagers import (
     InventoryAuditSchema, InventoryAuditItemSchema, OutletSchema, ProductSchema,
-    InventoryAuditManager, InventoryAuditItemManager
+    InventoryAuditManager, InventoryAuditItemManager,
+    InventorySchema, CustomerOrderSchema, OrderItemSchema,
 )
 from models import ListResponse, StatusResponse
 from models.erpModels import (
     WeeklyInventoryAuditResponse, WeeklyInventoryAuditItemResponse,
     WeeklyInventoryAuditSubmitRequest, WeeklyInventoryAuditSummaryResponse,
-    WeeklyInventoryAuditItemReportResponse, AuditOutletRef, AuditCycleRef,
-    AuditStatus
+    WeeklyInventoryAuditItemReportResponse, WeeklyInventoryAuditReportResponse,
+    AuditOutletRef, AuditCycleRef, AuditStatus
 )
 from utils.auth import require_permission, apply_scope, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
+from utils.constants import OrderStatus
+from utils.timeutils import ist_now
+from utils.functions import ensure_date
 from services.inventory_audit_service import inventory_audit_service
 
 router = APIRouter(prefix="/inventory-audits", tags=["Inventory Audits"])
@@ -76,6 +80,93 @@ async def _outlet_name_map(outlet_ids):
             .where(OutletSchema.uid.in_(ids))
         )).all()
     return {uid: name for uid, name in rows}
+
+
+async def _live_inventory_map(pairs):
+    """{(outlet_id, product_id): quantity} for the given pairs, ONE batched query.
+
+    `quantity` on the `inventory` table is the live on-hand figure the app actually
+    uses today for outlet stock (InventoryAuditService seeds an audit's
+    system_quantity from this same column; routers/v1/inventory.py reads outlet
+    stock the same way). `available_quantity` on InventoryResponse is marked
+    deprecated and just mirrors `quantity` in the simplified system, so there's no
+    separate "available" figure to prefer.
+
+    A pair absent from the result has no inventory row -- caller must default with
+    `.get(pair)` (returns None), never fabricate 0 for "unknown".
+    """
+    outlet_ids = {o for o, _ in pairs if o}
+    product_ids = {p for _, p in pairs if p}
+    if not outlet_ids or not product_ids:
+        return {}
+    async with AsyncSession(engine) as session:
+        rows = (await session.execute(
+            select(InventorySchema.outlet_id, InventorySchema.product_id, InventorySchema.quantity)
+            .where(InventorySchema.outlet_id.in_(outlet_ids))
+            .where(InventorySchema.product_id.in_(product_ids))
+        )).all()
+    return {(outlet_id, product_id): quantity for outlet_id, product_id, quantity in rows}
+
+
+async def _delivered_dates_map(pairs, since_floor):
+    """{(outlet_id, product_id): [delivered dates, ascending]} for DELIVERED orders
+    carrying that product from that outlet, ONE batched query (order_items JOIN
+    customer_orders) -- no per-row query.
+
+    Each row's own `submitted_at` cutoff differs (different audits/weeks), so this
+    can't filter to the exact cutoff in SQL for every row in one shot. Instead it
+    over-fetches from `since_floor` (the earliest submitted_at across the page) and
+    callers re-filter per row in Python against their own submitted_at -- see
+    `_count_deliveries_since`. Bounded by the page's outlet/product ids, so this
+    stays cheap even though it isn't the single tightest-possible query.
+    """
+    outlet_ids = {o for o, _ in pairs if o}
+    product_ids = {p for _, p in pairs if p}
+    if not outlet_ids or not product_ids:
+        return {}
+    query = (
+        select(
+            CustomerOrderSchema.assigned_outlet_id,
+            OrderItemSchema.product_id,
+            CustomerOrderSchema.actual_delivery_date,
+        )
+        .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
+        .where(CustomerOrderSchema.assigned_outlet_id.in_(outlet_ids))
+        .where(OrderItemSchema.product_id.in_(product_ids))
+        .where(CustomerOrderSchema.order_status == OrderStatus.DELIVERED)
+        .where(CustomerOrderSchema.actual_delivery_date.isnot(None))
+    )
+    if since_floor is not None:
+        query = query.where(CustomerOrderSchema.actual_delivery_date >= since_floor)
+
+    async with AsyncSession(engine) as session:
+        rows = (await session.execute(query)).all()
+
+    grouped = {}
+    for outlet_id, product_id, delivered_at in rows:
+        grouped.setdefault((outlet_id, product_id), []).append(delivered_at)
+    for key in grouped:
+        grouped[key].sort()
+    return grouped
+
+
+def _count_deliveries_since(dates, submitted_at):
+    """How many delivery dates fall strictly after the audit's submitted_at.
+
+    `actual_delivery_date` is only DATE-precision (a plain DATE column in prod
+    despite the ORM declaring DateTime -- see timeutils.ist_date), so this compares
+    at IST-calendar-day granularity via the codebase's existing `ensure_date`
+    helper rather than exact instants. A delivery on the SAME calendar day as the
+    submission is excluded (not '>=') -- deliberately conservative, since same-day
+    ordering between "count submitted" and "delivered" can't be recovered from a
+    date-only column, and treating it as included would risk double-counting stock
+    that was already reflected in the count.
+    """
+    if not dates or submitted_at is None:
+        return 0
+    submitted_day = ensure_date(submitted_at)
+    return sum(1 for d in dates if ensure_date(d) > submitted_day)
+
 
 @router.post("/admin/generate", response_model=StatusResponse)
 async def generate_weekly_audits(
@@ -435,7 +526,7 @@ async def submit_audit(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/admin/report", response_model=ListResponse[WeeklyInventoryAuditItemReportResponse])
+@router.get("/admin/report", response_model=WeeklyInventoryAuditReportResponse)
 async def get_audit_report(
     outlet_id: Optional[str] = None,
     product_id: Optional[str] = None,
@@ -497,6 +588,21 @@ async def get_audit_report(
             item.audit.outlet_id for item in result.items if item.audit
         )
 
+        # Batched (outlet_id, product_id) lookups for the two new columns -- ONE
+        # query each across the whole page, never per-row (see _live_inventory_map /
+        # _delivered_dates_map docstrings; precedent: attempt_counts_for/
+        # load_events_bulk in services/order_events_service.py).
+        pairs = {
+            (item.audit.outlet_id, item.product_id)
+            for item in result.items if item.audit
+        }
+        submitted_ats = [item.audit.submitted_at for item in result.items
+                         if item.audit and item.audit.submitted_at]
+        since_floor = min(submitted_ats) if submitted_ats else None
+
+        live_inventory_map = await _live_inventory_map(pairs)
+        delivered_dates_map = await _delivered_dates_map(pairs, since_floor)
+
         responses = []
         for item in result.items:
             # We must gracefully handle missing relations if any
@@ -507,6 +613,12 @@ async def get_audit_report(
             ws, iso_week, iso_year, week_label = _week_fields(
                 audit.week_start if audit else None,
                 audit.audit_date if audit else None,
+            )
+
+            pair = (audit.outlet_id, item.product_id) if audit else None
+            delivery_count = _count_deliveries_since(
+                delivered_dates_map.get(pair, []) if pair else [],
+                audit.submitted_at if audit else None,
             )
 
             responses.append(
@@ -525,13 +637,15 @@ async def get_audit_report(
                     product_name=product.product_name if product else None,
                     system_quantity=item.system_quantity,
                     physical_quantity=item.physical_quantity,
-                    unit_price=product.unit_price if product else None
+                    unit_price=product.unit_price if product else None,
+                    delivery_count=delivery_count,
+                    live_available_quantity=live_inventory_map.get(pair) if pair else None,
                 )
             )
 
         # Basic sorting in python to emulate order_by since base manager fetch_all doesn't support nested sorts
         responses.sort(key=lambda x: (x.audit_date or date.min, x.outlet_name or ""), reverse=True)
 
-        return ListResponse(items=responses, count=result.count)
+        return WeeklyInventoryAuditReportResponse(items=responses, count=result.count, live_at=ist_now())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

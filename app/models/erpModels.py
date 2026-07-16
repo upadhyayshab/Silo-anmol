@@ -355,9 +355,29 @@ class WeeklyInventoryAuditItemReportResponse(BaseModel):
     system_quantity: Optional[int] = 0
     physical_quantity: Optional[int] = None
     unit_price: Optional[Decimal] = None
+    # Delivered orders carrying this product from this outlet, strictly after
+    # submitted_at (row granularity is outlet x product, so the count is scoped
+    # to that same product -- see get_audit_report). 0 when there's no submitted_at
+    # yet or no matching deliveries; never None.
+    delivery_count: int = 0
+    # Current on-hand stock for this outlet+product from the live `inventory` table
+    # (the same source system_quantity was seeded from -- see InventoryAuditService).
+    # None means "no inventory row exists", never fabricated as 0.
+    live_available_quantity: Optional[int] = None
 
     class Config:
         from_attributes = True
+
+
+class WeeklyInventoryAuditReportResponse(BaseModel):
+    """Envelope for GET /inventory-audits/admin/report.
+
+    `live_at` is one value for the whole report (the instant it was generated) so
+    it lives here rather than being repeated identically on every row.
+    """
+    items: List[WeeklyInventoryAuditItemReportResponse]
+    count: int
+    live_at: datetime
 
 
 # ============================================================================
