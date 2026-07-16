@@ -71,10 +71,19 @@ class FakeOrderManager:
     """Mimics CustomerOrderManager.fetch_all(...) -> object with .model_dump()."""
     def __init__(self, order_dicts):
         self._orders = order_dicts
+        self.get_orders_count_calls = 0
 
     async def fetch_all(self, **kw):
         orders = self._orders
         return SimpleNamespace(model_dump=lambda: {"items": [dict(o) for o in orders], "count": len(orders)})
+
+    async def get_orders_count(self, filters=None):
+        # get_orders (Part B) now asks for a filtered total alongside the page;
+        # this fake ignores `filters` and just reports the full fake set's size,
+        # which is enough to prove the wiring (call happens, value lands in
+        # response["total"]) without re-implementing SQL filtering here.
+        self.get_orders_count_calls += 1
+        return len(self._orders)
 
 
 def _disposition(order_id, i, status="customer_not_available", event_type="RIDER_DISPOSITION",
@@ -226,6 +235,9 @@ def test_get_orders_attaches_attempt_count_with_and_without_events():
     # ONE latest_by_order call and ONE attempt_counts_by_order call for the whole page.
     assert ftrack.latest_by_order_calls == 1
     assert ftrack.attempt_counts_calls == 1
+    # Part B: filtered total is additive alongside items/count (existing shape untouched).
+    assert resp["total"] == 2
+    assert resp["count"] == 2
     print("OK: test_get_orders_attaches_attempt_count_with_and_without_events")
 
 

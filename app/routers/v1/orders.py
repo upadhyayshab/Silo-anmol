@@ -1716,6 +1716,14 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
             sorts=sorts or ["-created_at"],
         )
 
+        # Filtered TOTAL for real server-side pagination (Page X of Y), additive
+        # alongside `count` (page length) so existing consumers (outlet order views)
+        # keep working untouched. Mirrors GET /leads' `total`: a plain COUNT over the
+        # SAME filters, on the base table -- get_orders_count never adds the
+        # items/product join `joins` above does, so it can't be inflated by that
+        # one-to-many fan-out the way a naive COUNT(*) over the joined query would be.
+        total = await order_manager.get_orders_count(filters=filters)
+
         result = orders.model_dump()
         items = apply_field_mask("orders", ctx, result.get("items", []))
 
@@ -1743,6 +1751,7 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
             it["attempt_count"] = attempt_counts.get(it.get("uid"), 0)
 
         result["items"] = items
+        result["total"] = total
         return result
 
     except Exception as e:
