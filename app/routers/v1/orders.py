@@ -1643,19 +1643,38 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         result = orders.model_dump()
         items = apply_field_mask("orders", ctx, result.get("items", []))
 
-        # Attach who/from-where each order's status was last changed — the report
-        # export's rider/actor + ERP-vs-rider-app columns. Blank until an order gets
-        # its first tracking row (older orders fill in on their next status change).
-        latest = await tracking_manager.latest_by_order(
-            [it.get("uid") for it in items if it.get("uid")]
-        )
-        # Same batching approach as latest_by_order above: one delivery_tracking IN-query
-        # (via order_events_service.attempt_counts_for) folded per order, not per-row —
-        # feeds the SA export's and the outlet order view's "attempt count" column, since
-        # both surfaces list orders through this same endpoint.
-        attempt_counts = await order_events_service.attempt_counts_for(
-            [it.get("uid") for it in items if it.get("uid")]
-        )
+        # Attach who/from-where each order's status was last changed (the report
+        # export's rider/actor + ERP-vs-rider-app columns) AND attempt_count (the SA
+        # export's / outlet order view's "attempt count" column) from ONE delivery_tracking
+        # scan — these used to be two separate full IN-queries over the same order-id set
+        # on every GET /orders (tracking_manager.latest_by_order + attempt_counts_for),
+        # and the SA export alone pulls limit=1000 against a single 0.5 vCPU task.
+        uids = [it.get("uid") for it in items if it.get("uid")]
+        events_by_order = await order_events_service.load_events_bulk(uids)
+
+        attempt_counts = {
+            oid: fold_order_state(events).attempt_count
+            for oid, events in events_by_order.items()
+        }
+
+        # Per-order event lists are ascending by created_at (see load_events_bulk), so
+        # the last entry is the most recent — same row latest_by_order's DISTINCT ON
+        # picked. changed_by_name isn't on the tracking row itself, so it's resolved
+        # via one small, separate users lookup (a different, much smaller table —
+        # not the redundant delivery_tracking re-scan this fix removes).
+        latest = {}
+        changed_by_ids = set()
+        for oid, events in events_by_order.items():
+            last = events[-1]
+            latest[oid] = {"source": last.source, "changed_by": last.changed_by, "changed_by_name": None}
+            if last.changed_by:
+                changed_by_ids.add(last.changed_by)
+        if changed_by_ids:
+            users = await user_manager.fetch_all(filters={"uid": list(changed_by_ids)})
+            names_by_id = {u.uid: u.full_name for u in users.items}
+            for info in latest.values():
+                info["changed_by_name"] = names_by_id.get(info["changed_by"])
+
         for it in items:
             info = latest.get(it.get("uid")) or {}
             it["last_status_source"] = info.get("source")
