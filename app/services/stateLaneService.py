@@ -14,6 +14,7 @@ from managers import (LeadManager, LeadSchema, UserSchema, FacebookPageSchema,
                       LeadAssignmentSchema)
 from services import leadService
 from utils.constants import TELECALLER_ROLES
+from utils.crm_enums import AssignmentReason
 from utils.timeutils import ist_day_bounds
 
 # "online" = seen within this window (matches assignmentService auto-assign).
@@ -155,7 +156,14 @@ async def state_lane_overview(engine, *, from_date: Optional[date] = None,
         # RECEIVED per day). Same metric gates the quota (assignmentService._received_today_counts),
         # so the bar and the cap never disagree. (Was leads.owner_id filtered by lead.created_at,
         # which showed only fresh leads and hid the ~600 backlog reassigned each morning.)
-        assign_conds = [LeadAssignmentSchema.is_active.is_(True)]
+        # ORDER_BOOKED assignments are excluded here too (twin of the quota gate's exclusion):
+        # booking an order re-owns a lead the telecaller may not have been assigned, and that
+        # re-ownership isn't a "received today" event — counting it here would misreport the
+        # day's distribution on this same bar the quota gate is meant to agree with.
+        assign_conds = [
+            LeadAssignmentSchema.is_active.is_(True),
+            LeadAssignmentSchema.reason != AssignmentReason.ORDER_BOOKED.value,
+        ]
         if gte is not None:
             assign_conds.append(LeadAssignmentSchema.created_at >= gte)
         if lte is not None:

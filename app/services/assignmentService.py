@@ -188,7 +188,11 @@ async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
     assignment landing today, not the lead's age. (Was lead.created_at, which let backlog
     reassignment sail past the cap — the day one KA agent took 70 while the quota said 25.) Both
     the quota GATE and the fairness BALANCE run off this; resets at IST midnight. Twin display:
-    stateLaneService.load_by_owner (the state-lane bar reads the same metric)."""
+    stateLaneService.load_by_owner (the state-lane bar reads the same metric).
+
+    Excludes AssignmentReason.ORDER_BOOKED rows: booking an order re-owns a lead
+    (leadService.reassign) regardless of who was previously assigned, and that re-ownership
+    must not silently burn a slot in the telecaller's daily RECEIVED-lead quota."""
     if not telecaller_ids:
         return {}
     cutoff = _ist_day_start_utc()
@@ -200,6 +204,7 @@ async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
                 LeadAssignmentSchema.telecaller_id.in_(telecaller_ids),
                 LeadAssignmentSchema.is_active.is_(True),
                 LeadAssignmentSchema.created_at >= cutoff,
+                LeadAssignmentSchema.reason != AssignmentReason.ORDER_BOOKED.value,
             )
             .group_by(LeadAssignmentSchema.telecaller_id)
         )
