@@ -828,8 +828,12 @@ class SystemConfigurationResponse(BaseModel):
     uid: str
     company_name: str
     company_address: str
-    company_gstin: str
-    company_pan: str
+    # Optional on read: the update path (SystemConfigurationUpdateRequest) accepts these as
+    # Optional, so a config row can legitimately hold NULL gstin/pan. Requiring str here made
+    # GET /config 500 on such a row — a deadlock, since /config backs the very page you'd use
+    # to set them. Read tolerates what write permits.
+    company_gstin: Optional[str] = None
+    company_pan: Optional[str] = None
     company_logo_url: Optional[str] = None
     invoice_terms: Optional[str] = None
     invoice_footer: Optional[str] = None
