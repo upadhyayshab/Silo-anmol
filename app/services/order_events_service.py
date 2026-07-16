@@ -101,6 +101,19 @@ async def load_events_bulk(order_ids: List[str]) -> dict:
     return grouped
 
 
+async def attempt_counts_for(order_ids: List[str]) -> dict:
+    """{order_id: attempt_count} for many orders via ONE batched delivery_tracking query
+    (load_events_bulk groups by order_id in Python) + fold_order_state per group — no
+    per-order fold query. Orders with no delivery_tracking events are simply absent from
+    load_events_bulk's result, so callers should default with .get(order_id, 0).
+    Shared by any order-list endpoint that needs to surface attempt_count (SA export +
+    outlet order view both read GET /orders, so one call here covers both).
+    # ponytail: fold on read; persist attempt_count column if this export's latency grows
+    """
+    events_by_order = await load_events_bulk(order_ids)
+    return {oid: fold_order_state(events).attempt_count for oid, events in events_by_order.items()}
+
+
 async def record_event(order, event_type, *, actor_id, source, status=None,
                        remarks=None, postpone_date=None, payload=None, session=None):
     """Append one event row. outlet_id may be None for orders not yet assigned to an

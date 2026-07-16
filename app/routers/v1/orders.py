@@ -1626,11 +1626,19 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
         latest = await tracking_manager.latest_by_order(
             [it.get("uid") for it in items if it.get("uid")]
         )
+        # Same batching approach as latest_by_order above: one delivery_tracking IN-query
+        # (via order_events_service.attempt_counts_for) folded per order, not per-row —
+        # feeds the SA export's and the outlet order view's "attempt count" column, since
+        # both surfaces list orders through this same endpoint.
+        attempt_counts = await order_events_service.attempt_counts_for(
+            [it.get("uid") for it in items if it.get("uid")]
+        )
         for it in items:
             info = latest.get(it.get("uid")) or {}
             it["last_status_source"] = info.get("source")
             it["last_status_changed_by_id"] = info.get("changed_by")
             it["last_status_changed_by_name"] = info.get("changed_by_name")
+            it["attempt_count"] = attempt_counts.get(it.get("uid"), 0)
 
         result["items"] = items
         return result
