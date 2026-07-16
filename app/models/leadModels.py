@@ -190,6 +190,10 @@ class LeadResponse(BaseModel):
     owner_id: Optional[str] = None
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
+    # Owner's agency (owner_id -> users.agency_id -> agency.name); None when the owner
+    # has no agency (or the lead has no owner). Enriched at list-build time — see
+    # leadService.owner_agency_names (batched, not per-row).
+    agency_name: Optional[str] = None
     outlet_id: Optional[str] = None
     outlet_name: Optional[str] = None
     lead_score: Optional[int] = None

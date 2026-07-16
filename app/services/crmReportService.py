@@ -18,7 +18,7 @@ import sqlalchemy as db
 
 from managers import (
     LeadManager, LeadSchema, LeadActivitySchema,
-    CustomerOrderSchema, OrderItemSchema, UserSchema, OutletSchema,
+    CustomerOrderSchema, OrderItemSchema, UserSchema, OutletSchema, AgencySchema,
 )
 from utils.crm_enums import LeadActivityType, CallOutcome, LeadStage
 from utils.crm_constants import LeadSource
@@ -404,12 +404,18 @@ async def agent_performance(
         # People to show: lead owners + telecallers who created in-window orders.
         people = {r[0] for r in stage_rows if r[0]} | {r[0] for r in ord_rows if r[0]}
         owners: Dict[str, str] = {}
+        # owner_id -> agency name (owner_id -> users.agency_id -> agencies.name), one
+        # LEFT JOIN alongside the owner-name lookup above — no extra round trip (T2.1).
+        agency_names: Dict[str, Optional[str]] = {}
         if people:
-            for uid, name, email in (await session.execute(
-                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email)
+            for uid, name, email, agency_name in (await session.execute(
+                db.select(UserSchema.uid, UserSchema.full_name, UserSchema.email, AgencySchema.name)
+                  .select_from(UserSchema)
+                  .outerjoin(AgencySchema, AgencySchema.uid == UserSchema.agency_id)
                   .where(UserSchema.uid.in_(people))
             )).all():
                 owners[uid] = name or email or uid
+                agency_names[uid] = agency_name
 
     ord_map = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0)) for r in ord_rows}
     qty_map = {r[0]: int(r[1] or 0) for r in qty_rows}
@@ -432,6 +438,7 @@ async def agent_performance(
         rows.append({
             "owner_id": owner_id,
             "owner": owners.get(owner_id) or ("Unassigned" if not owner_id else owner_id),
+            "agency_name": agency_names.get(owner_id),
             "stages": {sv: counts.get(sv, 0) for sv in all_stages},
             "total": total,
             "attempted_pct": round(100 * (total - new_lead) / total, 1) if total else 0.0,

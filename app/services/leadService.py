@@ -20,7 +20,8 @@ from config import get_engine, get_settings
 from managers import (
     LeadManager, LeadSchema,
     LeadActivityManager, LeadActivitySchema,
-    UserManager, OutletManager,
+    UserManager, UserSchema, OutletManager,
+    AgencySchema,
     LSQOrderAdManager, LSQOrderAdSchema,
 )
 from models import (
@@ -1159,6 +1160,26 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
         return resp
 
     return LeadResponse(**{k: v for k, v in data.items() if k in LeadResponse.model_fields})
+
+
+async def owner_agency_names(engine, owner_ids: List[str]) -> Dict[str, Optional[str]]:
+    """Map owner_id -> agency name (owner_id -> users.agency_id -> agencies.name), one
+    batched LEFT JOIN query for the whole owner set — mirrors latest_dispositions/
+    call_counts below (avoids an N+1 across a list page). Owners with no agency (or not
+    found) map to None rather than being omitted, so `.get(owner_id)` always has a key
+    once resolved. Shared by the lead list/query paths (leads.py::_leads_to_responses)
+    and crmReportService.agent_performance so owner->agency resolution lives in one place."""
+    owner_ids = [o for o in dict.fromkeys(owner_ids or []) if o]
+    if not owner_ids:
+        return {}
+    async with UserManager(engine).session_factory() as session:
+        rows = (await session.execute(
+            db.select(UserSchema.uid, AgencySchema.name)
+              .select_from(UserSchema)
+              .outerjoin(AgencySchema, AgencySchema.uid == UserSchema.agency_id)
+              .where(UserSchema.uid.in_(owner_ids))
+        )).all()
+    return {uid: name for uid, name in rows}
 
 
 async def latest_dispositions(engine, lead_ids: List[str]) -> Dict[str, Dict[str, Optional[str]]]:

@@ -162,6 +162,8 @@ async def _leads_to_responses(items):
     counts = await leadService.call_counts(engine, lead_ids)
     nc_counts = await leadService.not_connected_counts(engine, lead_ids)
     rollups = await leadService.order_rollups(engine, lead_ids)
+    owner_ids = [lead.owner_id for lead in items if lead.owner_id]
+    agency_names = await leadService.owner_agency_names(engine, owner_ids)
     for resp in responses:
         d = dispositions.get(resp.uid)
         if d:
@@ -174,6 +176,7 @@ async def _leads_to_responses(items):
             resp.order_quantity = r["qty"]
             resp.order_gross = r["gross"]
             resp.order_net = r["net"]
+        resp.agency_name = agency_names.get(resp.owner_id) if resp.owner_id else None
     return responses
 
 
