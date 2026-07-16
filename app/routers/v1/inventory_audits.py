@@ -124,6 +124,12 @@ async def _delivered_dates_map(pairs, since_floor):
     product_ids = {p for _, p in pairs if p}
     if not outlet_ids or not product_ids:
         return {}
+    if since_floor is None:
+        # No row on this page has a submitted_at yet (all pending) -- every date this
+        # query could return would be filtered back out to 0 by _count_deliveries_since
+        # anyway (it needs a submitted_at to compare against). Skip fetching every
+        # DELIVERED order ever for these outlet/product pairs.
+        return {}
     query = (
         select(
             CustomerOrderSchema.assigned_outlet_id,
