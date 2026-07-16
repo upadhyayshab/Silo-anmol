@@ -1174,10 +1174,13 @@ async def build_lead_response(engine, lead: LeadSchema, *, include_activities: b
 async def owner_agency_names(engine, owner_ids: List[str]) -> Dict[str, Optional[str]]:
     """Map owner_id -> agency name (owner_id -> users.agency_id -> agencies.name), one
     batched LEFT JOIN query for the whole owner set — mirrors latest_dispositions/
-    call_counts below (avoids an N+1 across a list page). Owners with no agency (or not
-    found) map to None rather than being omitted, so `.get(owner_id)` always has a key
-    once resolved. Shared by the lead list/query paths (leads.py::_leads_to_responses)
-    and crmReportService.agent_performance so owner->agency resolution lives in one place."""
+    call_counts below (avoids an N+1 across a list page). An owner with no agency maps
+    to None (the outerjoin on AgencySchema finds no match), but an owner_id that isn't an
+    existing user is simply ABSENT from the result — the query only returns rows for
+    users that exist (select_from(UserSchema).where(uid.in_(owner_ids))) — so callers
+    must use `.get(owner_id)`, not assume a key exists once resolved. Shared by the
+    lead list/query paths (leads.py::_leads_to_responses) and
+    crmReportService.agent_performance so owner->agency resolution lives in one place."""
     owner_ids = [o for o in dict.fromkeys(owner_ids or []) if o]
     if not owner_ids:
         return {}

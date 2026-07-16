@@ -191,8 +191,11 @@ class LeadResponse(BaseModel):
     owner_name: Optional[str] = None
     owner_email: Optional[str] = None
     # Owner's agency (owner_id -> users.agency_id -> agency.name); None when the owner
-    # has no agency (or the lead has no owner). Enriched at list-build time — see
-    # leadService.owner_agency_names (batched, not per-row).
+    # has no agency (or the lead has no owner). Enriched at LIST/QUERY build time only
+    # (routers/v1/leads.py, via leadService.owner_agency_names, batched not per-row) --
+    # the single-lead detail path (leadService.build_lead_response) does NOT populate
+    # this field, so it is always None there. Nobody has asked for it on lead detail;
+    # add a per-lead lookup there if that changes.
     agency_name: Optional[str] = None
     outlet_id: Optional[str] = None
     outlet_name: Optional[str] = None
