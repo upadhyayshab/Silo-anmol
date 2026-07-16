@@ -19,6 +19,15 @@ tracking_manager = DeliveryTrackingManager(engine)
 
 ATTEMPTS_PER_CYCLE = 3
 
+# ponytail: chunked IN to stay under the driver's bind-param cap; a temp-table/ANY(array)
+# join only if this ever gets hot. GET /orders?limit=0 (LIMIT: All, the SA export's
+# "fetch everything" mode) can hand attempt_counts_for an order_id list spanning EVERY
+# order in the table -- asyncpg has a hard combined bind-parameter cap per query
+# (~32k), so an unbounded `.in_(order_ids)` either errors or, with enough ids, never
+# returns. Chunked here (not inside DeliveryTrackingManager.attempt_counts_by_order) so
+# the chunk/merge loop is unit-testable against a fake tracking_manager without a live DB.
+_ATTEMPT_COUNT_CHUNK = 5000
+
 
 @dataclass
 class OrderState:
@@ -102,16 +111,38 @@ async def load_events_bulk(order_ids: List[str]) -> dict:
 
 
 async def attempt_counts_for(order_ids: List[str]) -> dict:
-    """{order_id: attempt_count} for many orders via ONE batched delivery_tracking query
-    (load_events_bulk groups by order_id in Python) + fold_order_state per group — no
-    per-order fold query. Orders with no delivery_tracking events are simply absent from
-    load_events_bulk's result, so callers should default with .get(order_id, 0).
+    """{order_id: attempt_count} for many orders via a SQL COUNT aggregate (one row per
+    order, chunked) -- NOT load_events_bulk + fold_order_state. That full-fold path
+    materialises every delivery_tracking event for every order in Python, which is fine
+    for the bounded candidate sets /orders/returns and /orders/crm-queue fold (they still
+    use load_events_bulk/fold_order_state directly, unchanged), but GET /orders can be
+    called with limit=0 (LIMIT: All, the SA export's 'fetch everything' mode) where
+    order_ids is EVERY order in the table -- fold-all-events there blows past asyncpg's
+    bind-param cap and the memory/time of materialising every event ever recorded.
+
+    The predicate passed to attempt_counts_by_order (event_type == RIDER_DISPOSITION,
+    case-insensitive status_changed_to in NON_DELIVERED_RIDER_OUTCOMES) is built from the
+    SAME OrderEventType/NON_DELIVERED_RIDER_OUTCOMES constants fold_order_state uses above,
+    with the same case-insensitive membership test and the same +1-per-qualifying-event
+    rule (COUNT(*) per order == number of qualifying rows, exactly what the fold loop
+    accumulates) -- single source of truth, no second hardcoded outcome list. Orders with
+    no qualifying events are simply absent from the result; callers default with
+    .get(order_id, 0).
     Shared by any order-list endpoint that needs to surface attempt_count (SA export +
     outlet order view both read GET /orders, so one call here covers both).
     # ponytail: fold on read; persist attempt_count column if this export's latency grows
     """
-    events_by_order = await load_events_bulk(order_ids)
-    return {oid: fold_order_state(events).attempt_count for oid, events in events_by_order.items()}
+    ids = [i for i in order_ids if i]
+    if not ids:
+        return {}
+    result: dict = {}
+    for i in range(0, len(ids), _ATTEMPT_COUNT_CHUNK):
+        chunk = ids[i:i + _ATTEMPT_COUNT_CHUNK]
+        result.update(await tracking_manager.attempt_counts_by_order(
+            chunk, event_type=OrderEventType.RIDER_DISPOSITION.value,
+            outcomes=NON_DELIVERED_RIDER_OUTCOMES,
+        ))
+    return result
 
 
 async def record_event(order, event_type, *, actor_id, source, status=None,

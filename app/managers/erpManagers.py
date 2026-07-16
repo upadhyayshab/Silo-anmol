@@ -1256,6 +1256,18 @@ class TransferItemManager(ERPGenericManager[TransferItemSchema]):
 # DELIVERY TRACKING
 # ============================================================================
 
+# ponytail: chunked IN to stay under the driver's bind-param cap; a temp-table/ANY(array)
+# join only if this ever gets hot. GET /orders?limit=0 (LIMIT: All) can hand
+# latest_by_order/attempt_counts_by_order an order_id list spanning EVERY order in the
+# table -- asyncpg has a hard ~32k combined bind-parameter cap per query, so an unbounded
+# `.in_(order_ids)` either errors or (with enough ids) never returns.
+_DT_ID_CHUNK = 5000
+
+
+def _chunked(items: List[str], size: int = _DT_ID_CHUNK) -> List[List[str]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
 class DeliveryTrackingSchema(BaseSchema):
     """Track order status changes"""
     __tablename__ = "delivery_tracking"
@@ -1292,25 +1304,58 @@ class DeliveryTrackingSchema(BaseSchema):
 class DeliveryTrackingManager(ERPGenericManager[DeliveryTrackingSchema]):
     async def latest_by_order(self, order_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         """Latest tracking row per order → {order_id: {source, changed_by, changed_by_name}}.
-        One DISTINCT ON query (no N+1) for the report export's 'who/from-where last changed
-        the status' columns."""
+        One DISTINCT ON query per id-chunk (no N+1, no per-order query) for the report
+        export's 'who/from-where last changed the status' columns. Exactly one row per
+        order, so this stays lean even when order_ids is every order in the table
+        (GET /orders?limit=0)."""
         if not order_ids:
             return {}
         dt, u = DeliveryTrackingSchema, UserSchema
+        result: Dict[str, Dict[str, Any]] = {}
+        async with self.session_factory() as session:
+            for chunk in _chunked(order_ids):
+                query = (
+                    db.select(dt.order_id, dt.source, dt.changed_by, u.full_name)
+                    .outerjoin(u, u.uid == dt.changed_by)
+                    .where(dt.order_id.in_(chunk))
+                    .order_by(dt.order_id, dt.created_at.desc())
+                    .distinct(dt.order_id)
+                )
+                rows = (await session.execute(query)).all()
+                for r in rows:
+                    result[r.order_id] = {"source": r.source, "changed_by": r.changed_by,
+                                           "changed_by_name": r.full_name}
+        return result
+
+    async def attempt_counts_by_order(self, order_ids: List[str], *, event_type: str,
+                                       outcomes) -> Dict[str, int]:
+        """{order_id: COUNT(*)} of qualifying rider-disposition rows, one row per order via
+        SQL GROUP BY -- no fold-all-events in Python. ONE query for whatever `order_ids`
+        it's given; the caller (order_events_service.attempt_counts_for) is responsible for
+        chunking the full id list before calling this (kept there, not here, so the chunk
+        loop is unit-testable against a fake manager without a live DB — see
+        tests/test_orders_attempt_count.py).
+        The predicate (event_type == `event_type`, lower(status_changed_to) in `outcomes`)
+        must mirror order_events_service.fold_order_state's +1-per-qualifying-event rule
+        exactly; the caller is the single place that supplies both from the shared
+        NON_DELIVERED_RIDER_OUTCOMES constant, so there is only one copy of the outcome
+        list in the codebase."""
+        if not order_ids:
+            return {}
+        dt = DeliveryTrackingSchema
+        outcomes_list = list(outcomes)
         query = (
-            db.select(dt.order_id, dt.source, dt.changed_by, u.full_name)
-            .outerjoin(u, u.uid == dt.changed_by)
-            .where(dt.order_id.in_(order_ids))
-            .order_by(dt.order_id, dt.created_at.desc())
-            .distinct(dt.order_id)
+            db.select(dt.order_id, func.count().label("cnt"))
+            .where(
+                dt.order_id.in_(order_ids),
+                dt.event_type == event_type,
+                func.lower(dt.status_changed_to).in_(outcomes_list),
+            )
+            .group_by(dt.order_id)
         )
         async with self.session_factory() as session:
             rows = (await session.execute(query)).all()
-        return {
-            r.order_id: {"source": r.source, "changed_by": r.changed_by,
-                         "changed_by_name": r.full_name}
-            for r in rows
-        }
+        return {r.order_id: r.cnt for r in rows}
 
     async def last_change_at(self, order_ids: List[str]) -> Dict[str, Any]:
         """{order_id: max(created_at)} — when each order's status last changed. Drives
