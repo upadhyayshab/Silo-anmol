@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from typing import List, Optional, Any, Dict
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
@@ -25,6 +26,7 @@ from utils.constants import UserRole, OrderStatus, PaymentStatus, CollectionType
 from utils.crm_constants import ActivityType
 from utils.warehouse_utils import get_default_warehouse_id
 from services import CRMService, storeService, deliveryService, order_events_service
+from services.orderExportService import stream_orders_csv
 from services.order_events_service import fold_order_state
 from services.deliveryService import ScheduledDeliveryRequest, ScheduledAssignment, ScheduledOrder
 from utils.outlet_assignment import auto_assign_outlet, push_outlet_not_assigned, push_outlet_assigned
@@ -115,6 +117,75 @@ async def _apply_order_scope(filters, ctx):
         return await apply_scope(out, ctx)        # telecaller_id IN agency's telecallers
     # geographic managers (OUTLET/CLUSTER/STATE): scope by the order's assigned outlet
     return await apply_scope(out, ctx, outlet_column="assigned_outlet_id")
+
+
+async def _build_order_filters(
+    ctx,
+    *,
+    transfer_status: Optional[OrderStatus] = None,
+    telecaller_id: Optional[str] = None,
+    outlet_id: Optional[str] = None,
+    state: Optional[str] = None,
+    customer_phone: Optional[str] = None,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    dynamic_filters: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Shared filter-building for GET /orders and GET /orders/export, so the export
+    matches the screen exactly (same params, same scope) instead of the two drifting
+    apart over time. Extracted verbatim from get_orders -- see there for the original
+    per-step rationale (scope, admin-only cross-cutting filters, IST date ranges,
+    dynamic-filter date coercion)."""
+    dynamic_filters = dict(dynamic_filters or {})
+
+    # 1. Row scope (telecaller=own / delivery=assigned / managers=outlet / agency / global=all)
+    filters = await _apply_order_scope({}, ctx)
+
+    # 2. Manual filters
+    if transfer_status:
+        filters["order_status"] = transfer_status
+
+    # Cross-cutting filters by arbitrary telecaller/outlet only for unrestricted callers.
+    is_admin = ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value
+
+    if telecaller_id and is_admin:
+        filters["telecaller_id"] = telecaller_id
+    if outlet_id and is_admin:
+        filters["assigned_outlet_id"] = outlet_id
+    # State filter (super admin): narrow to the outlets in `state`. A specific
+    # outlet_id is more specific and wins if both are supplied.
+    elif state and is_admin:
+        ids = await outlet_ids_for_state(state)
+        filters["assigned_outlet_id"] = ids or ["__none__"]
+    if customer_phone:
+        filters["customer_phone"] = customer_phone
+
+    # 3. Date range filters. order_date is timestamptz — build the range in IST
+    # so a picked calendar day means that day in IST, not UTC.
+    if from_date or to_date:
+        gte, lte = ist_range_bounds(from_date, to_date)
+        date_filter = {}
+        if gte is not None:
+            date_filter[">="] = gte
+        if lte is not None:
+            date_filter["<="] = lte
+        filters["order_date"] = date_filter
+
+    # 4. Handle type coercion for dynamic filters (Date-only columns or columns where date-level filtering is common)
+    date_columns = ["expected_delivery_date", "created_at", "updated_at", "order_date", "actual_delivery_date"]
+    for date_col in date_columns:
+        if date_col in dynamic_filters:
+            val = dynamic_filters[date_col]
+            if isinstance(val, datetime):
+                dynamic_filters[date_col] = val.date()
+            elif isinstance(val, dict):
+                for op, v in val.items():
+                    if isinstance(v, datetime):
+                        val[op] = v.date()
+
+    # 5. Merge dynamic filters
+    filters.update(dynamic_filters)
+    return filters
 
 
 async def _order_scope_outlet_ids(ctx):
@@ -1235,6 +1306,48 @@ async def bulk_update_order_status(
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 
+@router.get("/export")
+async def export_orders(
+    transfer_status: Optional[OrderStatus] = None,
+    telecaller_id: Optional[str] = None,
+    outlet_id: Optional[str] = None,
+    state: Optional[str] = None,
+    customer_phone: Optional[str] = None,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    dynamic_filters: Dict[str, Any] = Depends(D.filtering_dependency),
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_READ, allow_scopes=["delivery:read"])),
+):
+    """
+    Streamed, server-side CSV export of orders. SAME filters and SAME scoping as
+    GET /orders (via the shared `_build_order_filters`), so the export never leaks a
+    row the caller couldn't already see on the report screen.
+
+    Replaces the superadmin report's client-side "Export Excel" (which required the
+    grid to load with `limit=0` / LIMIT: All to have every row in the browser first --
+    see get_orders's docstring/comments on why that path is gone). This streams
+    keyset-paginated batches straight to CSV instead; registered ahead of
+    GET /{order_id} so "export" is never swallowed as a path parameter.
+    """
+    filters = await _build_order_filters(
+        ctx,
+        transfer_status=transfer_status,
+        telecaller_id=telecaller_id,
+        outlet_id=outlet_id,
+        state=state,
+        customer_phone=customer_phone,
+        from_date=from_date,
+        to_date=to_date,
+        dynamic_filters=dynamic_filters,
+    )
+    filename = f"orders_{ist_today()}.csv"
+    return StreamingResponse(
+        stream_orders_csv(filters),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,
@@ -1583,55 +1696,18 @@ async def get_orders(transfer_status: Optional[OrderStatus] = None,
             CustomerOrderSchema.assigned_outlet
         ]
 
-        # 1. Row scope (telecaller=own / delivery=assigned / managers=outlet / agency / global=all)
-        filters = await _apply_order_scope({}, ctx)
+        filters = await _build_order_filters(
+            ctx,
+            transfer_status=transfer_status,
+            telecaller_id=telecaller_id,
+            outlet_id=outlet_id,
+            state=state,
+            customer_phone=customer_phone,
+            from_date=from_date,
+            to_date=to_date,
+            dynamic_filters=dynamic_filters,
+        )
 
-        # 2. Manual filters
-        if transfer_status:
-            filters["order_status"] = transfer_status
-
-        # Cross-cutting filters by arbitrary telecaller/outlet only for unrestricted callers.
-        is_admin = ctx.is_microservice or ctx.scope_level == ScopeLevel.GLOBAL.value
-
-        if telecaller_id and is_admin:
-            filters["telecaller_id"] = telecaller_id
-        if outlet_id and is_admin:
-            filters["assigned_outlet_id"] = outlet_id
-        # State filter (super admin): narrow to the outlets in `state`. A specific
-        # outlet_id is more specific and wins if both are supplied.
-        elif state and is_admin:
-            ids = await outlet_ids_for_state(state)
-            filters["assigned_outlet_id"] = ids or ["__none__"]
-        if customer_phone:
-            filters["customer_phone"] = customer_phone
-
-        # 3. Date range filters. order_date is timestamptz — build the range in IST
-        # so a picked calendar day means that day in IST, not UTC.
-        if from_date or to_date:
-            gte, lte = ist_range_bounds(from_date, to_date)
-            date_filter = {}
-            if gte is not None:
-                date_filter[">="] = gte
-            if lte is not None:
-                date_filter["<="] = lte
-            filters["order_date"] = date_filter
-
-        # 4. Handle type coercion for dynamic filters (Date-only columns or columns where date-level filtering is common)
-        date_columns = ["expected_delivery_date", "created_at", "updated_at", "order_date", "actual_delivery_date"]
-        for date_col in date_columns:
-            if date_col in dynamic_filters:
-                val = dynamic_filters[date_col]
-                if isinstance(val, datetime):
-                    dynamic_filters[date_col] = val.date()
-                elif isinstance(val, dict):
-                    for op, v in val.items():
-                        if isinstance(v, datetime):
-                            val[op] = v.date()
-
-
-        # 5. Merge dynamic filters
-        filters.update(dynamic_filters)
-        
         orders = await order_manager.fetch_all(
             filters=filters,
             joins=joins,
