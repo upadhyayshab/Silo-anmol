@@ -204,4 +204,6 @@ async def process_store_order(engine, payload: dict) -> None:
 
     # Timeline: increments counts, auto-advances FTU/RTU, logs the `order` activity.
     await leadService.handle_post_order(engine, lead.uid, order.total_amount)
+    # No T5.1 reassign here: a storefront order has no booking telecaller (telecaller_id
+    # above is an ADMIN fallback, not a person who worked the lead) — owner stays as-is.
     logger.info("[store] order %s created on lead %s", medusa_id, lead.uid)

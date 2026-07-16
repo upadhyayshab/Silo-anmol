@@ -833,6 +833,23 @@ async def reassign(engine, lead: LeadSchema, telecaller_id: str, by_user_id: str
     return updated
 
 
+async def reassign_to_booker(engine, lead_id: str, booker_id: Optional[str], booker_role) -> None:
+    """T5.1: the telecaller who books an order becomes the lead's owner (Gautam: the
+    last booked activity should capture the telecaller as Lead Owner).
+
+    Reassigns ONLY when the booker is a genuine telecaller (`TELECALLER_ROLES`) AND
+    differs from the current owner. A system/bot/non-telecaller booker (store orders
+    have no telecaller at all) or the lead's own owner booking again is a no-op.
+    # ponytail: reassign only on owner change by a telecaller; blind per-order reassign fights the assignment pool
+    """
+    if not booker_id or booker_role not in TELECALLER_ROLES:
+        return
+    lead = await LeadManager(engine).fetch(lead_id)
+    if not lead or lead.owner_id == booker_id:
+        return
+    await reassign(engine, lead, booker_id, booker_id, reason=AssignmentReason.ORDER_BOOKED.value)
+
+
 async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional[List[str]],
                            by_user_id: str) -> Dict[str, Any]:
     """Bulk round-robin distribution of leads across telecallers (admin action).

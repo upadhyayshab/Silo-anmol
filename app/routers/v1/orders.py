@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status, Body, Path, Query
 from typing import List, Optional, Any, Dict
 from datetime import datetime, date, time, timedelta, timezone
 from decimal import Decimal
+import logging
 from utils import dependencies as D
 from config import get_settings, get_engine
 from managers import (
@@ -41,6 +42,8 @@ def _canon_order_state(value):
     Lazy import dodges the leadService<->orders circular import."""
     from services.leadService import canon_state
     return canon_state(value, apply_alias=False) or value
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -431,8 +434,18 @@ async def create_order(
                 # (which JOIN order_attribution) attribute in-house CRM orders too.
                 await leadService.attribute_order(engine, payload.lead_id, created_order.uid)
 
-            except Exception as activity_err:
-                print(f"⚠️ Failed to log CRM order activity for lead {payload.lead_id}: {activity_err}")
+                # Lead ownership (T5.1): the booking telecaller becomes Lead Owner.
+                await leadService.reassign_to_booker(engine, payload.lead_id, current_user_id, ctx.role)
+
+            except Exception:
+                # Deliberate: a CRM-side failure must never break order creation (the order
+                # already committed above). Log loudly with context instead of silently
+                # swallowing it — this used to be a bare print(), which is the prime
+                # suspect for "lead stage not changing after order booking" reports.
+                logger.exception(
+                    "Post-order CRM block failed for lead %s (order %s / %s)",
+                    payload.lead_id, created_order.uid, order_number,
+                )
 
         # Auto-assign outlet based on delivery area (for telecaller orders)
         # Outlet manager orders are already assigned to their outlet
@@ -860,8 +873,18 @@ async def create_proxy_order(
                 # Attribution: copy the lead's source/campaign onto the order (see create path).
                 await leadService.attribute_order(engine, payload.lead_id, created_order.uid)
 
-            except Exception as activity_err:
-                print(f"⚠️ Failed to log CRM proxy order activity for lead {payload.lead_id}: {activity_err}")
+                # Lead ownership (T5.1): proxy orders book AS the target telecaller, not the
+                # admin caller — reassign using their id/role, not current_user_id/ctx.role.
+                await leadService.reassign_to_booker(engine, payload.lead_id, payload.telecaller_id, target_telecaller.role)
+
+            except Exception:
+                # Deliberate: a CRM-side failure must never break order creation (the order
+                # already committed above). Log loudly with context instead of silently
+                # swallowing it (see create_order's identical block for why).
+                logger.exception(
+                    "Post-order CRM block failed for lead %s (proxy order %s / %s)",
+                    payload.lead_id, created_order.uid, created_order.order_number,
+                )
         
         background_tasks.add_task(sync_order_to_crm, engine, created_order.uid, ActivityType.CREATE_ORDER)
 

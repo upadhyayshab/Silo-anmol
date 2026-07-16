@@ -106,3 +106,4 @@ class AssignmentReason(str, Enum):
     MANUAL = "manual"             # explicitly (re)assigned to a chosen telecaller
     SELF_CREATED = "self_created" # attributed to the user who created the lead
     INBOUND_CALL_ACCESS = "inbound_call_access"  # handled a routed inbound call; may act, NOT the owner
+    ORDER_BOOKED = "order_booked" # T5.1: the booking telecaller becomes owner post-order
