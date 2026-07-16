@@ -462,13 +462,16 @@ _PIVOT_STAGES = [s.value for s in LeadStage]  # row order = enum order
 
 
 def _state_label(state: Optional[str]) -> str:
-    """Canonical Title Case state label for the pivot (folds casing/misspellings/
-    regional aliases via ``canon_state``); ``None``/empty/unrecognized raw values
-    collapse to "Unknown" instead of a blank column. Lazy import dodges the
+    """Canonical Title Case state label for the pivot (folds casing/misspellings via
+    ``canon_state``); ``None``/empty/unrecognized raw values collapse to "Unknown"
+    instead of a blank column. apply_alias=False keeps Telangana separate from Andhra
+    Pradesh (see module docstring above, and routers/v1/orders.py::_canon_order_state) —
+    this feeds _order_state_aggregate's ORDER/REVENUE rows too, so folding Telangana into
+    AP here would silently merge its revenue into AP's. Lazy import dodges the
     crmReportService<->leadService circular import (same idiom as
     routers/v1/orders.py::_canon_order_state)."""
     from services.leadService import canon_state
-    canon = canon_state(state)
+    canon = canon_state(state, apply_alias=False)
     return canon.title() if canon else "Unknown"
 
 
