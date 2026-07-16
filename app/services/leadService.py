@@ -845,7 +845,6 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc)
-    today_start = assignmentService._ist_day_start_utc()
     pool_objects = []
     current_loads = {}    # leads received today -> gates the daily quota AND balances the batch
     # An explicit target pool (admin picked telecallers) is honored as-is — a super admin can
@@ -855,18 +854,11 @@ async def distribute_leads(engine, lead_ids: List[str], telecaller_ids: Optional
     auto = not telecaller_ids
 
     async def _counts(uid: str):
-        """Leads this agent RECEIVED today (created_at >= 00:00 IST). Both gates the daily
-        quota — a worked lead no longer frees a slot, so assignment hard-stops at the quota
-        and the overflow waits for a super admin — and balances the batch (fewest-given wins).
-        Twin: assignmentService._received_today_counts — keep in sync."""
-        rows = await lead_manager.fetch_all(filters={"owner_id": uid})
-        today = 0
-        for l in rows.items:
-            if l.deleted_at is not None:
-                continue
-            if l.created_at and l.created_at >= today_start:
-                today += 1
-        return today
+        """Leads this agent RECEIVED today (assigned since 00:00 IST — fresh OR backlog). Both
+        gates the daily quota (assignment hard-stops at the quota, overflow waits for a super
+        admin) and balances the batch (fewest-given wins). Delegates to the single source of
+        truth so the create path, the sweep, and the state-lane bar all count identically."""
+        return (await assignmentService._received_today_counts(engine, [uid])).get(uid, 0)
 
     async def add_to_pool(u):
         # Auto/sweep round-robin is telecallers only; an explicit admin pick (Change

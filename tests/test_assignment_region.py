@@ -172,6 +172,10 @@ def _patch_distribute(agents, leads, calls):
     L.UserManager = _UM
     L.LeadManager = _LM
 
+    async def _zero_today(engine, ids):     # zero leads-received-today (distribute counts via this now)
+        return {}
+    A._received_today_counts = _zero_today
+
     async def _fake_reassign(engine, lead, tc_uid, by_user_id, reason=None):
         calls.append((lead.uid, tc_uid))
         return lead
@@ -232,6 +236,10 @@ def _patch_distribute_with_fetch(agents_by_uid, leads, calls):
 
     L.UserManager = _UM
     L.LeadManager = _LM
+
+    async def _zero_today(engine, ids):     # zero leads-received-today (distribute counts via this now)
+        return {}
+    A._received_today_counts = _zero_today
 
     async def _fake_reassign(engine, lead, tc_uid, by_user_id, reason=None):
         calls.append((lead.uid, tc_uid))

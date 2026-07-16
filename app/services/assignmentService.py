@@ -181,27 +181,29 @@ def _ist_day_start_utc() -> datetime:
 
 
 async def _received_today_counts(engine, telecaller_ids: List[str]) -> dict:
-    """Map telecaller_id -> leads assigned to them since 00:00 IST today (by created_at).
+    """Map telecaller_id -> leads ASSIGNED to them today (active assignment created since 00:00 IST).
 
-    Both the quota GATE and the fairness BALANCE run off this: an agent is capped once
-    they've received assignment_quota leads today (working them doesn't free a slot), and
-    among under-cap agents the fewest-given-today wins so everyone logged in gets an equal
-    share. Resets at IST midnight. Twin: leadService.distribute_leads._counts."""
+    The quota is a daily cap on leads RECEIVED per day — fresh OR backlog. An agent with quota 25
+    gets at most 25 leads today regardless of when those leads were created: what counts is the
+    assignment landing today, not the lead's age. (Was lead.created_at, which let backlog
+    reassignment sail past the cap — the day one KA agent took 70 while the quota said 25.) Both
+    the quota GATE and the fairness BALANCE run off this; resets at IST midnight. Twin display:
+    stateLaneService.load_by_owner (the state-lane bar reads the same metric)."""
     if not telecaller_ids:
         return {}
     cutoff = _ist_day_start_utc()
-    mgr = LeadManager(engine)
+    mgr = LeadAssignmentManager(engine)
     async with mgr.session_factory() as session:
         rows = await session.execute(
-            db.select(LeadSchema.owner_id, db.func.count())
+            db.select(LeadAssignmentSchema.telecaller_id, db.func.count())
             .where(
-                LeadSchema.owner_id.in_(telecaller_ids),
-                LeadSchema.created_at >= cutoff,
-                LeadSchema.deleted_at.is_(None),
+                LeadAssignmentSchema.telecaller_id.in_(telecaller_ids),
+                LeadAssignmentSchema.is_active.is_(True),
+                LeadAssignmentSchema.created_at >= cutoff,
             )
-            .group_by(LeadSchema.owner_id)
+            .group_by(LeadAssignmentSchema.telecaller_id)
         )
-        return {oid: int(cnt) for oid, cnt in rows.all()}
+        return {tid: int(cnt) for tid, cnt in rows.all()}
 
 
 def _at_quota(u: UserSchema, today_n: int) -> bool:

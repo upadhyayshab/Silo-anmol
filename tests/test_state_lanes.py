@@ -61,6 +61,16 @@ def test_offline_and_fill_pct_zero_quota():
     assert ravi["online"] is False and ravi["fill_pct"] == 0 and ka["capacity"] == 0
 
 
+def test_fill_pct_capped_at_100():
+    # A manual super-admin pick bypasses the quota, so assigned-today can exceed it: Asha
+    # gets 50 against a quota of 40 -> bar caps at 100%, not 125%.
+    kw = _base_kwargs()
+    kw["load_by_owner"]["u_asha"] = 50
+    out = S.assemble_lanes(**kw)
+    mh = next(l for l in out["lanes"] if l["state"] == "Maharashtra")
+    assert mh["telecallers"][0]["fill_pct"] == 100     # min(100, 125)
+
+
 def test_unrouted_and_other_lanes():
     out = S.assemble_lanes(**_base_kwargs())
     unrouted = next(l for l in out["lanes"] if l["state"] == S.UNROUTED)

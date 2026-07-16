@@ -10,7 +10,8 @@ from typing import Optional, List, Dict, Any
 
 import sqlalchemy as db
 
-from managers import LeadManager, LeadSchema, UserSchema, FacebookPageSchema
+from managers import (LeadManager, LeadSchema, UserSchema, FacebookPageSchema,
+                      LeadAssignmentSchema)
 from services import leadService
 from utils.constants import TELECALLER_ROLES
 from utils.timeutils import ist_day_bounds
@@ -30,7 +31,9 @@ def _online(last_active_at: Optional[datetime], now: datetime) -> bool:
 
 
 def _fill_pct(load: int, quota: int) -> int:
-    return round(load / quota * 100) if quota else 0
+    # Cap the bar at 100%: a manual super-admin pick bypasses the quota, so assigned-today can
+    # exceed it — the numerator stays truthful (e.g. 27/25), the bar just doesn't overflow.
+    return min(100, round(load / quota * 100)) if quota else 0
 
 
 def assemble_lanes(*, pages: List[dict], leads_in_by_state: Dict, leads_in_by_page: Dict,
@@ -145,17 +148,21 @@ async def state_lane_overview(engine, *, from_date: Optional[date] = None,
                 LeadSchema.deleted_at.is_(None), LeadSchema.owner_id.is_(None))
               .group_by(LeadSchema.state))).all()}
 
-        # Load = leads ASSIGNED to the owner in this window (owner set), using the SAME
-        # created_at range as leads_in above. Defaults to today (see _day_bounds), so the
-        # bar reads "assigned today / quota" — the metric an admin uses to see who the day's
-        # leads went to (whose share ran high). It pairs with the lane's "N in": of the N
-        # leads that came in this window, each telecaller got `load` of them.
-        # (Previously counted only fresh New-Lead backlog — pendency, which hid the day's
-        # distribution; a fast worker who cleared their leads showed 0 despite a heavy day.)
-        load_by_owner = {o: int(c) for o, c in (await session.execute(
-            db.select(LeadSchema.owner_id, db.func.count()).where(
-                *range_conds, LeadSchema.owner_id.isnot(None))
-              .group_by(LeadSchema.owner_id))).all()}
+        # Load = leads ASSIGNED to the telecaller in this window, counted by ASSIGNMENT time
+        # (lead_assignments.created_at), NOT by lead age. Defaults to today, so the bar reads
+        # "assigned today / quota" — and it counts a backlog lead handed out today just like a
+        # fresh one, because that is exactly what the daily quota caps (assignment_quota leads
+        # RECEIVED per day). Same metric gates the quota (assignmentService._received_today_counts),
+        # so the bar and the cap never disagree. (Was leads.owner_id filtered by lead.created_at,
+        # which showed only fresh leads and hid the ~600 backlog reassigned each morning.)
+        assign_conds = [LeadAssignmentSchema.is_active.is_(True)]
+        if gte is not None:
+            assign_conds.append(LeadAssignmentSchema.created_at >= gte)
+        if lte is not None:
+            assign_conds.append(LeadAssignmentSchema.created_at <= lte)
+        load_by_owner = {tid: int(c) for tid, c in (await session.execute(
+            db.select(LeadAssignmentSchema.telecaller_id, db.func.count()).where(*assign_conds)
+              .group_by(LeadAssignmentSchema.telecaller_id))).all()}
 
         telecallers = [
             {"uid": uid, "name": name or uid, "state": st, "quota": quota or 0, "last_active_at": la}
