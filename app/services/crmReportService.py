@@ -575,19 +575,27 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
     def metric(label, kind, fn):
         return {"label": label, "type": kind, "values": {c: fn(c, totals[c]) for c in columns}}
 
-    rows.append(metric("Attempted %", "pct", lambda c, T: _pct(T - cell(c, NEW), T)))
-    rows.append(metric("Lead to Connected %", "pct", lambda c, T: _pct(T - cell(c, NEW) - cell(c, NR), T)))
-    rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(cell(c, FTU) + cell(c, RTU), T)))
-    rows.append(metric("Not Connected", "warn", lambda c, T: _pct(cell(c, NR), T)))
-    rows.append(metric("Not Qualified %", "warn", lambda c, T: _pct(cell(c, NQ), T)))
-    rows.append(metric("Avg Lead/Day", "num", lambda c, T: round(T / days)))
-
     if has_order_rows:
         def ocell(col: str, field: str):
             if col == "Grand Total":
                 return sum(order_by_state.get(s, {}).get(field, 0) for s in state_cols)
             return order_by_state.get(col, {}).get(field, 0)
 
+    rows.append(metric("Attempted %", "pct", lambda c, T: _pct(T - cell(c, NEW), T)))
+    rows.append(metric("Lead to Connected %", "pct", lambda c, T: _pct(T - cell(c, NEW) - cell(c, NR), T)))
+    # Lead to Conv% (stakeholder formula 2026-07-17): No. of Orders / Grand Total leads.
+    # Orders are window-placed and leads window-created, so >100% is possible when old
+    # leads convert — that's inherent to the requested definition. The call pivot passes
+    # no order data and keeps the older stage-based (FTU+RTU)/total conversion.
+    if has_order_rows:
+        rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(ocell(c, "orders"), T)))
+    else:
+        rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(cell(c, FTU) + cell(c, RTU), T)))
+    rows.append(metric("Not Connected", "warn", lambda c, T: _pct(cell(c, NR), T)))
+    rows.append(metric("Not Qualified %", "warn", lambda c, T: _pct(cell(c, NQ), T)))
+    rows.append(metric("Avg Lead/Day", "num", lambda c, T: round(T / days)))
+
+    if has_order_rows:
         orders_vals = {c: ocell(c, "orders") for c in columns}
         qty_vals = {c: ocell(c, "qty") for c in columns}
         # Booked Revenue summed at full precision (see ocell's Grand Total sum-of-raw-

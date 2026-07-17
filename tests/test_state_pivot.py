@@ -190,3 +190,20 @@ if __name__ == "__main__":
             fn()
             print(f"ok  {name}")
     print("all pass")
+
+
+def test_conv_pct_is_orders_over_leads_when_order_data_present():
+    """Stakeholder formula (2026-07-17): Lead to Conv% = No. of Orders / Grand Total * 100.
+    Stage-based (FTU+RTU)/total applies ONLY when no order data is passed (call pivot)."""
+    p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5), order_by_state=_ORDER_BY_STATE)
+    conv = _row(p, "Lead to Conv%")["values"]
+    assert conv["Karnataka"] == 0.1        # 3 orders / 2628 leads
+    assert conv["Punjab"] == 0.7           # 2 / 301
+    assert conv["Unknown"] == 0.0          # no orders
+    assert conv["Grand Total"] == 0.1      # 5 / 4497
+
+
+def test_conv_pct_stays_stage_based_without_order_data():
+    p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))
+    conv = _row(p, "Lead to Conv%")["values"]
+    assert conv["Karnataka"] == 13.7       # (346 FTU + 15 RTU) / 2628 — unchanged call-pivot behavior
