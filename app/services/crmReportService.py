@@ -812,16 +812,13 @@ async def call_log_activities(
         return rows, truncated
 
 
-# --- Inbound/outbound call pivot (Task C1, INBOUND reshaped into a funnel 2026-07-17) ---
-# OUTBOUND: unchanged since Task C1 — stage x call-date pivot (via build_state_pivot),
-# columns ISO call-dates, window gates the CALL's created_at (like call_log_activities)
-# not the lead's created_at, a lead counts once per (call-day, its CURRENT stage) even
-# with multiple calls that day in that direction ("unique inflow").
-#
-# INBOUND (2026-07-17 stakeholder ask): the stage breakdown wasn't what they wanted for
-# inbound — they want a 5-row daily FUNNEL instead (Incoming Calls / Fresh Leads /
-# Deduped / Connected / Orders Booked), every call counted (not deduped to unique
-# inflow), split by whether the call created a new lead. See `_inbound_call_funnel`.
+# --- Inbound/outbound call pivot ---
+# 2026-07-17 stakeholder ask: a 5-row daily FUNNEL instead of the old stage x call-date
+# pivot (Incoming Calls / Fresh Leads / Deduped / Connected / Orders Booked), every call
+# counted (not deduped to unique inflow), split by whether the call created a new lead.
+# Same day (2nd ask): outbound gets the SAME funnel — first row labelled "Outgoing
+# Calls"; Fresh is naturally ~0 there (telecallers dial existing leads). The Task C1
+# stage pivot is gone from both directions.
 
 async def call_direction_pivot(
     engine, *,
@@ -831,62 +828,15 @@ async def call_direction_pivot(
     scope_owner_id=None,
     agency_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Call pivot for one direction. INBOUND dispatches to `_inbound_call_funnel` (the
-    5-row funnel below); every other value (i.e. "outbound") keeps the original stage x
-    call-date pivot byte-for-byte — same query, same `build_state_pivot` assembly, same
-    envelope shape as before this change."""
-    if direction == "inbound":
-        return await _inbound_call_funnel(
-            engine, from_date=from_date, to_date=to_date,
-            scope_owner_id=scope_owner_id, agency_id=agency_id)
-
-    # --- outbound (and any other direction value) — unchanged from Task C1 ---
-    # Scope-only conds (own leads / agency roster) — no lead-created-at window,
-    # same split call_log_activities uses.
-    lead_conds, _ = _lead_filter_conds(
-        scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
-
-    conds = [
-        LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG,
-        LeadActivitySchema.details["direction"].as_string() == direction,
-        *lead_conds,
-    ]
-    gte, lte = _day_bounds(from_date, to_date)
-    if gte is not None:
-        conds.append(LeadActivitySchema.created_at >= gte)
-    if lte is not None:
-        conds.append(LeadActivitySchema.created_at <= lte)
-
-    lm = LeadManager(engine)
-    async with lm.session_factory() as session:
-        # Slim columns only (2026-07-17 perf fix): full-entity SELECT dragged every
-        # call's details JSON + the lead's whole row (custom_fields = 93 LSQ fields)
-        # across the wire for a week of calls -> 60s+ loads. These 3 are all the
-        # rollup below reads.
-        pairs = (await session.execute(
-            db.select(LeadActivitySchema.created_at, LeadSchema.stage, LeadSchema.uid)
-              .select_from(LeadActivitySchema)
-              .join(LeadSchema, LeadActivitySchema.lead_id == LeadSchema.uid)
-              .where(*conds)
-        )).all()
-
-    # Unique lead per (call-day, stage): a lead calling twice the same day in the
-    # same direction still counts once — "unique inflow" like the sheet.
-    seen: Dict[Tuple[str, str], set] = {}
-    for call_created_at, stage, lead_uid in pairs:
-        if call_created_at is None:
-            continue
-        iso_day = call_created_at.astimezone(IST).date().isoformat()
-        stage = stage.value if hasattr(stage, "value") else stage
-        seen.setdefault((iso_day, stage), set()).add(lead_uid)
-
-    counts = {key: len(uids) for key, uids in seen.items()}
-    return build_state_pivot(counts, from_date, to_date)
+    """Call pivot for one direction — the 5-row funnel (`_call_funnel`) for both."""
+    return await _call_funnel(
+        engine, direction=direction, from_date=from_date, to_date=to_date,
+        scope_owner_id=scope_owner_id, agency_id=agency_id)
 
 
-# Fixed row order for the inbound funnel (top of funnel -> bottom), used by
-# `_build_funnel_pivot` below.
-_FUNNEL_ROWS = ["Incoming Calls", "Fresh Leads", "Deduped", "Connected", "Orders Booked"]
+# First (top-of-funnel) row label per direction; remaining rows are shared.
+_CALLS_ROW_LABEL = {"inbound": "Incoming Calls", "outbound": "Outgoing Calls"}
+_FUNNEL_TAIL_ROWS = ["Fresh Leads", "Deduped", "Connected", "Orders Booked"]
 
 # A lead auto-created off an inbound call is inserted (leadService.create_lead) and its
 # CALL_LOG auto-logged (telephonyService._log_call_outcome -> autolog_webhook_call) in the
@@ -898,10 +848,11 @@ _FRESH_EPSILON = timedelta(seconds=60)
 
 
 def _build_funnel_pivot(counts: Dict[str, Dict[str, int]],
+                        row_labels: List[str],
                         from_date: Optional[date] = None,
                         to_date: Optional[date] = None) -> Dict[str, Any]:
     """Assemble the SAME ``{columns, rows, days}`` envelope `build_state_pivot` returns,
-    but for the inbound call funnel's 5 FIXED rows (`_FUNNEL_ROWS`) instead of lead-stage
+    but for the call funnel's 5 FIXED rows (`row_labels`) instead of lead-stage
     rows — `build_state_pivot` can't be reused here because its row set is hard-pinned to
     `_PIVOT_STAGES` (LeadStage values only); funnel row labels aren't stages.
 
@@ -923,23 +874,25 @@ def _build_funnel_pivot(counts: Dict[str, Dict[str, int]],
     rows = [
         {"label": label, "type": "count",
          "values": {c: cell(label, c) for c in columns if cell(label, c)}}
-        for label in _FUNNEL_ROWS
+        for label in row_labels
     ]
     return {"columns": columns, "rows": rows, "days": days}
 
 
-async def _inbound_call_funnel(
+async def _call_funnel(
     engine, *,
+    direction: str,
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     scope_owner_id=None,
     agency_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """INBOUND Call Pivot (2026-07-17 stakeholder ask): a 5-row daily funnel instead of
-    the old stage x call-date breakdown — Incoming Calls / Fresh Leads / Deduped /
-    Connected / Orders Booked, all bucketed by IST calendar day (`_day_bounds`).
+    """Call Pivot (2026-07-17 stakeholder ask, extended to both directions the same
+    day): a 5-row daily funnel instead of the old stage x call-date breakdown —
+    Incoming/Outgoing Calls / Fresh Leads / Deduped / Connected / Orders Booked, all
+    bucketed by IST calendar day (`_day_bounds`).
 
-      1. Incoming Calls[d] = every inbound CALL_LOG activity in the window with
+      1. Calls[d] = every CALL_LOG activity in this `direction` in the window with
          created_at on day d. NOT deduped — repeats from the same lead all count,
          unlike the old "unique inflow" pivot.
       2. Fresh Leads / 3. Deduped[d] = split of the same calls by whether THAT call
@@ -950,9 +903,9 @@ async def _inbound_call_funnel(
       4. Connected[d] = of those calls, outcome in `_CONNECTED_OUTCOMES` (reused as-is,
          not redefined).
       5. Orders Booked[d] = ORDER activities in the window with created_at on day d,
-         whose lead ALSO has an inbound CALL_LOG that SAME day d (same-day funnel — a
-         lead that booked on d without calling on d is not counted, even if it called
-         on some other day in the window).
+         whose lead ALSO has a CALL_LOG in this direction that SAME day d (same-day
+         funnel — a lead that booked on d without a call on d is not counted, even if
+         it called on some other day in the window).
 
     Marker investigation (report per the task brief): grepped exotel.py's inbound path,
     telephonyService._log_call_outcome (the inbound auto-create-lead call site) and
@@ -969,17 +922,17 @@ async def _inbound_call_funnel(
     reliable non-timing marker exists -> uses the epsilon rule the brief specifies as
     the fallback.
 
-    Batched: ONE query for the window's inbound CALL_LOG activities joined to their
-    lead's created_at (no per-activity lead lookup), then ONE query for ORDER
+    Batched: ONE query for the window's CALL_LOG activities in this direction joined
+    to their lead's created_at (no per-activity lead lookup), then ONE query for ORDER
     activities restricted to just the leads seen in the first query (no N+1; skipped
     entirely when the first query is empty). Same `agency_id`/`scope_owner_id` scoping
-    as call_direction_pivot's outbound path, via the same `_lead_filter_conds`."""
+    as the old stage pivot, via the same `_lead_filter_conds`."""
     lead_conds, _ = _lead_filter_conds(
         scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
 
     conds = [
         LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG,
-        LeadActivitySchema.details["direction"].as_string() == "inbound",
+        LeadActivitySchema.details["direction"].as_string() == direction,
         *lead_conds,
     ]
     gte, lte = _day_bounds(from_date, to_date)
@@ -1043,11 +996,12 @@ async def _inbound_call_funnel(
         if iso_day in call_days_by_lead.get(lead_id, set()):
             booked[iso_day] = booked.get(iso_day, 0) + 1
 
+    calls_label = _CALLS_ROW_LABEL.get(direction, "Calls")
     counts = {
-        "Incoming Calls": incoming,
+        calls_label: incoming,
         "Fresh Leads": fresh,
         "Deduped": deduped,
         "Connected": connected,
         "Orders Booked": booked,
     }
-    return _build_funnel_pivot(counts, from_date, to_date)
+    return _build_funnel_pivot(counts, [calls_label, *_FUNNEL_TAIL_ROWS], from_date, to_date)

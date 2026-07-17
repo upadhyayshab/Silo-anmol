@@ -1,12 +1,8 @@
-"""Inbound/outbound call pivot (Task C1; inbound reshaped into a funnel 2026-07-17).
+"""Call pivot — the 5-row daily funnel, BOTH directions (2026-07-17; the Task C1
+stage x call-date pivot is gone — outbound was folded into the same funnel the same
+day, first row "Outgoing Calls" instead of "Incoming Calls").
 
-OUTBOUND is untouched — same stage x call-date pivot as before, same single
-session.execute() query, so the ORIGINAL fake-session style (one canned result list,
-mirrors tests/test_call_log_report.py) still applies verbatim; those tests just moved
-from direction="inbound" to direction="outbound" to prove the outbound code path is
-byte-for-byte what inbound used to be.
-
-INBOUND now issues up to TWO session.execute() calls (call+lead join, then an ORDER
+Each direction issues up to TWO session.execute() calls (call+lead join, then an ORDER
 activities query scoped to the leads seen in the first) — mirrored with a "plan" fake
 session (list of canned results popped in call order), same idiom
 tests/test_call_log_report.py uses for call_log_activities' two queries. DB-free. Run::
@@ -38,13 +34,8 @@ DAY1_ISO = DAY1.astimezone(IST).date().isoformat()
 DAY2_ISO = DAY2.astimezone(IST).date().isoformat()
 
 
-# Row shapes mirror the slim column SELECTs (2026-07-17 perf fix — the service no
-# longer fetches full entities, just the columns each rollup reads).
-
-def _outbound_row(created_at, stage, lead_uid):
-    """(activity.created_at, lead.stage, lead.uid) — outbound pivot's SELECT."""
-    return (created_at, stage, lead_uid)
-
+# Row shape mirrors the slim column SELECT (2026-07-17 perf fix — the service no
+# longer fetches full entities, just the columns the rollup reads).
 
 def _call(lead_id, created_at, outcome, lead_created_at):
     """(lead_id, call created_at, outcome, lead created_at) — funnel's SELECT."""
@@ -59,26 +50,6 @@ class _FakeResult:
 
     def all(self):
         return self._rows
-
-
-class _FakeSession:
-    """Returns the same canned rows for every session.execute() call (outbound issues
-    exactly one), and records each query so its compiled WHERE clause can be
-    inspected (mirrors the original test_call_pivot.py)."""
-
-    def __init__(self, rows):
-        self._rows = rows
-        self.queries = []
-
-    async def execute(self, query, *_a, **_kw):
-        self.queries.append(query)
-        return _FakeResult(self._rows)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
 
 
 class _PlanFakeSession:
@@ -114,34 +85,23 @@ class _FakeLeadManager:
         return self._session
 
 
-def _run(rows, **kwargs):
-    """Single-query helper (outbound path)."""
-    import services.crmReportService as R
-
-    session = _FakeSession(rows)
-    orig = R.LeadManager
-    R.LeadManager = lambda engine: _FakeLeadManager(session)
-    try:
-        pivot = asyncio.run(R.call_direction_pivot(engine=None, **kwargs))
-    finally:
-        R.LeadManager = orig
-    return pivot, session
-
-
-def _run_inbound(plan, **kwargs):
-    """Plan-based helper (inbound funnel path) — `plan` is
-    [call_join_rows] or [call_join_rows, order_rows] (the second query only fires when
-    call_join_rows is non-empty)."""
+def _run_funnel(plan, direction="inbound", **kwargs):
+    """Plan-based helper — `plan` is [call_join_rows] or [call_join_rows, order_rows]
+    (the second query only fires when call_join_rows is non-empty)."""
     import services.crmReportService as R
 
     session = _PlanFakeSession(plan)
     orig = R.LeadManager
     R.LeadManager = lambda engine: _FakeLeadManager(session)
     try:
-        pivot = asyncio.run(R.call_direction_pivot(engine=None, direction="inbound", **kwargs))
+        pivot = asyncio.run(R.call_direction_pivot(engine=None, direction=direction, **kwargs))
     finally:
         R.LeadManager = orig
     return pivot, session
+
+
+def _run_inbound(plan, **kwargs):
+    return _run_funnel(plan, direction="inbound", **kwargs)
 
 
 def _compiled(query):
@@ -152,64 +112,37 @@ def _row(pivot, label):
     return next(r for r in pivot["rows"] if r["label"] == label)
 
 
-# --- OUTBOUND: unchanged (Task C1 stage x call-date pivot) ------------------------
+# --- OUTBOUND: same funnel, first row "Outgoing Calls" (2026-07-17 2nd ask) --------
 
 def test_outbound_direction_compares_against_outbound():
-    _pivot, session = _run([], direction="outbound")
+    _pivot, session = _run_funnel([[]], direction="outbound")
     where = _compiled(session.queries[0]).split("WHERE", 1)[1]
     assert "'outbound'" in where
 
 
-def test_outbound_distinct_lead_counted_once_per_call_day():
-    # lead_1 makes two outbound calls the same IST day -> the (day, stage) cell
-    # counts it once, not twice ("unique inflow").
-    rows = [
-        _outbound_row(DAY1, "FTU", "lead_1"),
-        _outbound_row(DAY1, "FTU", "lead_1"),
+def test_outbound_is_the_funnel_with_outgoing_calls_label():
+    call_rows = [
+        _call("lead_A", DAY1, "answered", EARLIER),      # existing lead -> deduped, connected
+        _call("lead_B", DAY1, "not_answered", EARLIER),  # deduped, not connected
     ]
-    pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
-    ftu_row = _row(pivot, "FTU")
-    assert ftu_row["values"][DAY1_ISO] == 1
-
-
-def test_outbound_columns_are_iso_days_sorted_chronologically_plus_grand_total():
-    rows = [
-        _outbound_row(DAY1, "FTU", "lead_1"),
-        _outbound_row(DAY2, "RTU", "lead_2"),
-    ]
-    pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
-    assert pivot["columns"] == [DAY1_ISO, DAY2_ISO, "Grand Total"]
-
-
-def test_outbound_lead_to_conv_pct_is_ftu_plus_rtu_over_total():
-    # 4 unique leads that day: FTU, RTU, Not Reachable x2 -> conv% = 2/4 = 50.0
-    rows = [
-        _outbound_row(DAY1, "FTU", "lead_1"),
-        _outbound_row(DAY1, "RTU", "lead_2"),
-        _outbound_row(DAY1, "Not Reachable", "lead_3"),
-        _outbound_row(DAY1, "Not Reachable", "lead_4"),
-    ]
-    pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 10))
-    conv = _row(pivot, "Lead to Conv%")
-    assert conv["values"][DAY1_ISO] == 50.0
-    assert conv["values"]["Grand Total"] == 50.0
+    order_rows = [("lead_A", DAY1)]
+    pivot, _session = _run_funnel(
+        [call_rows, order_rows], direction="outbound",
+        from_date=date(2026, 7, 10), to_date=date(2026, 7, 10))
+    labels = [r["label"] for r in pivot["rows"]]
+    assert labels == ["Outgoing Calls", "Fresh Leads", "Deduped", "Connected", "Orders Booked"]
+    assert _row(pivot, "Outgoing Calls")["values"][DAY1_ISO] == 2
+    assert _row(pivot, "Deduped")["values"][DAY1_ISO] == 2
+    assert _row(pivot, "Connected")["values"][DAY1_ISO] == 1
+    assert _row(pivot, "Orders Booked")["values"][DAY1_ISO] == 1
+    # No stage rows / percentage rows leak from the old pivot.
+    assert "FTU" not in labels and "Lead to Conv%" not in labels
 
 
 def test_outbound_empty_rows_is_safe():
-    pivot, _session = _run([], direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
+    pivot, _session = _run_funnel([[]], direction="outbound",
+                                  from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
     assert pivot["columns"] == ["Grand Total"]
-
-
-def test_outbound_no_order_rows_task_f():
-    # Task F added 4 order/revenue rows to the STATE pivot (state_stage_pivot) only.
-    # call_direction_pivot calls build_state_pivot without order_by_state, so its
-    # output must never contain them, even with call/lead rows present.
-    rows = [
-        _outbound_row(DAY1, "FTU", "lead_1"),
-    ]
-    pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
-    labels = {r["label"] for r in pivot["rows"]}
-    assert not ({"No. of Orders", "Total Qty", "Booked Revenue", "Avg Booked Rev/Day"} & labels)
 
 
 # --- INBOUND: the 2026-07-17 5-row funnel ------------------------------------------
