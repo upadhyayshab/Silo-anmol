@@ -454,25 +454,60 @@ async def agent_performance(
 
 
 # --- State × stage pivot ("Prospect Pivot" dashboard) -----------------------
-# Same three stage ratios as agent_performance, but pivoted per lead-inflow STATE
-# (Telangana kept separate, unlike the AP-folded region filter) with Grand Total,
-# Not-Connected%, and Avg Lead/Day rows — the Google-Sheet pivot the business uses.
+# Same three stage ratios as agent_performance, but pivoted per lead-inflow REGION
+# (2026-07-16: stakeholder asked for regions, not one-column-per-state — most state
+# columns sat nearly empty) with Grand Total, Not-Connected%, and Avg Lead/Day rows —
+# the Google-Sheet pivot the business uses.
 
 _PIVOT_STAGES = [s.value for s in LeadStage]  # row order = enum order
 
+# Region display labels, keyed to tracker_queries.REGIONS's codes (single source of
+# truth for STATE MEMBERSHIP — do not re-list states here). "ALL" has no state list
+# (it means "no filter" over in tracker_queries) so it has no display label and is
+# skipped when building the reverse map below.
+_REGION_DISPLAY = {"KN": "Karnataka", "AP_TG": "AP & Telangana", "PN": "Punjab"}
+
+# canon_state(...) (lowercase canonical state) -> region display label. Built once
+# from REGIONS so this module never carries its own copy of the state lists; a state
+# missing from REGIONS (Haryana, UP, Maharashtra, TN, Rajasthan, Uttarakhand, a raw
+# district name that canon_state passes through unmatched, ...) falls through to
+# "Others" in _state_label below, not KeyError.
+def _build_state_to_region() -> Dict[str, str]:
+    from services.tracker_queries import REGIONS
+    return {
+        state: code
+        for code, states in REGIONS.items()
+        if states is not None
+        for state in states
+    }
+
+
+_STATE_TO_REGION = _build_state_to_region()
+
 
 def _state_label(state: Optional[str]) -> str:
-    """Canonical Title Case state label for the pivot (folds casing/misspellings via
-    ``canon_state``); ``None``/empty/unrecognized raw values collapse to "Unknown"
-    instead of a blank column. apply_alias=False keeps Telangana separate from Andhra
-    Pradesh (see module docstring above, and routers/v1/orders.py::_canon_order_state) —
-    this feeds _order_state_aggregate's ORDER/REVENUE rows too, so folding Telangana into
-    AP here would silently merge its revenue into AP's. Lazy import dodges the
-    crmReportService<->leadService circular import (same idiom as
-    routers/v1/orders.py::_canon_order_state)."""
+    """Canonical REGION label for the pivot column (Karnataka / AP & Telangana / Punjab /
+    Others), folding casing/misspellings via ``canon_state`` first so dirty legacy rows
+    land in the right region instead of spawning duplicate columns. ``None``/empty/pure-
+    garbage raw values collapse to "Unknown" (existing catch-all, stays pinned first); a
+    real value that isn't in any region (another Indian state, or a district name
+    canon_state passes through unmatched) collapses to "Others".
+
+    Telangana and Andhra Pradesh fold into the SAME "AP & Telangana" column here — this
+    is a deliberate, explicit, LABELLED region grouping (stakeholder-requested), not the
+    old silent revenue-hiding fold this module's docstring warns against elsewhere.
+    ``canon_state(..., apply_alias=False)`` still runs underneath, so the state-level
+    truth (Telangana as its own state) stays intact for every other consumer — this
+    function only changes what the PIVOT DISPLAYS. Feeds both the lead-count side
+    (state_stage_pivot) and _order_state_aggregate's ORDER/REVENUE rows, so AP + Telangana
+    revenue sums into one column too. Lazy import dodges the crmReportService<->
+    leadService circular import (same idiom as routers/v1/orders.py::_canon_order_state)."""
     from services.leadService import canon_state
     canon = canon_state(state, apply_alias=False)
-    return canon.title() if canon else "Unknown"
+    if not canon:
+        return "Unknown"
+    region_code = _STATE_TO_REGION.get(canon)
+    return _REGION_DISPLAY[region_code] if region_code else "Others"
 
 
 def _pct(numer: float, denom: float) -> float:
@@ -491,24 +526,32 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
                       from_date: Optional[date] = None,
                       to_date: Optional[date] = None,
                       order_by_state: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
-    """Assemble the SS-shaped pivot from a ``(state_label, stage_value) -> count`` map.
-    Columns = states present (Blank first, then A→Z) + Grand Total; rows = the stages
+    """Assemble the SS-shaped pivot from a ``(column_label, stage_value) -> count`` map.
+    Columns = labels present, ordered Unknown, then the fixed region order (Karnataka,
+    AP & Telangana, Punjab), then Others, then any leftover label alphabetically (that
+    last bucket is dead code for the state pivot's own labels — _state_label only ever
+    emits the 5 fixed names — but keeps this generic for `call_direction_pivot`, whose
+    columns are ISO call-dates, not states/regions: none of those match the fixed names,
+    so they fall into the alphabetical leftover bucket unchanged, i.e. plain chronological
+    order exactly like before this fixed list existed) + Grand Total; rows = the stages
     present (enum order) then the derived %/avg rows. Percentages are stage ratios over
     each column's own Grand Total, identical to agent_performance.
 
-    `order_by_state` is optional: a ``state_label -> {"orders", "booked", "qty"}`` map
+    `order_by_state` is optional: a ``column_label -> {"orders", "booked", "qty"}`` map
     (see `_order_state_aggregate`). When given (the state pivot's case), 4 more rows are
     appended after "Avg Lead/Day": No. of Orders / Total Qty / Booked Revenue / Avg
-    Booked Rev/Day, and its state labels are unioned into the column set so an
-    order-only state (no leads in the window) still gets a column. When None (the call
-    pivot's case — `call_direction_pivot` never passes this), no order rows are added at
-    all, columns are unaffected, and behavior is identical to before this param existed."""
+    Booked Rev/Day, and its labels are unioned into the column set so an order-only
+    region (no leads in the window) still gets a column. When None (the call pivot's
+    case — `call_direction_pivot` never passes this), no order rows are added at all,
+    columns are unaffected, and behavior is identical to before this param existed."""
     days = _pivot_days(from_date, to_date)
     present = {s for (s, _stg) in counts}
     has_order_rows = order_by_state is not None  # distinguishes "passed but empty" from "never passed"
     order_by_state = order_by_state or {}
     all_states = present | set(order_by_state.keys())
-    state_cols = (["Unknown"] if "Unknown" in all_states else []) + sorted(s for s in all_states if s != "Unknown")
+    fixed_order = ["Unknown", *_REGION_DISPLAY.values(), "Others"]
+    state_cols = [c for c in fixed_order if c in all_states] + \
+        sorted(s for s in all_states if s not in fixed_order)
     columns = state_cols + ["Grand Total"]
 
     def cell(col: str, stage: str) -> int:
@@ -644,12 +687,12 @@ async def state_stage_pivot(
     scope_owner_id=None,
     agency_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Count leads created in the window per (state, stage) and assemble the pivot.
-    Grouped by the raw lead.state (no AP-folding), so Telangana is its own column.
-    Also aggregates `customer_orders` per-state (`_order_state_aggregate`) and passes it
-    to `build_state_pivot` as `order_by_state`, adding the 4 order/revenue rows — unlike
-    `call_direction_pivot`, which calls `build_state_pivot` without this param and so
-    never gets those rows."""
+    """Count leads created in the window per (state, stage), grouped into REGION columns
+    via `_state_label` (Karnataka / AP & Telangana / Punjab / Others / Unknown — see that
+    function's docstring). Also aggregates `customer_orders` per-region
+    (`_order_state_aggregate`) and passes it to `build_state_pivot` as `order_by_state`,
+    adding the 4 order/revenue rows — unlike `call_direction_pivot`, which calls
+    `build_state_pivot` without this param and so never gets those rows."""
     conds, _ = _lead_filter_conds(
         from_date=from_date, to_date=to_date, source=source,
         scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)

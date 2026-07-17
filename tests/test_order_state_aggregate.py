@@ -1,5 +1,7 @@
 """Task F: `_order_state_aggregate` (crmReportService.py) — the per-state order rollup
-feeding the Prospect Pivot's 4 new rows. Must mirror the Daily-Rev `placed` CTE
+feeding the Prospect Pivot's 4 new rows. Keyed by `_state_label`, which (2026-07-16)
+groups by REGION rather than raw state — see test_andhra_pradesh_and_telangana_orders_
+sum_into_one_region_column below. Must mirror the Daily-Rev `placed` CTE
 (reports.py:1261-1285) EXACTLY: created_at IST-in-window, no order_status filter, no
 deleted_at filter, gross-discount SUM computed WITHOUT joining order_items (fan-out
 would inflate it), qty summed via a SEPARATE grouped query. Scope: no lead join at all
@@ -115,6 +117,20 @@ def test_states_are_labeled_and_additive_across_raw_spellings():
     qty_rows = [("karnataka", 2), (" Karnataka ", 3)]
     agg, _session = _run([_FakeResult(orders_rows), _FakeResult(qty_rows)])
     assert agg == {"Karnataka": {"orders": 2, "booked": 300.0, "qty": 5}}
+
+
+def test_andhra_pradesh_and_telangana_orders_sum_into_one_region_column():
+    # 2026-07-16 stakeholder ask: the Prospect Pivot groups by REGION, not state, so an
+    # Andhra Pradesh order and a Telangana order must land in and sum into the SAME
+    # "AP & Telangana" column/revenue bucket — proving the fold happens on the
+    # order/revenue side, not just the lead-count side.
+    orders_rows = [
+        ("andhra pradesh", 2, Decimal("1000.00")),
+        ("telangana", 1, Decimal("500.00")),
+    ]
+    qty_rows = [("andhra pradesh", 4), ("telangana", 2)]
+    agg, _session = _run([_FakeResult(orders_rows), _FakeResult(qty_rows)])
+    assert agg == {"AP & Telangana": {"orders": 3, "booked": 1500.0, "qty": 6}}
 
 
 def test_empty_state_folds_to_unknown():

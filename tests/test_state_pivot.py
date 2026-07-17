@@ -1,7 +1,12 @@
 """State x stage pivot ("Prospect Pivot" dashboard) — the pure assembly against the
-Google-Sheet the business gave us (1-Jul'26 to 5-Jul'26). Reproduces every published
-cell so the money logic (Attempted / Connected / Conv / Not-Connected %, Avg Lead/Day)
-can't silently drift. DB-free — feeds build_state_pivot a hand-built count map. Run::
+Google-Sheet the business gave us (1-Jul'26 to 5-Jul'26), REGROUPED into REGION columns
+(2026-07-16 stakeholder ask: Karnataka / AP & Telangana / Punjab / Others, Unknown pinned
+first) instead of one column per state. Reproduces every published cell (Andhra Pradesh
+and Telangana summed together) so the money logic (Attempted / Connected / Conv /
+Not-Connected %, Avg Lead/Day) can't silently drift. DB-free — feeds build_state_pivot a
+hand-built count map (build_state_pivot itself is label-agnostic: the region regrouping
+happens upstream in crmReportService._state_label, so these fixtures use region labels as
+keys directly, exactly like state_stage_pivot would after calling _state_label). Run::
 
     python tests/test_state_pivot.py
     # or: pytest tests/test_state_pivot.py
@@ -20,13 +25,14 @@ import path_setup  # noqa: F401,E402  — must precede manager imports
 from services.crmReportService import build_state_pivot  # noqa: E402
 
 
-# The screenshot's stage counts, per state. (state, stage) -> count; zeros omitted.
+# The screenshot's stage counts, per REGION (Andhra Pradesh's and Telangana's rows
+# summed together into "AP & Telangana" — see module docstring). (label, stage) ->
+# count; zeros omitted.
 SHEET = {
     "Unknown":          {"Engaged": 16, "FTU": 17,  "Not Qualified": 11,  "Not Reachable": 14,   "RTU": 3},
-    "Andhra Pradesh": {"Engaged": 264, "FTU": 144, "Not Qualified": 363, "Not Reachable": 723,  "RTU": 3},
+    "AP & Telangana": {"Engaged": 264, "FTU": 154, "Not Qualified": 363, "Not Reachable": 723,  "RTU": 3},  # AP(144) + Telangana(10) FTU
     "Karnataka":      {"Engaged": 1047, "FTU": 346, "New Lead": 5, "Not Qualified": 206, "Not Reachable": 1009, "RTU": 15},
     "Punjab":         {"Engaged": 38, "FTU": 19,  "New Lead": 1, "Not Qualified": 81,  "Not Reachable": 162},
-    "Telangana":      {"FTU": 10},
 }
 
 
@@ -38,16 +44,25 @@ def _row(pivot, label):
     return next(r for r in pivot["rows"] if r["label"] == label)
 
 
-def test_columns_blank_first_then_alpha_then_grand_total():
+def test_columns_unknown_first_then_regions_then_others_then_grand_total():
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))
-    assert p["columns"] == ["Unknown", "Andhra Pradesh", "Karnataka", "Punjab", "Telangana", "Grand Total"]
+    assert p["columns"] == ["Unknown", "Karnataka", "AP & Telangana", "Punjab", "Grand Total"]
+
+
+def test_columns_others_placed_after_named_regions():
+    # A region-less state (e.g. Haryana, canon_state -> "Others") sits after the three
+    # named regions and before Grand Total, even though "Others" doesn't sort there
+    # alphabetically -- proves the fixed order, not alpha.
+    counts = {("Others", "FTU"): 2, **_counts()}
+    p = build_state_pivot(counts, date(2026, 7, 1), date(2026, 7, 5))
+    assert p["columns"] == ["Unknown", "Karnataka", "AP & Telangana", "Punjab", "Others", "Grand Total"]
 
 
 def test_grand_totals_match_sheet():
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))
     gt = _row(p, "Grand Total")["values"]
-    assert gt == {"Unknown": 61, "Andhra Pradesh": 1497, "Karnataka": 2628,
-                  "Punjab": 301, "Telangana": 10, "Grand Total": 4497}
+    assert gt == {"Unknown": 61, "AP & Telangana": 1507, "Karnataka": 2628,
+                  "Punjab": 301, "Grand Total": 4497}
 
 
 def test_percentages_match_sheet():
@@ -61,23 +76,26 @@ def test_percentages_match_sheet():
     assert con["Grand Total"] == 57.4
     assert conv["Grand Total"] == 12.4
     assert ncon["Grand Total"] == 42.4
-    # A couple of state columns end-to-end
+    # A couple of columns end-to-end
     assert (att["Karnataka"], con["Karnataka"], conv["Karnataka"], ncon["Karnataka"]) == (99.8, 61.4, 13.7, 38.4)
     assert (att["Unknown"], con["Unknown"], conv["Unknown"], ncon["Unknown"]) == (100.0, 77.0, 32.8, 23.0)
-    assert ncon["Telangana"] == 0.0  # no Not Reachable
+    # AP & Telangana combines AP's 1497 rows with Telangana's lone FTU:10 (1507 total) --
+    # proves the fold happens (Telangana's FTU no longer has its own column to check).
+    assert (att["AP & Telangana"], con["AP & Telangana"], conv["AP & Telangana"], ncon["AP & Telangana"]) == \
+        (100.0, 52.0, 10.4, 48.0)
     # Not Qualified % = Not Qualified / Grand Total (red warn row, like Not Connected)
     nq = _row(p, "Not Qualified %")["values"]
     assert nq["Grand Total"] == 14.7   # 661 / 4497
     assert nq["Karnataka"] == 7.8      # 206 / 2628
-    assert nq["Telangana"] == 0.0      # no Not Qualified
+    assert nq["AP & Telangana"] == 24.1  # 363 / 1507
 
 
 def test_avg_lead_per_day_divides_by_window_days():
     # 1-Jul..5-Jul inclusive = 5 days.
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))
     avg = _row(p, "Avg Lead/Day")["values"]
-    assert avg == {"Unknown": 12, "Andhra Pradesh": 299, "Karnataka": 526,
-                   "Punjab": 60, "Telangana": 2, "Grand Total": 899}
+    assert avg == {"Unknown": 12, "AP & Telangana": 301, "Karnataka": 526,
+                   "Punjab": 60, "Grand Total": 899}
 
 
 def test_no_window_avg_is_total_not_divide_by_zero():
@@ -129,7 +147,7 @@ def test_order_rows_grand_total_ties_to_sum_of_state_columns():
     order_by_state = {
         "Karnataka": {"orders": 3, "booked": 4050.0, "qty": 10},
         "Punjab": {"orders": 2, "booked": 1400.0, "qty": 10},
-        "Telangana": {"orders": 1, "booked": 500.0, "qty": 2},
+        "AP & Telangana": {"orders": 1, "booked": 500.0, "qty": 2},
     }
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5), order_by_state=order_by_state)
     state_cols = [c for c in p["columns"] if c != "Grand Total"]
@@ -138,16 +156,16 @@ def test_order_rows_grand_total_ties_to_sum_of_state_columns():
         assert values["Grand Total"] == sum(values.get(c, 0) for c in state_cols)
 
 
-def test_order_only_state_gets_a_column_not_present_in_lead_counts():
-    # Gujarat has orders but no leads in the window -> still gets a column so its
-    # order figures aren't silently dropped from the Grand Total.
-    order_by_state = {"Gujarat": {"orders": 1, "booked": 100.0, "qty": 1}}
+def test_order_only_region_gets_a_column_not_present_in_lead_counts():
+    # "Others" (e.g. a Gujarat order, no region) has orders but no leads in the window
+    # -> still gets a column so its order figures aren't silently dropped from Grand Total.
+    order_by_state = {"Others": {"orders": 1, "booked": 100.0, "qty": 1}}
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5), order_by_state=order_by_state)
-    assert "Gujarat" in p["columns"]
-    assert _row(p, "No. of Orders")["values"]["Gujarat"] == 1
+    assert "Others" in p["columns"]
+    assert _row(p, "No. of Orders")["values"]["Others"] == 1
     assert _row(p, "No. of Orders")["values"]["Grand Total"] == 1
-    # Gujarat has no leads, so its stage/Grand-Total (lead) row stays 0/absent.
-    assert "Gujarat" not in _row(p, "Grand Total")["values"] or _row(p, "Grand Total")["values"]["Gujarat"] == 0
+    # "Others" has no leads, so its stage/Grand-Total (lead) row stays 0/absent.
+    assert "Others" not in _row(p, "Grand Total")["values"] or _row(p, "Grand Total")["values"]["Others"] == 0
 
 
 def test_zero_or_absent_order_value_is_blank_like_stage_rows():
@@ -163,7 +181,7 @@ def test_no_order_by_state_means_no_order_rows_unaffected_columns():
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))
     labels = {r["label"] for r in p["rows"]}
     assert not ({"No. of Orders", "Total Qty", "Booked Revenue", "Avg Booked Rev/Day"} & labels)
-    assert p["columns"] == ["Unknown", "Andhra Pradesh", "Karnataka", "Punjab", "Telangana", "Grand Total"]
+    assert p["columns"] == ["Unknown", "Karnataka", "AP & Telangana", "Punjab", "Grand Total"]
 
 
 if __name__ == "__main__":
