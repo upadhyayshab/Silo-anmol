@@ -430,10 +430,12 @@ async def call_pivot_report(
     agency_id: Optional[str] = Query(None, description="Scope to owners belonging to this agency"),
     ctx: AuthContext = Depends(require_permission(Permission.REPORTS_READ)),
 ):
-    """Inbound/outbound call pivot (Task C1): stage x call-date pivot of unique
-    lead inflow for the given call direction, mirroring state_pivot_report's shape
-    but pivoted per call day instead of per state. Agency-scoped for agency
-    admins via _report_scope_owner. Registered before /{lead_id} so 'call-pivot'
+    """Inbound/outbound call pivot (Task C1). OUTBOUND: stage x call-date pivot of
+    unique lead inflow, mirroring state_pivot_report's shape but pivoted per call day
+    instead of per state. INBOUND (2026-07-17): a 5-row daily funnel instead — Incoming
+    Calls / Fresh Leads / Deduped / Connected / Orders Booked (see
+    crmReportService._inbound_call_funnel) — same envelope shape. Agency-scoped for
+    agency admins via _report_scope_owner. Registered before /{lead_id} so 'call-pivot'
     is not swallowed by the lead-detail route."""
     return await crmReportService.call_direction_pivot(
         engine, direction=direction, from_date=from_date, to_date=to_date,
