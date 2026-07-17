@@ -923,10 +923,11 @@ async def _call_funnel(
     the fallback.
 
     Batched: ONE query for the window's CALL_LOG activities in this direction joined
-    to their lead's created_at (no per-activity lead lookup), then ONE query for ORDER
-    activities restricted to just the leads seen in the first query (no N+1; skipped
-    entirely when the first query is empty). Same `agency_id`/`scope_owner_id` scoping
-    as the old stage pivot, via the same `_lead_filter_conds`."""
+    to their lead's created_at (no per-activity lead lookup), then ONE query for the
+    window's ORDER activities (skipped entirely when the first query is empty; the
+    same-day check below restricts them to leads from the scoped call query). Same
+    `agency_id`/`scope_owner_id` scoping as the old stage pivot, via the same
+    `_lead_filter_conds`."""
     lead_conds, _ = _lead_filter_conds(
         scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
 
@@ -953,12 +954,15 @@ async def _call_funnel(
               .where(*conds)
         )).all()
 
-        call_lead_ids = {r[0] for r in call_rows if r[0]}
         order_rows: list = []
-        if call_lead_ids:
+        if call_rows:
+            # No lead_id IN-list here: a week of outbound calls spans 30k+ distinct
+            # leads, which blew asyncpg's 32767-parameter ceiling (2026-07-17). The
+            # window's ORDER activities are a few thousand rows at most; the same-day
+            # check against call_days_by_lead below already restricts them to leads
+            # from the (scoped) call query.
             order_conds = [
                 LeadActivitySchema.activity_type == LeadActivityType.ORDER,
-                LeadActivitySchema.lead_id.in_(call_lead_ids),
             ]
             if gte is not None:
                 order_conds.append(LeadActivitySchema.created_at >= gte)
