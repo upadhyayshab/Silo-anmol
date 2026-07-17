@@ -56,7 +56,9 @@ def test_state_resolves_to_outlet_uids_case_insensitive():
     try:
         ids = asyncio.run(auth.outlet_ids_for_state("  Karnataka "))
         assert ids == ["o1", "o2"]                 # returns the outlet uids
-        assert fake.last_filters == {"state": {"$ieq": "Karnataka"}}   # trimmed + case-insensitive
+        # Trimmed + lowercased before the query — equivalent, since $ieq is ilike
+        # (case-insensitive); the lowercase fold came with multi-state/alias support.
+        assert fake.last_filters == {"state": {"$ieq": "karnataka"}}
     finally:
         auth._get_outlet_mgr = orig
 

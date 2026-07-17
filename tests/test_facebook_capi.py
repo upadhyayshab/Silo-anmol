@@ -50,9 +50,15 @@ def _sha(s):  # independent of _sha256 — proves the value, not just "it called
 
 # --- stage -> event-name mapping -------------------------------------------------------------
 
-def test_every_stage_is_mapped():
-    # A new LeadStage added without a CAPI event name would silently fire nothing.
-    assert set(STAGE_EVENT) == set(LeadStage), "STAGE_EVENT drifted from LeadStage"
+def test_every_stage_is_mapped_except_deliberate_exclusions():
+    # A new LeadStage added without a CAPI event name would silently fire nothing —
+    # any exclusion must be listed here ON PURPOSE with its reason.
+    # MAX_CALL_DONE (added 7b9c3cd): internal ">=20 not-connected calls" cap, not a
+    # conversion signal — Meta gets nothing for it, by design (verified 2026-07-17).
+    excluded = {LeadStage.MAX_CALL_DONE}
+    assert set(STAGE_EVENT) == set(LeadStage) - excluded, "STAGE_EVENT drifted from LeadStage"
+    # The excluded stage degrades to a no-op, not a crash.
+    assert build_event(_lead(mobile="9876543210"), LeadStage.MAX_CALL_DONE, event_time=0) is None
 
 
 def test_misspellings_preserved_verbatim():

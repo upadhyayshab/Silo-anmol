@@ -32,9 +32,11 @@ def test_super_admin_is_wildcard():
 
 
 def test_cost_columns_masked_below_finance():
-    # Roles WITHOUT products:cost:read get cost/margin/commission stripped.
+    # Roles WITHOUT products:cost:read get margin/commission stripped. cost_price is
+    # NOT masked (90a41d9): it's the customer-facing selling price (MRP the order
+    # charges), so order-takers must see it — only margin & commission are finance-only.
     for role in (UserRole.TELECALLER, UserRole.OUTLET_MANAGER, UserRole.WAREHOUSE_MANAGER):
-        assert masked_columns_for("products", role) == ["cost_price", "margin", "commission"]
+        assert masked_columns_for("products", role) == ["margin", "commission"]
     # Finance / leadership WITH products:cost:read see them.
     for role in (UserRole.ACCOUNTANT, UserRole.CFO, UserRole.SUPER_ADMIN, UserRole.AUDITOR):
         assert masked_columns_for("products", role) == []
@@ -56,7 +58,8 @@ def test_cgo_sees_topline_not_margin_or_pay():
     assert has_permission(UserRole.CGO, Permission.CAMPAIGNS_READ)
     assert not has_permission(UserRole.CGO, Permission.PRODUCTS_COST_READ)
     assert not has_permission(UserRole.CGO, Permission.PAYOUTS_READ)
-    assert masked_columns_for("products", UserRole.CGO) == ["cost_price", "margin", "commission"]
+    # cost_price = selling price, visible to all (see test_cost_columns_masked_below_finance)
+    assert masked_columns_for("products", UserRole.CGO) == ["margin", "commission"]
 
 
 def test_gstin_pan_masked_below_l3():
