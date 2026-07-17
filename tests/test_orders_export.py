@@ -351,7 +351,19 @@ def test_item_columns_are_aggregated_from_batch_items_query():
     print("OK: test_item_columns_are_aggregated_from_batch_items_query")
 
 
+def test_fmt_ist_date_accepts_plain_date():
+    # actual_delivery_date is a DATE column -> arrives as datetime.date, which has no
+    # tzinfo (crashed the stream mid-response on 2026-07-17). datetimes still convert.
+    import services.orderExportService as OES2
+    from datetime import date as _date
+    assert OES2._fmt_ist_date(_date(2026, 7, 16)) == "16/07/2026"
+    # 20:00 UTC = 01:30 IST next day — datetime path still IST-shifts.
+    assert OES2._fmt_ist_date(datetime(2026, 7, 16, 20, 0, tzinfo=timezone.utc)) == "17/07/2026"
+    assert OES2._fmt_ist_date(None) == ""
+
+
 if __name__ == "__main__":
+    test_fmt_ist_date_accepts_plain_date()
     test_header_row_matches_frontend_export_columns_exactly()
     test_keyset_pagination_no_duplicates_or_gaps_across_batches()
     test_scope_excludes_out_of_scope_rows()

@@ -859,8 +859,12 @@ async def call_direction_pivot(
 
     lm = LeadManager(engine)
     async with lm.session_factory() as session:
+        # Slim columns only (2026-07-17 perf fix): full-entity SELECT dragged every
+        # call's details JSON + the lead's whole row (custom_fields = 93 LSQ fields)
+        # across the wire for a week of calls -> 60s+ loads. These 3 are all the
+        # rollup below reads.
         pairs = (await session.execute(
-            db.select(LeadActivitySchema, LeadSchema)
+            db.select(LeadActivitySchema.created_at, LeadSchema.stage, LeadSchema.uid)
               .select_from(LeadActivitySchema)
               .join(LeadSchema, LeadActivitySchema.lead_id == LeadSchema.uid)
               .where(*conds)
@@ -869,12 +873,12 @@ async def call_direction_pivot(
     # Unique lead per (call-day, stage): a lead calling twice the same day in the
     # same direction still counts once — "unique inflow" like the sheet.
     seen: Dict[Tuple[str, str], set] = {}
-    for a, l in pairs:
-        if a.created_at is None:
+    for call_created_at, stage, lead_uid in pairs:
+        if call_created_at is None:
             continue
-        iso_day = a.created_at.astimezone(IST).date().isoformat()
-        stage = l.stage.value if hasattr(l.stage, "value") else l.stage
-        seen.setdefault((iso_day, stage), set()).add(l.uid)
+        iso_day = call_created_at.astimezone(IST).date().isoformat()
+        stage = stage.value if hasattr(stage, "value") else stage
+        seen.setdefault((iso_day, stage), set()).add(lead_uid)
 
     counts = {key: len(uids) for key, uids in seen.items()}
     return build_state_pivot(counts, from_date, to_date)
@@ -986,14 +990,17 @@ async def _inbound_call_funnel(
 
     lm = LeadManager(engine)
     async with lm.session_factory() as session:
+        # Slim columns only (2026-07-17 perf fix, same as the outbound path): the
+        # full-entity SELECT hauled every call's details JSON over the wire.
         call_rows = (await session.execute(
-            db.select(LeadActivitySchema, LeadSchema.created_at)
+            db.select(LeadActivitySchema.lead_id, LeadActivitySchema.created_at,
+                      LeadActivitySchema.outcome, LeadSchema.created_at)
               .select_from(LeadActivitySchema)
               .join(LeadSchema, LeadActivitySchema.lead_id == LeadSchema.uid)
               .where(*conds)
         )).all()
 
-        call_lead_ids = {a.lead_id for (a, _lead_created_at) in call_rows if a.lead_id}
+        call_lead_ids = {r[0] for r in call_rows if r[0]}
         order_rows: list = []
         if call_lead_ids:
             order_conds = [
@@ -1015,18 +1022,18 @@ async def _inbound_call_funnel(
     connected: Dict[str, int] = {}
     call_days_by_lead: Dict[str, set] = {}
 
-    for a, lead_created_at in call_rows:
-        if a.created_at is None:
+    for lead_id, call_created_at, outcome, lead_created_at in call_rows:
+        if call_created_at is None:
             continue
-        iso_day = a.created_at.astimezone(IST).date().isoformat()
+        iso_day = call_created_at.astimezone(IST).date().isoformat()
         incoming[iso_day] = incoming.get(iso_day, 0) + 1
-        is_fresh = lead_created_at is not None and abs(a.created_at - lead_created_at) <= _FRESH_EPSILON
+        is_fresh = lead_created_at is not None and abs(call_created_at - lead_created_at) <= _FRESH_EPSILON
         bucket = fresh if is_fresh else deduped
         bucket[iso_day] = bucket.get(iso_day, 0) + 1
-        if a.outcome in _CONNECTED_OUTCOMES:
+        if outcome in _CONNECTED_OUTCOMES:
             connected[iso_day] = connected.get(iso_day, 0) + 1
-        if a.lead_id:
-            call_days_by_lead.setdefault(a.lead_id, set()).add(iso_day)
+        if lead_id:
+            call_days_by_lead.setdefault(lead_id, set()).add(iso_day)
 
     booked: Dict[str, int] = {}
     for lead_id, order_created_at in order_rows:

@@ -18,7 +18,6 @@ import os
 import sys
 import asyncio
 from datetime import date, datetime, timedelta, timezone
-from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 try:  # path_setup prints a checkmark banner; keep it from blowing up a cp1252 console
@@ -39,23 +38,17 @@ DAY1_ISO = DAY1.astimezone(IST).date().isoformat()
 DAY2_ISO = DAY2.astimezone(IST).date().isoformat()
 
 
-def _activity(uid, lead_id, direction, created_at):
-    return SimpleNamespace(
-        uid=uid, lead_id=lead_id,
-        details={"direction": direction},
-        created_at=created_at,
-    )
+# Row shapes mirror the slim column SELECTs (2026-07-17 perf fix — the service no
+# longer fetches full entities, just the columns each rollup reads).
+
+def _outbound_row(created_at, stage, lead_uid):
+    """(activity.created_at, lead.stage, lead.uid) — outbound pivot's SELECT."""
+    return (created_at, stage, lead_uid)
 
 
-def _lead(uid, stage):
-    return SimpleNamespace(uid=uid, stage=stage)
-
-
-def _call(uid, lead_id, created_at, outcome):
-    """An inbound CALL_LOG row as returned by _inbound_call_funnel's join query —
-    only the fields the funnel actually reads (lead_id, created_at, outcome)."""
-    return SimpleNamespace(uid=uid, lead_id=lead_id, created_at=created_at, outcome=outcome,
-                          details={"direction": "inbound"})
+def _call(lead_id, created_at, outcome, lead_created_at):
+    """(lead_id, call created_at, outcome, lead created_at) — funnel's SELECT."""
+    return (lead_id, created_at, outcome, lead_created_at)
 
 
 class _FakeResult:
@@ -171,8 +164,8 @@ def test_outbound_distinct_lead_counted_once_per_call_day():
     # lead_1 makes two outbound calls the same IST day -> the (day, stage) cell
     # counts it once, not twice ("unique inflow").
     rows = [
-        (_activity("a1", "lead_1", "outbound", DAY1), _lead("lead_1", "FTU")),
-        (_activity("a2", "lead_1", "outbound", DAY1), _lead("lead_1", "FTU")),
+        _outbound_row(DAY1, "FTU", "lead_1"),
+        _outbound_row(DAY1, "FTU", "lead_1"),
     ]
     pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
     ftu_row = _row(pivot, "FTU")
@@ -181,8 +174,8 @@ def test_outbound_distinct_lead_counted_once_per_call_day():
 
 def test_outbound_columns_are_iso_days_sorted_chronologically_plus_grand_total():
     rows = [
-        (_activity("a1", "lead_1", "outbound", DAY1), _lead("lead_1", "FTU")),
-        (_activity("a2", "lead_2", "outbound", DAY2), _lead("lead_2", "RTU")),
+        _outbound_row(DAY1, "FTU", "lead_1"),
+        _outbound_row(DAY2, "RTU", "lead_2"),
     ]
     pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
     assert pivot["columns"] == [DAY1_ISO, DAY2_ISO, "Grand Total"]
@@ -191,10 +184,10 @@ def test_outbound_columns_are_iso_days_sorted_chronologically_plus_grand_total()
 def test_outbound_lead_to_conv_pct_is_ftu_plus_rtu_over_total():
     # 4 unique leads that day: FTU, RTU, Not Reachable x2 -> conv% = 2/4 = 50.0
     rows = [
-        (_activity("a1", "lead_1", "outbound", DAY1), _lead("lead_1", "FTU")),
-        (_activity("a2", "lead_2", "outbound", DAY1), _lead("lead_2", "RTU")),
-        (_activity("a3", "lead_3", "outbound", DAY1), _lead("lead_3", "Not Reachable")),
-        (_activity("a4", "lead_4", "outbound", DAY1), _lead("lead_4", "Not Reachable")),
+        _outbound_row(DAY1, "FTU", "lead_1"),
+        _outbound_row(DAY1, "RTU", "lead_2"),
+        _outbound_row(DAY1, "Not Reachable", "lead_3"),
+        _outbound_row(DAY1, "Not Reachable", "lead_4"),
     ]
     pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 10))
     conv = _row(pivot, "Lead to Conv%")
@@ -212,7 +205,7 @@ def test_outbound_no_order_rows_task_f():
     # call_direction_pivot calls build_state_pivot without order_by_state, so its
     # output must never contain them, even with call/lead rows present.
     rows = [
-        (_activity("a1", "lead_1", "outbound", DAY1), _lead("lead_1", "FTU")),
+        _outbound_row(DAY1, "FTU", "lead_1"),
     ]
     pivot, _session = _run(rows, direction="outbound", from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
     labels = {r["label"] for r in pivot["rows"]}
@@ -236,11 +229,11 @@ def test_inbound_funnel_fixture_day():
     """Brief's fixture: 5 inbound calls, 2 fresh (created their lead) + 3 deduped
     (matched an existing lead), 3 connected, 1 same-day booking -> 5 / 2 / 3 / 3 / 1."""
     call_rows = [
-        (_call("a1", "lead_A", DAY1, "answered"), DAY1),       # fresh (created this instant), connected
-        (_call("a2", "lead_B", DAY1, "not_answered"), DAY1),   # fresh, not connected
-        (_call("a3", "lead_C", DAY1, "answered"), EARLIER),    # deduped (pre-existing lead), connected
-        (_call("a4", "lead_D", DAY1, "busy"), EARLIER),        # deduped, not connected
-        (_call("a5", "lead_E", DAY1, "answered"), EARLIER),    # deduped, connected
+        _call("lead_A", DAY1, "answered", DAY1),       # fresh (created this instant), connected
+        _call("lead_B", DAY1, "not_answered", DAY1),   # fresh, not connected
+        _call("lead_C", DAY1, "answered", EARLIER),    # deduped (pre-existing lead), connected
+        _call("lead_D", DAY1, "busy", EARLIER),        # deduped, not connected
+        _call("lead_E", DAY1, "answered", EARLIER),    # deduped, connected
     ]
     order_rows = [("lead_A", DAY1)]   # lead_A books the same day it called
     pivot, _session = _run_inbound(
@@ -261,8 +254,8 @@ def test_inbound_repeat_caller_same_day_one_fresh_one_deduped():
     # lead_F created by its FIRST call (created_at == lead.created_at); a second call
     # from the same lead 5 minutes later the same day is a repeat, not a re-creation.
     call_rows = [
-        (_call("a1", "lead_F", DAY1, "answered"), DAY1),
-        (_call("a2", "lead_F", DAY1 + timedelta(minutes=5), "answered"), DAY1),
+        _call("lead_F", DAY1, "answered", DAY1),
+        _call("lead_F", DAY1 + timedelta(minutes=5), "answered", DAY1),
     ]
     pivot, _session = _run_inbound(
         [call_rows, []], from_date=date(2026, 7, 10), to_date=date(2026, 7, 10))
@@ -274,7 +267,7 @@ def test_inbound_repeat_caller_same_day_one_fresh_one_deduped():
 def test_inbound_booking_without_same_day_call_not_counted():
     # lead_G is created/calls on DAY1 but books on DAY2 with no call that day ->
     # Orders Booked must NOT count it on DAY2 (same-day funnel rule).
-    call_rows = [(_call("a1", "lead_G", DAY1, "answered"), DAY1)]
+    call_rows = [_call("lead_G", DAY1, "answered", DAY1)]
     order_rows = [("lead_G", DAY2)]
     pivot, _session = _run_inbound(
         [call_rows, order_rows], from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
@@ -286,8 +279,8 @@ def test_inbound_booking_without_same_day_call_not_counted():
 
 def test_inbound_grand_total_sums_across_days():
     call_rows = [
-        (_call("a1", "lead_A", DAY1, "answered"), DAY1),
-        (_call("a2", "lead_B", DAY2, "answered"), DAY2),
+        _call("lead_A", DAY1, "answered", DAY1),
+        _call("lead_B", DAY2, "answered", DAY2),
     ]
     pivot, _session = _run_inbound(
         [call_rows, []], from_date=date(2026, 7, 10), to_date=date(2026, 7, 11))
@@ -307,7 +300,7 @@ def test_inbound_empty_rows_is_safe():
 
 def test_inbound_no_stage_rows():
     # Old stage labels (FTU/RTU/etc.) must never leak into the new funnel's rows.
-    call_rows = [(_call("a1", "lead_A", DAY1, "answered"), DAY1)]
+    call_rows = [_call("lead_A", DAY1, "answered", DAY1)]
     pivot, _session = _run_inbound(
         [call_rows, []], from_date=date(2026, 7, 10), to_date=date(2026, 7, 10))
     labels = {r["label"] for r in pivot["rows"]}

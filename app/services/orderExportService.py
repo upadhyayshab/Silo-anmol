@@ -108,6 +108,8 @@ def _fmt_ist_date(value) -> str:
     if not value:
         return ""
     dt = value
+    if not isinstance(dt, datetime):  # plain DATE column (e.g. actual_delivery_date)
+        return dt.strftime("%d/%m/%Y")
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(IST).strftime("%d/%m/%Y")
