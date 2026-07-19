@@ -27,6 +27,28 @@ from utils.constants import (
 # ERP BASE MANAGERS (EXTENDING SHAREDBACKEND)
 # ============================================================================
 
+def _stringify_for_text_col(value):
+    """Re-stringify numbers headed for a text column.
+
+    filtering_dependency coerces any all-digit query value to a Python int, and it can't
+    know better -- it never sees the column. asyncpg then binds that int as BIGINT and
+    Postgres blows up with `operator does not exist: character varying = bigint` (a phone
+    number typed into an order-number box, a pincode, a bare mobile). Here the column type
+    IS known, so this is the one place the mismatch can actually be repaired. Applies down
+    through operator dicts and IN-lists; bools are left alone (bool is an int subclass and
+    "True" is not what anyone means).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return [_stringify_for_text_col(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _stringify_for_text_col(v) for k, v in value.items()}
+    return value
+
+
 class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
     @classmethod
     def _resolve_joins(cls, schema: type[BaseSchema], joins: Any, loader: Any = None) -> list[Any]:
@@ -198,6 +220,9 @@ class ERPGenericManager[SchemaType: BaseSchema](GenericManager[SchemaType]):
             col_attr = getattr(schema, column, None)
             if col_attr is None:
                 continue
+
+            if isinstance(col_attr.type, db.String):
+                condition = _stringify_for_text_col(condition)
 
             if isinstance(condition, dict):
                 # Process each operator in the dictionary
