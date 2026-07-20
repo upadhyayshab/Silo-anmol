@@ -48,14 +48,15 @@ set -e
 
 
 stage('SonarQube Analysis') {
-    withSonarQubeEnv('sonarqube') {
-        sh '''
-            sonar-scanner \
-              -Dsonar.projectKey=fastapi-app \
-              -Dsonar.sources=.
-        '''
-    }
+withSonarQubeEnv('sonarqube') {
+sh '''
+sonar-scanner 
+-Dsonar.projectKey=fastapi-app 
+-Dsonar.sources=.
+'''
 }
+}
+
 
 stage('Build Docker Image') {
     sh "docker build -t ${IMAGE_NAME}:latest ."
