@@ -3,7 +3,7 @@ node {
 
 def IMAGE_NAME = "fastapi-app"
 def CONTAINER_NAME = "fastapi-container"
-def HOST_PORT = "8081"
+def HOST_PORT = "8082"
 def CONTAINER_PORT = "8000"
 
 stage('Checkout Code') {
@@ -11,33 +11,41 @@ stage('Checkout Code') {
 }
 
 stage('Update Git Submodule URLs') {
-    sshagent(['GitHub-Rohit-SiloFortune-Secret']) {
-        sh '''#!/bin/bash
-            set -e
+withCredentials([sshUserPrivateKey(
+credentialsId: 'GitHub-Rohit-SiloFortune-Secret',
+keyFileVariable: 'SSH_KEY'
+)]) {
+sh '''#!/bin/bash
+set -e
 
-            # Check if .gitmodules exists
-            if [ ! -f .gitmodules ]; then
-                echo "No .gitmodules file found. Exiting."
-                exit 1
-            fi
+        # Check if .gitmodules exists
+        if [ ! -f .gitmodules ]; then
+            echo "No .gitmodules file found. Exiting."
+            exit 1
+        fi
 
-            echo "Before update:"
-            cat .gitmodules
+        echo "Before update:"
+        cat .gitmodules
 
-            # Convert HTTPS GitHub URLs to SSH
-            sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+        # Convert HTTPS GitHub URLs to SSH
+        sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
 
-            echo "After update:"
-            cat .gitmodules
+        echo "After update:"
+        cat .gitmodules
 
-            # Sync and initialize submodules
-            git submodule sync
-            git submodule update --init --recursive
+        # Configure Git to use the SSH key
+        export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no"
 
-            echo "Submodule URLs converted to SSH successfully!"
-        '''
-    }
+        # Sync and initialize submodules
+        git submodule sync
+        git submodule update --init --recursive
+
+        echo "Submodule URLs converted to SSH successfully!"
+  
 }
+
+}
+
 
 stage('SonarQube Analysis') {
     withSonarQubeEnv('sonarqube') {
