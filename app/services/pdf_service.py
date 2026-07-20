@@ -16,8 +16,11 @@ class InvoicePDFGenerator:
     def _setup_jinja_env(self):
         """Setup Jinja2 template environment."""
         try:
-            from jinja2 import Environment, FileSystemLoader
-            return Environment(loader=FileSystemLoader(str(self.template_dir)))
+            from jinja2 import Environment, FileSystemLoader, select_autoescape
+            return Environment(
+                loader=FileSystemLoader(str(self.template_dir)),
+                autoescape=select_autoescape(['html', 'xml'])
+            )
         except ImportError:
             raise ImportError("jinja2 is required for template-based PDF generation. Install with: pip install jinja2")
 
