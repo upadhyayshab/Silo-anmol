@@ -3,7 +3,7 @@ node {
 
 def IMAGE_NAME = "fastapi-app"
 def CONTAINER_NAME = "fastapi-container"
-def HOST_PORT = "8082"
+def HOST_PORT = "8081"
 def CONTAINER_PORT = "8000"
 
 stage('Checkout Code') {
@@ -11,41 +11,52 @@ stage('Checkout Code') {
 }
 
 stage('Update Git Submodule URLs') {
-withCredentials([sshUserPrivateKey(
-credentialsId: 'GitHub-Rohit-SiloFortune-Secret',
-keyFileVariable: 'SSH_KEY'
-)]) {
-sh '''#!/bin/bash
+    withCredentials([sshUserPrivateKey(
+        credentialsId: 'GitHub-Rohit-SiloFortune-Secret',
+        keyFileVariable: 'SSH_KEY'
+    )]) {
+        sh '''#!/bin/bash
+```
+
 set -e
 
-        # Check if .gitmodules exists
-        if [ ! -f .gitmodules ]; then
-            echo "No .gitmodules file found. Exiting."
-            exit 1
-        fi
+if [ ! -f .gitmodules ]; then
+echo "No .gitmodules file found. Exiting."
+exit 1
+fi
 
-        echo "Before update:"
-        cat .gitmodules
+echo "Before update:"
+cat .gitmodules
 
-        # Convert HTTPS GitHub URLs to SSH
-        sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
 
-        echo "After update:"
-        cat .gitmodules
+echo "After update:"
+cat .gitmodules
 
-        # Configure Git to use the SSH key
-        export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no"
+export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no"
 
-        # Sync and initialize submodules
-        git submodule sync
-        git submodule update --init --recursive
+git submodule sync
+git submodule update --init --recursive
 
-        echo "Submodule URLs converted to SSH successfully!"
-  
+echo "Submodule URLs converted to SSH successfully!"
+'''
+}
 }
 
+```
+stage('SonarQube Analysis') {
+    withSonarQubeEnv('sonarqube') {
+        sh '''
+```
+
+sonar-scanner 
+-Dsonar.projectKey=fastapi-app 
+-Dsonar.sources=.
+'''
+}
 }
 
+```
 stage('Build Docker Image') {
     sh "docker build -t ${IMAGE_NAME}:latest ."
 }
@@ -56,17 +67,21 @@ stage('Remove Old Container') {
 
 stage('Run Docker Container') {
     sh """
-        docker run -d \
-          --name ${CONTAINER_NAME} \
-          -p ${HOST_PORT}:${CONTAINER_PORT} \
-          ${IMAGE_NAME}:latest
-    """
+```
+
+docker run -d 
+--name ${CONTAINER_NAME} 
+-p ${HOST_PORT}:${CONTAINER_PORT} 
+${IMAGE_NAME}:latest
+"""
 }
 
+```
 stage('Verify Container') {
     sh "docker ps | grep ${CONTAINER_NAME}"
 }
 
 echo "Application is running at http://<EC2_PUBLIC_IP>:${HOST_PORT}"
+
 
 }
