@@ -29,7 +29,7 @@ COPY --from=build /usr/local/bin /usr/local/bin
 
 COPY --from=build /src /src
 COPY app app
-COPY SharedBackend ShareBackend
+COPY SharedBackend SharedBackend
 COPY alembic.ini alembic.ini
 COPY migrations migrations
 ENV PYTHONPATH=/src/app/:/src/SharedBackend/src/
