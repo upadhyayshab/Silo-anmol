@@ -372,6 +372,18 @@ async def agent_performance(
         region=region, regions=regions, owner_ids=owner_ids, source=source,
         scope_owner_id=scope_owner_id, agency_id=agency_id, gate_order_date=False)
     order_conds = list(conds) + list(order_date_conds)
+    # The order rollup groups by the order's CREATOR (telecaller_id), which can differ
+    # from the (scoped) lead owner — e.g. a lead reassigned into this agency keeps the
+    # original creator. Scoping only the lead side leaks foreign order-creators into the
+    # people list (an agency admin seeing other agencies' telecallers as 0-lead rows).
+    # Gate the creator to the same owner-scope, mirroring _owner_scope_conds.
+    if agency_id:
+        order_conds.append(CustomerOrderSchema.telecaller_id.in_(
+            db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)))
+    if scope_owner_id is not None:
+        order_conds.append(CustomerOrderSchema.telecaller_id.in_(scope_owner_id)
+                           if isinstance(scope_owner_id, (list, tuple, set))
+                           else CustomerOrderSchema.telecaller_id == scope_owner_id)
 
     lm = LeadManager(engine)
     async with lm.session_factory() as session:
@@ -657,6 +669,14 @@ async def _order_state_aggregate(
 
     scope_conds = _owner_scope_conds(scope_owner_id, agency_id)
     conds = [*window_conds, *scope_conds]
+
+    if agency_id:
+        conds.append(CustomerOrderSchema.telecaller_id.in_(
+            db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)))
+    if scope_owner_id is not None:
+        conds.append(CustomerOrderSchema.telecaller_id.in_(scope_owner_id)
+                     if isinstance(scope_owner_id, (list, tuple, set))
+                     else CustomerOrderSchema.telecaller_id == scope_owner_id)
 
     orders_q = (db.select(
         CustomerOrderSchema.state,

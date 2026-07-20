@@ -38,8 +38,10 @@ class _FakeSession:
 
     def __init__(self, plan):
         self._plan = list(plan)
+        self.statements = []  # each execute()'d statement, in call order
 
-    async def execute(self, *_a, **_kw):
+    async def execute(self, statement=None, *_a, **_kw):
+        self.statements.append(statement)
         return self._plan.pop(0)
 
     async def __aenter__(self):
@@ -145,6 +147,31 @@ def test_agent_performance_row_has_none_agency_name_for_owner_without_agency():
     )
     assert len(rows) == 1
     assert rows[0]["agency_name"] is None
+
+
+def test_agent_performance_order_rollup_is_scoped_to_in_scope_telecallers():
+    """Regression: an order created by an out-of-scope telecaller on an in-scope
+    lead must NOT leak that telecaller into the pivot. The lead-side scope alone
+    doesn't gate the order rollup (it groups by the order's creator), so the ord/
+    qty queries must also filter telecaller_id to the scoped owner set. Assert the
+    scoped id reaches the compiled SQL of those two queries."""
+    import services.crmReportService as R
+
+    session = _FakeSession([_FakeResult([]) for _ in range(4)])
+    orig = R.LeadManager
+    R.LeadManager = lambda engine: _FakeManager(session)
+    try:
+        asyncio.run(R.agent_performance(None, scope_owner_id=["rm_agent_x"]))
+    finally:
+        R.LeadManager = orig
+
+    # statements[0]=stage, [1]=order rollup, [2]=quantity, [3]=owner names.
+    # `rm_agent_x` alone isn't enough — it also appears via the lead-owner filter.
+    # Assert the telecaller_id itself is gated to the scope (the part that was missing).
+    ord_sql = str(session.statements[1].compile(compile_kwargs={"literal_binds": True}))
+    qty_sql = str(session.statements[2].compile(compile_kwargs={"literal_binds": True}))
+    assert "telecaller_id IN ('rm_agent_x')" in ord_sql, ord_sql
+    assert "telecaller_id IN ('rm_agent_x')" in qty_sql, qty_sql
 
 
 if __name__ == "__main__":
