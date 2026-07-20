@@ -5,9 +5,33 @@ def CONTAINER_NAME = "fastapi-container"
 def HOST_PORT = "8081"
 def CONTAINER_PORT = "80"
 
-stage('Checkout Code') {
-    checkout scm
-    sh 'git submodule update --init --recursive'
+stage('Update Git Submodule URLs') {
+    sshagent(['GitHub-Rohit-SiloFortune-Secret']) {
+        sh '''#!/bin/bash
+            set -e
+
+            # Check if .gitmodules exists
+            if [ ! -f .gitmodules ]; then
+                echo "No .gitmodules file found. Exiting."
+                exit 1
+            fi
+
+            echo "Before update:"
+            cat .gitmodules
+
+            # Convert HTTPS GitHub URLs to SSH
+            sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+
+            echo "After update:"
+            cat .gitmodules
+
+            # Sync and initialize submodules
+            git submodule sync
+            git submodule update --init --recursive
+
+            echo "Submodule URLs converted to SSH successfully!"
+        
+    }
 }
 
 stage('SonarQube Analysis') {
