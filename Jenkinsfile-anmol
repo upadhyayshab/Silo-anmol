@@ -37,15 +37,13 @@ set -e
 }
 
 stage('SonarQube Analysis') {
-    steps {
-        withSonarQubeEnv('sonarqube') {
-            sh '''
-                sonar-scanner \
-                  -Dsonar.projectKey=fastapi-app \
-                  -Dsonar.projectName=fastapi-app \
-                  -Dsonar.sources=.
-            '''
-        }
+    withSonarQubeEnv('sonarqube') {
+        sh '''
+            sonar-scanner \
+              -Dsonar.projectKey=fastapi-app \
+              -Dsonar.projectName=fastapi-app \
+              -Dsonar.sources=.
+        '''
     }
 }
 
