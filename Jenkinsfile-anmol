@@ -2,7 +2,7 @@ node {
 
 def IMAGE_NAME = "fastapi-app"
 def CONTAINER_NAME = "fastapi-container"
-def HOST_PORT = "8081"
+def HOST_PORT = "8082"
 def CONTAINER_PORT = "8000"
 
 stage('Checkout Code') {
@@ -57,12 +57,11 @@ stage('Remove Old Container') {
 
 stage('Run Docker Container') {
     sh """
-
-docker run -d
---name ${CONTAINER_NAME}
--p ${HOST_PORT}:${CONTAINER_PORT}
-${IMAGE_NAME}
-"""
+        docker rm -f ${CONTAINER_NAME} || true
+        docker run -d --name ${CONTAINER_NAME} \
+          -p ${HOST_PORT}:${CONTAINER_PORT} \
+          ${IMAGE_NAME}:latest
+    """
 }
 
 stage('Verify Container') {
