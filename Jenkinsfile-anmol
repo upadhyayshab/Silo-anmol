@@ -52,8 +52,15 @@ stage('Build Docker Image') {
 }
 stage('Trivy Security Scan') {
     sh """
-        trivy image --severity HIGH,CRITICAL --exit-code 1 ${IMAGE_NAME}:latest
+        trivy image \
+        --severity HIGH,CRITICAL \
+        --format table \
+        --output trivy-report.txt \
+        --exit-code 1 \
+        ${IMAGE_NAME}:latest
     """
+    
+    archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
 }
 
 stage('Remove Old Container') {
