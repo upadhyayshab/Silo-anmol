@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir gunicorn
 
 COPY requirements/dev.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-COPY Share/requirements.txt requirements.txt
+COPY SharedBackend/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 RUN rm requirements.txt
 
@@ -29,7 +29,7 @@ COPY --from=build /usr/local/bin /usr/local/bin
 
 COPY --from=build /src /src
 COPY app app
-COPY Share Share
+COPY SharedBackend ShareBackend
 COPY alembic.ini alembic.ini
 COPY migrations migrations
 ENV PYTHONPATH=/src/app/:/src/SharedBackend/src/
