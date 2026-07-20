@@ -10,35 +10,30 @@ stage('Checkout Code') {
 }
 
 stage('Update Git Submodule URLs') {
-    withCredentials([sshUserPrivateKey(
-        credentialsId: 'GitHub-Rohit-SiloFortune-Secret',
-        keyFileVariable: 'SSH_KEY'
-    )]) {
-        sh '''#!/bin/bash
-
+sh '''#!/bin/bash
 set -e
 
-if [ ! -f .gitmodules ]; then
-echo "No .gitmodules file found. Exiting."
-exit 1
-fi
+    if [ ! -f .gitmodules ]; then
+        echo "No .gitmodules file found. Exiting."
+        exit 1
+    fi
 
-echo "Before update:"
-cat .gitmodules
+    echo "Before update:"
+    cat .gitmodules
 
-sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+    # Convert HTTPS GitHub URLs to SSH
+    sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
 
-echo "After update:"
-cat .gitmodules
+    echo "After update:"
+    cat .gitmodules
 
-export GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no"
+    # Sync and initialize submodules
+    git submodule sync
+    git submodule update --init --recursive
 
-git submodule sync
-git submodule update --init --recursive
-
-echo "Submodule URLs converted to SSH successfully!"
+    echo "Submodule URLs converted to SSH successfully!"
 '''
-}
+
 }
 
 stage('SonarQube Analysis') {
