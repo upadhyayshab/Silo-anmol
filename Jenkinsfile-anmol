@@ -1,13 +1,24 @@
 node {
 
-
 def IMAGE_NAME = "fastapi-app"
 def CONTAINER_NAME = "fastapi-container"
 def HOST_PORT = "8081"
-def CONTAINER_PORT = "8000"
+def CONTAINER_PORT = "80"
 
 stage('Checkout Code') {
     checkout scm
+}
+
+stage('SonarQube Analysis') {
+
+    withSonarQubeEnv('sonarqube') {
+
+        sh '''
+        sonar-scanner \
+        -Dsonar.projectKey=fastapi-app \
+        -Dsonar.sources=.
+        '''
+    }
 }
 
 stage('Build Docker Image') {
@@ -32,6 +43,5 @@ stage('Verify Container') {
 }
 
 echo "Application is running at http://<EC2_PUBLIC_IP>:${HOST_PORT}"
-
 
 }
