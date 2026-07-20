@@ -50,6 +50,11 @@ stage('SonarQube Analysis') {
 stage('Build Docker Image') {
     sh "docker build -t ${IMAGE_NAME}:latest ."
 }
+stage('Trivy Security Scan') {
+    sh """
+        trivy image --severity HIGH,CRITICAL --exit-code 1 ${IMAGE_NAME}:latest
+    """
+}
 
 stage('Remove Old Container') {
     sh "docker rm -f ${CONTAINER_NAME} || true"
