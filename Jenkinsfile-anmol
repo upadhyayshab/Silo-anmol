@@ -1,9 +1,14 @@
 node {
 
+
 def IMAGE_NAME = "fastapi-app"
 def CONTAINER_NAME = "fastapi-container"
 def HOST_PORT = "8081"
-def CONTAINER_PORT = "80"
+def CONTAINER_PORT = "8000"
+
+stage('Checkout Code') {
+    checkout scm
+}
 
 stage('Update Git Submodule URLs') {
     sshagent(['GitHub-Rohit-SiloFortune-Secret']) {
@@ -30,18 +35,16 @@ stage('Update Git Submodule URLs') {
             git submodule update --init --recursive
 
             echo "Submodule URLs converted to SSH successfully!"
-        
+        '''
     }
 }
 
 stage('SonarQube Analysis') {
-
     withSonarQubeEnv('sonarqube') {
-
         sh '''
-        sonar-scanner \
-        -Dsonar.projectKey=fastapi-app \
-        -Dsonar.sources=.
+            sonar-scanner \
+              -Dsonar.projectKey=fastapi-app \
+              -Dsonar.sources=.
         '''
     }
 }
@@ -57,9 +60,9 @@ stage('Remove Old Container') {
 stage('Run Docker Container') {
     sh """
         docker run -d \
-            --name ${CONTAINER_NAME} \
-            -p ${HOST_PORT}:${CONTAINER_PORT} \
-            ${IMAGE_NAME}:latest
+          --name ${CONTAINER_NAME} \
+          -p ${HOST_PORT}:${CONTAINER_PORT} \
+          ${IMAGE_NAME}:latest
     """
 }
 
