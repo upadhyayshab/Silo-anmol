@@ -1,0 +1,37 @@
+node {
+
+
+def IMAGE_NAME = "fastapi-app"
+def CONTAINER_NAME = "fastapi-container"
+def HOST_PORT = "8081"
+def CONTAINER_PORT = "8000"
+
+stage('Checkout Code') {
+    checkout scm
+}
+
+stage('Build Docker Image') {
+    sh "docker build -t ${IMAGE_NAME}:latest ."
+}
+
+stage('Remove Old Container') {
+    sh "docker rm -f ${CONTAINER_NAME} || true"
+}
+
+stage('Run Docker Container') {
+    sh """
+        docker run -d \
+            --name ${CONTAINER_NAME} \
+            -p ${HOST_PORT}:${CONTAINER_PORT} \
+            ${IMAGE_NAME}:latest
+    """
+}
+
+stage('Verify Container') {
+    sh "docker ps | grep ${CONTAINER_NAME}"
+}
+
+echo "Application is running at http://<EC2_PUBLIC_IP>:${HOST_PORT}"
+
+
+}
