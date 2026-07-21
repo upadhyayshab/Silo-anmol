@@ -1042,6 +1042,32 @@ class BulkOrderStatusUpdateResponse(BaseModel):
     skipped: List[BulkOrderStatusUpdateResult]
 
 
+class BulkOrderReassignItem(BaseModel):
+    order_number: str = Field(..., description="Order number (e.g. ORD-...)")
+    suggested_outlet: str = Field(..., description="Target outlet name, code, or UID")
+
+
+class BulkOrderReassignRequest(BaseModel):
+    items: List[BulkOrderReassignItem]
+    dry_run: bool = Field(False, description="If True, performs validation and planning without writing to DB")
+    confirm_text: Optional[str] = Field(None, description="Typed guard — e.g. 'reassign'")
+
+
+class BulkOrderReassignResult(BaseModel):
+    order_number: str
+    suggested_outlet: Optional[str] = None
+    reason: str
+
+
+class BulkOrderReassignResponse(BaseModel):
+    total: int
+    reassigned: int
+    already_assigned: int
+    reset_to_pending: int
+    skipped: List[BulkOrderReassignResult]
+
+
+
 # ============================================================================
 # DELIVERY GUY HANDOVER MODELS
 # ============================================================================
@@ -1369,6 +1395,7 @@ __all__ = [
     "DeliveryGuyCreateRequest", "DeliveryGuyUpdateRequest", "DeliveryGuyResponse",
     "BulkOrderDeliveryAssignmentRequest", "BulkAssignmentResult", "BulkAssignmentResponse",
     "BulkOrderStatusUpdateRequest", "BulkOrderStatusUpdateResult", "BulkOrderStatusUpdateResponse",
+    "BulkOrderReassignItem", "BulkOrderReassignRequest", "BulkOrderReassignResult", "BulkOrderReassignResponse",
 
     # Delivery Guy Handovers
     "DeliveryHandoverCreateRequest", "DeliveryHandoverStatusUpdateRequest", 

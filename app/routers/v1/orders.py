@@ -18,7 +18,8 @@ from models import (
     OrderFullUpdateRequest,
     OrderResponse, OrderItemResponse, OrderTransactionResponse,
     ListResponse, StatusResponse, BulkOrderDeliveryAssignmentRequest, BulkAssignmentResponse, BulkAssignmentResult,
-    BulkOrderStatusUpdateRequest, BulkOrderStatusUpdateResult, BulkOrderStatusUpdateResponse
+    BulkOrderStatusUpdateRequest, BulkOrderStatusUpdateResult, BulkOrderStatusUpdateResponse,
+    BulkOrderReassignItem, BulkOrderReassignRequest, BulkOrderReassignResult, BulkOrderReassignResponse
 )
 from utils.auth import require_permission, apply_scope, apply_field_mask, outlet_ids_for_state, AuthContext
 from utils.permissions import Permission, ScopeLevel
@@ -1303,6 +1304,167 @@ async def bulk_update_order_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to bulk update order status: {str(e)}"
         )
+
+
+MAX_BULK_REASSIGN_ROWS = 2000
+
+
+@router.post("/bulk/reassign", response_model=BulkOrderReassignResponse)
+async def bulk_reassign_orders(
+    payload: BulkOrderReassignRequest,
+    ctx: AuthContext = Depends(require_permission(Permission.ORDERS_REVOKE)),
+):
+    """Bulk reassign orders to suggested outlets (matching transfer_orders_to_suggested.py logic).
+
+    Rules:
+      - Deduplicates items (last-wins per order_number).
+      - Terminal orders (DELIVERED, CANCELLED) are skipped.
+      - If order is already assigned to the suggested outlet, counts as already_assigned.
+      - If order is past PENDING, it is reset to PENDING and its rider / delivery date cleared.
+      - If order is PENDING, assigned_outlet_id is updated.
+    """
+    try:
+        if not payload.items:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No items provided")
+        if len(payload.items) > MAX_BULK_REASSIGN_ROWS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Too many items: {len(payload.items)} (max {MAX_BULK_REASSIGN_ROWS})"
+            )
+
+        # Deduplicate items: last occurrence wins (same as script logic)
+        seen = {}
+        for item in payload.items:
+            order_no = (item.order_number or "").strip()
+            target_outlet = (item.suggested_outlet or "").strip()
+            if order_no and target_outlet:
+                seen[order_no.upper()] = (order_no, target_outlet)
+
+        deduped = list(seen.values())
+        if not deduped:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No valid order entries found")
+
+        # Fetch all outlets to build lookup maps (name, code, uid)
+        all_outlets_res = await outlet_manager.fetch_all(limit=1000, offset=0)
+        outlets_list = all_outlets_res.items if hasattr(all_outlets_res, "items") else (all_outlets_res or [])
+
+        outlet_by_key = {}
+        for o in outlets_list:
+            uid = getattr(o, "uid", None) or getattr(o, "id", None)
+            name = (getattr(o, "outlet_name", None) or getattr(o, "name", "") or "").strip().lower()
+            code = (getattr(o, "outlet_code", None) or getattr(o, "code", "") or "").strip().lower()
+            is_active = getattr(o, "is_active", True)
+
+            val = {
+                "uid": uid,
+                "name": getattr(o, "outlet_name", None) or getattr(o, "name", ""),
+                "is_active": is_active,
+            }
+            if uid:
+                outlet_by_key[str(uid).lower()] = val
+            if name:
+                outlet_by_key[name] = val
+            if code:
+                outlet_by_key[code] = val
+
+        # Fetch target orders by order_number
+        order_numbers = [orig_no for orig_no, _ in deduped]
+        found_orders_res = await order_manager.fetch_all(
+            filters={"order_number": order_numbers},
+            limit=len(order_numbers) + 10,
+        )
+        found_orders = found_orders_res.items if hasattr(found_orders_res, "items") else []
+        order_by_number = {
+            o.order_number.upper(): o for o in found_orders if getattr(o, "order_number", None)
+        }
+
+        terminal_statuses = {OrderStatus.DELIVERED, OrderStatus.CANCELLED}
+
+        reassigned = 0
+        already_assigned = 0
+        reset_to_pending = 0
+        skipped = []
+
+        for orig_no, target_outlet_str in deduped:
+            key_no = orig_no.upper()
+            order = order_by_number.get(key_no)
+            if not order:
+                skipped.append(
+                    BulkOrderReassignResult(
+                        order_number=orig_no,
+                        suggested_outlet=target_outlet_str,
+                        reason="order not found",
+                    )
+                )
+                continue
+
+            target_info = outlet_by_key.get(target_outlet_str.strip().lower())
+            if not target_info:
+                skipped.append(
+                    BulkOrderReassignResult(
+                        order_number=orig_no,
+                        suggested_outlet=target_outlet_str,
+                        reason=f"outlet '{target_outlet_str}' not found",
+                    )
+                )
+                continue
+
+            if not target_info["is_active"]:
+                skipped.append(
+                    BulkOrderReassignResult(
+                        order_number=orig_no,
+                        suggested_outlet=target_outlet_str,
+                        reason=f"outlet '{target_info['name']}' is inactive",
+                    )
+                )
+                continue
+
+            target_uid = target_info["uid"]
+            current_status = getattr(order, "order_status", None) or getattr(order, "status", None)
+
+            if current_status in terminal_statuses:
+                status_str = current_status.value if hasattr(current_status, "value") else str(current_status)
+                skipped.append(
+                    BulkOrderReassignResult(
+                        order_number=orig_no,
+                        suggested_outlet=target_outlet_str,
+                        reason=f"order is terminal ({status_str})",
+                    )
+                )
+                continue
+
+            if order.assigned_outlet_id == target_uid:
+                already_assigned += 1
+                continue
+
+            is_past_pending = current_status != OrderStatus.PENDING
+            update_fields = {"assigned_outlet_id": target_uid}
+
+            if is_past_pending:
+                update_fields["order_status"] = OrderStatus.PENDING
+                update_fields["delivery_person_id"] = None
+                update_fields["actual_delivery_date"] = None
+                reset_to_pending += 1
+
+            if not payload.dry_run:
+                await order_manager.update(order.uid, update_fields)
+            reassigned += 1
+
+        return BulkOrderReassignResponse(
+            total=len(deduped),
+            reassigned=reassigned,
+            already_assigned=already_assigned,
+            reset_to_pending=reset_to_pending,
+            skipped=skipped,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to bulk reassign orders: {str(e)}"
+        )
+
 
 # SPECIFIC ROUTES FIRST (to avoid conflicts with generic routes)
 
