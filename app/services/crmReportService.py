@@ -321,6 +321,8 @@ async def prospect_report(
                 "prospect_id": l.lead_number,
                 "lead_name": " ".join(p for p in (l.first_name, l.last_name) if p),
                 "created_at": l.created_at.isoformat() if l.created_at else "",  # UTC ISO; UI formats to IST
+                "last_activity_at": l.last_activity_at.isoformat() if getattr(l, "last_activity_at", None) else "",
+                "latest_call_at": call.created_at.isoformat() if call and call.created_at else "",
                 "owner": owners.get(l.owner_id, ""),
                 "owner_email": owner_emails.get(l.owner_id, ""),
                 "phone": l.mobile or "",   # the lead's own mobile, not the owner's
