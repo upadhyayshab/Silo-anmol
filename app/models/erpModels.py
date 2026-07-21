@@ -1050,7 +1050,10 @@ class BulkOrderReassignItem(BaseModel):
 class BulkOrderReassignRequest(BaseModel):
     items: List[BulkOrderReassignItem]
     dry_run: bool = Field(False, description="If True, performs validation and planning without writing to DB")
-    confirm_text: Optional[str] = Field(None, description="Typed guard — e.g. 'reassign'")
+    # ponytail: no confirm_text guard — the endpoint is gated by the ORDERS_REVOKE
+    # permission and the UI requires typing "reassign" client-side. A server-side
+    # typed guard was dead (never checked, never sent); don't advertise protection
+    # the API doesn't enforce. Add real enforcement here if this goes multi-tenant.
 
 
 class BulkOrderReassignResult(BaseModel):
