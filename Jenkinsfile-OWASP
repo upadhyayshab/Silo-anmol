@@ -1,0 +1,17 @@
+node {
+
+    stage('OWASP ZAP Baseline Scan') {
+        sh '''
+        docker run --rm \
+          -v $(pwd):/zap/wrk/:rw \
+          ghcr.io/zaproxy/zaproxy:stable \
+          zap-baseline.py \
+          -t http://44.192.85.58:8082/ \
+          -r zap-report.html
+        '''
+    }
+
+    stage('Archive ZAP Report') {
+        archiveArtifacts artifacts: 'zap-report.html', fingerprint: true
+    }
+}
