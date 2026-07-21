@@ -147,6 +147,9 @@ class SmartpingJobService:
                     updates["version"] = existing.version + 1
                 updated = await self.registry_manager.update(existing.uid, updates, session=session)
                 await session.commit()
+                # commit expires attributes; reload while still session-bound so the
+                # caller's model_validate doesn't hit a DetachedInstanceError on updated_at
+                await session.refresh(updated)
                 return updated
 
             record = SmartpingCampaignRegistrySchema.model_load(
@@ -154,6 +157,7 @@ class SmartpingJobService:
             )
             created = await self.registry_manager.create(record, session=session)
             await session.commit()
+            await session.refresh(created)
             return created
 
     async def list_campaign_registries(
