@@ -90,6 +90,25 @@ def test_percentages_match_sheet():
     assert nq["AP & Telangana"] == 24.1  # 363 / 1507
 
 
+def test_engaged_pct_is_engaged_over_grand_total_and_red():
+    p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))
+    eng = _row(p, "Engaged %")
+    assert eng["type"] == "warn"  # rendered red like Not Connected / Not Qualified %
+    assert eng["values"]["Karnataka"] == 39.8       # 1047 / 2628
+    assert eng["values"]["Grand Total"] == 30.4      # 1365 / 4497
+
+
+def test_conv_to_connected_pct_divides_by_connected_leads():
+    # Connected = Grand Total - New Lead - Not Reachable. Orders / connected.
+    p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5), order_by_state=_ORDER_BY_STATE)
+    c2c = _row(p, "Conv to Connected %")["values"]
+    # Karnataka connected = 2628 - 5 - 1009 = 1614; 3 orders / 1614 = 0.2%
+    assert c2c["Karnataka"] == 0.2
+    # Punjab connected = 301 - 1 - 162 = 138; 2 / 138 = 1.4%
+    assert c2c["Punjab"] == 1.4
+    assert c2c["Unknown"] == 0.0  # no orders
+
+
 def test_avg_lead_per_day_divides_by_window_days():
     # 1-Jul..5-Jul inclusive = 5 days.
     p = build_state_pivot(_counts(), date(2026, 7, 1), date(2026, 7, 5))

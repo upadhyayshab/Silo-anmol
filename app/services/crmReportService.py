@@ -585,6 +585,12 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
     NEW, NR = LeadStage.NEW_LEAD.value, LeadStage.NOT_REACHABLE.value
     FTU, RTU = LeadStage.FTU.value, LeadStage.RTU.value
     NQ = LeadStage.NOT_QUALIFIED.value
+    ENG = LeadStage.ENGAGED.value
+
+    # "Connected" leads = reached, not fresh and not unreachable — the denominator the
+    # "Lead to Connected %" row already uses. Shared by Conv to Connected % below.
+    def connected(c: str, T: int) -> int:
+        return T - cell(c, NEW) - cell(c, NR)
 
     def metric(label, kind, fn):
         return {"label": label, "type": kind, "values": {c: fn(c, totals[c]) for c in columns}}
@@ -596,15 +602,21 @@ def build_state_pivot(counts: Dict[Tuple[str, str], int],
             return order_by_state.get(col, {}).get(field, 0)
 
     rows.append(metric("Attempted %", "pct", lambda c, T: _pct(T - cell(c, NEW), T)))
-    rows.append(metric("Lead to Connected %", "pct", lambda c, T: _pct(T - cell(c, NEW) - cell(c, NR), T)))
+    rows.append(metric("Lead to Connected %", "pct", lambda c, T: _pct(connected(c, T), T)))
+    # Engaged % = Engaged-stage leads / Grand Total, shown red (warn) per stakeholder ask.
+    rows.append(metric("Engaged %", "warn", lambda c, T: _pct(cell(c, ENG), T)))
     # Lead to Conv% (stakeholder formula 2026-07-17): No. of Orders / Grand Total leads.
     # Orders are window-placed and leads window-created, so >100% is possible when old
     # leads convert — that's inherent to the requested definition. The call pivot passes
     # no order data and keeps the older stage-based (FTU+RTU)/total conversion.
+    # Conv to Connected % divides the same conversions by CONNECTED leads instead of all
+    # leads — of those we actually reached, how many converted (>= Lead to Conv%).
     if has_order_rows:
         rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(ocell(c, "orders"), T)))
+        rows.append(metric("Conv to Connected %", "pct", lambda c, T: _pct(ocell(c, "orders"), connected(c, T))))
     else:
         rows.append(metric("Lead to Conv%", "pct", lambda c, T: _pct(cell(c, FTU) + cell(c, RTU), T)))
+        rows.append(metric("Conv to Connected %", "pct", lambda c, T: _pct(cell(c, FTU) + cell(c, RTU), connected(c, T))))
     rows.append(metric("Not Connected", "warn", lambda c, T: _pct(cell(c, NR), T)))
     rows.append(metric("Not Qualified %", "warn", lambda c, T: _pct(cell(c, NQ), T)))
     rows.append(metric("Avg Lead/Day", "num", lambda c, T: round(T / days)))
