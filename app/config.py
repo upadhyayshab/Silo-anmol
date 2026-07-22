@@ -146,6 +146,9 @@ class Settings(BaseSettings):
                                  or os.getenv("FB_SYSTEM_USER_TOKEN")
                                  or os.getenv("FB_PAGE_ACCESS_TOKEN", ""))
 
+    # AiSensy (WhatsApp) Webhook Configuration
+    aisensy_webhook_secret: str = os.getenv("AISENSY_WEBHOOK_SECRET", "")
+
     # =============================================================================
     # COMPUTED PROPERTIES
     # =============================================================================

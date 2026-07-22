@@ -43,6 +43,7 @@ from .exotel import router as exotel_router
 from .store import router as store_router
 from .pincodes import router as pincodes_router
 from .roles import router as roles_router
+from .whatsapp import router as whatsapp_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -93,6 +94,7 @@ router.include_router(exotel_router)
 router.include_router(store_router)
 router.include_router(pincodes_router)
 router.include_router(roles_router)
+router.include_router(whatsapp_router)
 
 
 
