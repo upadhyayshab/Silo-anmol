@@ -186,6 +186,29 @@ async def state_lane_overview(engine, *, from_date: Optional[date] = None,
         telecallers=telecallers, now=datetime.now(timezone.utc))
 
 
+async def set_state_quota(engine, state: str, quota: int) -> Dict[str, Any]:
+    """Set assignment_quota for every active telecaller in one state lane, in a single
+    UPDATE — the bulk twin of the per-user PATCH the lane card used to loop (50+ agents
+    per lane). `state` matches UserSchema.state (lowercase-canonical, as the lane keys
+    are); the "Other / unmapped" lane (state None) isn't bulk-editable here."""
+    from services.leadService import canon_state
+    st = canon_state(state)
+    if not st:
+        return {"updated": 0, "state": state, "quota": quota}
+    telecaller_role_vals = {_role_value(r) for r in TELECALLER_ROLES}
+    lm = LeadManager(engine)
+    async with lm.session_factory() as session:
+        result = await session.execute(
+            db.update(UserSchema)
+            .where(UserSchema.state == st,
+                   UserSchema.is_active.is_(True),
+                   UserSchema.role.in_(telecaller_role_vals))
+            .values(assignment_quota=quota)
+        )
+        await session.commit()
+    return {"updated": result.rowcount or 0, "state": st, "quota": quota}
+
+
 async def distribute_state_backlog(engine, state: str, by_user_id: str) -> Dict[str, Any]:
     """Hand this state's live unassigned leads to the least-loaded distributor.
     Mirrors sweep_unassigned: fetch the backlog, drop soft-deleted, delegate the
