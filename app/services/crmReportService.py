@@ -354,6 +354,8 @@ async def agent_performance(
     to_date: Optional[date] = None,
     order_from_date: Optional[date] = None,
     order_to_date: Optional[date] = None,
+    call_from_date: Optional[date] = None,
+    call_to_date: Optional[date] = None,
     region: Optional[str] = None,
     regions: Optional[List[str]] = None,
     owner_ids: Optional[List[str]] = None,
@@ -367,7 +369,12 @@ async def agent_performance(
       connected% = (total − New Lead − Not Reachable) / total
       conversion% = (FTU + RTU) / total
     Lead-created date + region(s) + owner + scope filter which leads are counted; an
-    order-date window scopes ONLY the order rollup columns (never drops an owner)."""
+    order-date window scopes ONLY the order rollup columns (never drops an owner).
+
+    REAL call counts (calls_out / calls_in / calls_connected) are grouped by the CALLER
+    (activity.user_id, not the lead owner) over an INDEPENDENT call-date window — "how
+    many calls did this telecaller place/receive in this range". A telecaller who called
+    in that window but owns no in-window leads still gets a row (added to `people`)."""
     conds, order_date_conds = _lead_filter_conds(
         from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date,
@@ -415,8 +422,33 @@ async def agent_performance(
               .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
               .where(*order_conds).group_by(CustomerOrderSchema.telecaller_id)
         )).all()
-        # People to show: lead owners + telecallers who created in-window orders.
-        people = {r[0] for r in stage_rows if r[0]} | {r[0] for r in ord_rows if r[0]}
+        # Per-agent call counts over the independent call-date window, grouped by the
+        # CALLER (user_id). Scoped to the same roster as the order creators above so an
+        # agency admin never sees another agency's telecallers. Folded per (direction,
+        # outcome) in Python below — few rows, avoids a case() expression.
+        call_conds = [LeadActivitySchema.activity_type == LeadActivityType.CALL_LOG]
+        c_gte, c_lte = _day_bounds(call_from_date, call_to_date)
+        if c_gte is not None:
+            call_conds.append(LeadActivitySchema.created_at >= c_gte)
+        if c_lte is not None:
+            call_conds.append(LeadActivitySchema.created_at <= c_lte)
+        if agency_id:
+            call_conds.append(LeadActivitySchema.user_id.in_(
+                db.select(UserSchema.uid).where(UserSchema.agency_id == agency_id)))
+        if scope_owner_id is not None:
+            call_conds.append(LeadActivitySchema.user_id.in_(scope_owner_id)
+                              if isinstance(scope_owner_id, (list, tuple, set))
+                              else LeadActivitySchema.user_id == scope_owner_id)
+        _dir = LeadActivitySchema.details["direction"].as_string()
+        call_rows = (await session.execute(
+            db.select(LeadActivitySchema.user_id, _dir, LeadActivitySchema.outcome, db.func.count())
+              .where(*call_conds)
+              .group_by(LeadActivitySchema.user_id, _dir, LeadActivitySchema.outcome)
+        )).all()
+        # People to show: lead owners + in-window order creators + in-window callers.
+        people = ({r[0] for r in stage_rows if r[0]}
+                  | {r[0] for r in ord_rows if r[0]}
+                  | {r[0] for r in call_rows if r[0]})
         owners: Dict[str, str] = {}
         # owner_id -> agency name (owner_id -> users.agency_id -> agencies.name), one
         # LEFT JOIN alongside the owner-name lookup above — no extra round trip (T2.1).
@@ -433,13 +465,28 @@ async def agent_performance(
 
     ord_map = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0)) for r in ord_rows}
     qty_map = {r[0]: int(r[1] or 0) for r in qty_rows}
+    # caller_uid -> {out, in, connected}. Connected counts either direction.
+    calls_map: Dict[str, Dict[str, int]] = {}
+    for uid, direction, outcome, cnt in call_rows:
+        if not uid:
+            continue
+        cm = calls_map.setdefault(uid, {"out": 0, "in": 0, "connected": 0})
+        cnt = int(cnt or 0)
+        if direction == "outbound":
+            cm["out"] += cnt
+        elif direction == "inbound":
+            cm["in"] += cnt
+        if outcome in _CONNECTED_OUTCOMES:
+            cm["connected"] += cnt
     all_stages = [s.value for s in LeadStage]
     per: Dict[Any, Dict[str, int]] = {}
     for owner_id, stage, cnt in stage_rows:
         sv = stage.value if hasattr(stage, "value") else stage
         per.setdefault(owner_id, {})[sv] = per.setdefault(owner_id, {}).get(sv, 0) + int(cnt)
-    # Telecallers who created orders but own no in-window leads still get a row.
+    # Telecallers who created orders / made calls but own no in-window leads still get a row.
     for tid in ord_map:
+        per.setdefault(tid, {})
+    for tid in calls_map:
         per.setdefault(tid, {})
 
     rows: List[Dict[str, Any]] = []
@@ -449,6 +496,7 @@ async def agent_performance(
         not_reach = counts.get(LeadStage.NOT_REACHABLE.value, 0)
         conv = counts.get(LeadStage.FTU.value, 0) + counts.get(LeadStage.RTU.value, 0)
         oc, gross, net = ord_map.get(owner_id, (0, 0.0, 0.0))
+        cm = calls_map.get(owner_id, {})
         rows.append({
             "owner_id": owner_id,
             "owner": owners.get(owner_id) or ("Unassigned" if not owner_id else owner_id),
@@ -462,6 +510,9 @@ async def agent_performance(
             "order_quantity": qty_map.get(owner_id, 0),
             "gross": round(gross, 2),
             "net": round(net, 2),
+            "calls_out": cm.get("out", 0),
+            "calls_in": cm.get("in", 0),
+            "calls_connected": cm.get("connected", 0),
         })
     rows.sort(key=lambda r: r["conversion_pct"])  # match the sheet (ascending by conv%)
     return rows

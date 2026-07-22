@@ -364,6 +364,8 @@ async def agent_performance_report(
     to_date: Optional[date] = Query(None, description="Lead created on/before (inclusive)"),
     order_from_date: Optional[date] = Query(None, description="Order created on/after — scopes the order columns only"),
     order_to_date: Optional[date] = Query(None, description="Order created on/before — scopes the order columns only"),
+    call_from_date: Optional[date] = Query(None, description="Call logged on/after (IST) — scopes the call columns only"),
+    call_to_date: Optional[date] = Query(None, description="Call logged on/before (IST) — scopes the call columns only"),
     region: Optional[str] = Query(None, description="Lead Inflow Region (lead.state)"),
     regions: Optional[List[str]] = Query(None, description="Regions (repeatable, multi-select); overrides region"),
     owner_ids: Optional[List[str]] = Query(None, description="Scope to these owners (repeatable)"),
@@ -377,6 +379,7 @@ async def agent_performance_report(
     rows = await crmReportService.agent_performance(
         engine, from_date=from_date, to_date=to_date,
         order_from_date=order_from_date, order_to_date=order_to_date,
+        call_from_date=call_from_date, call_to_date=call_to_date,
         region=region, regions=regions, owner_ids=owner_ids, source=source,
         scope_owner_id=await _report_scope_owner(ctx), agency_id=agency_id,
     )
