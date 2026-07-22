@@ -34,13 +34,14 @@ def _verify_secret(request: Request, token: str = None) -> bool:
         
     # Check headers (AiSensy might send specific headers, e.g. authorization or custom signature)
     # Adjust header name based on exact AiSensy configuration
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header == f"Bearer {secret}" or auth_header == secret:
-        return True
-        
-    x_token = request.headers.get("X-AiSensy-Token", "")
-    if x_token == secret:
-        return True
+    if request is not None:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header == f"Bearer {secret}" or auth_header == secret:
+            return True
+            
+        x_token = request.headers.get("X-AiSensy-Token", "")
+        if x_token == secret:
+            return True
         
     return False
 

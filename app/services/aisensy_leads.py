@@ -93,7 +93,7 @@ async def ingest_webhook(engine, payload: Dict[str, Any]) -> None:
             engine=engine,
             payload=lead_request,
             by_user_id="system",
-            source_label="AiSensy Webhook"
+            source_label="WhatsApp"
         )
         
         status_msg = "Created new lead" if created else "Merged into existing lead"

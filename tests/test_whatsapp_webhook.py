@@ -1,27 +1,41 @@
 import pytest
-from httpx import AsyncClient
-from unittest.mock import patch, MagicMock
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from unittest.mock import patch
 
-@pytest.mark.asyncio
-async def test_webhook_verification(client: AsyncClient, mocker):
+# Set up path so app is importable when running this file directly
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+
+import path_setup
+from routers.v1.whatsapp import router
+
+@pytest.fixture
+def client():
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+def test_webhook_verification(client, monkeypatch):
     """Test webhook verification challenge."""
-    # Assume the secret is correctly checked
-    mocker.patch("config.Settings.aisensy_webhook_secret", new="testsecret")
+    from routers.v1.whatsapp import settings
+    monkeypatch.setattr(settings, "aisensy_webhook_secret", "testsecret")
     
     # Missing/invalid token -> 403
-    resp = await client.get("/api/v1/webhooks/whatsapp?token=invalid")
+    resp = client.get("/webhooks/whatsapp?token=invalid")
     assert resp.status_code == 403
     
     # Valid token -> 200 Verified
-    resp = await client.get("/api/v1/webhooks/whatsapp?token=testsecret")
+    resp = client.get("/webhooks/whatsapp?token=testsecret")
     assert resp.status_code == 200
     assert resp.text == "Verified"
 
-@pytest.mark.asyncio
 @patch("services.aisensy_leads.ingest_webhook")
-async def test_webhook_post_dispatch(mock_ingest, client: AsyncClient, mocker):
+def test_webhook_post_dispatch(mock_ingest, client, monkeypatch):
     """Test webhook post payload dispatch to background task."""
-    mocker.patch("config.Settings.aisensy_webhook_secret", new="testsecret")
+    from routers.v1.whatsapp import settings
+    monkeypatch.setattr(settings, "aisensy_webhook_secret", "testsecret")
     
     payload = {
         "topic": "message.created",
@@ -32,11 +46,6 @@ async def test_webhook_post_dispatch(mock_ingest, client: AsyncClient, mocker):
     }
     
     # Valid
-    resp = await client.post("/api/v1/webhooks/whatsapp?token=testsecret", json=payload)
+    resp = client.post("/webhooks/whatsapp?token=testsecret", json=payload)
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
-    
-    # Verify ingest_webhook was called (since it's a background task, the mock might be 
-    # called immediately or after the test depends on TestClient logic, usually immediately in FastAPI TestClient)
-    # The actual background task execution in standard AsyncClient can be tricky to assert,
-    # but the API response indicates success.
