@@ -61,13 +61,15 @@ async def receive(
     token: str = Query(None)
 ):
     """Receive and process incoming AiSensy webhook payload."""
-    if not _verify_secret(request, token):
-        raise HTTPException(status_code=403, detail="Invalid or missing webhook secret")
-        
     try:
         payload = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+    print(payload)
+
+    if not _verify_secret(request, token):
+        raise HTTPException(status_code=403, detail="Invalid or missing webhook secret")
         
     # Dispatch processing to a background task so we return 200 OK immediately
     background_tasks.add_task(aisensy_leads.ingest_webhook, engine, payload)
