@@ -408,7 +408,10 @@ async def agent_performance(
             db.select(CustomerOrderSchema.telecaller_id,
                       db.func.count(CustomerOrderSchema.uid),
                       db.func.coalesce(db.func.sum(CustomerOrderSchema.gross_amount), 0),
-                      db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0))
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0),
+                      # Booked = gross - discount, the Daily Revenue tab's formula.
+                      db.func.coalesce(db.func.sum(
+                          CustomerOrderSchema.gross_amount - CustomerOrderSchema.discount_applied), 0))
               .select_from(LeadSchema)
               .join(CustomerOrderSchema, CustomerOrderSchema.lead_id == LeadSchema.uid)
               .where(*order_conds).group_by(CustomerOrderSchema.telecaller_id)
@@ -463,7 +466,7 @@ async def agent_performance(
                 owners[uid] = name or email or uid
                 agency_names[uid] = agency_name
 
-    ord_map = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0)) for r in ord_rows}
+    ord_map = {r[0]: (int(r[1] or 0), float(r[2] or 0), float(r[3] or 0), float(r[4] or 0)) for r in ord_rows}
     qty_map = {r[0]: int(r[1] or 0) for r in qty_rows}
     # caller_uid -> {out, in, connected}. Connected counts either direction.
     calls_map: Dict[str, Dict[str, int]] = {}
@@ -495,7 +498,7 @@ async def agent_performance(
         new_lead = counts.get(LeadStage.NEW_LEAD.value, 0)
         not_reach = counts.get(LeadStage.NOT_REACHABLE.value, 0)
         conv = counts.get(LeadStage.FTU.value, 0) + counts.get(LeadStage.RTU.value, 0)
-        oc, gross, net = ord_map.get(owner_id, (0, 0.0, 0.0))
+        oc, gross, net, booked = ord_map.get(owner_id, (0, 0.0, 0.0, 0.0))
         cm = calls_map.get(owner_id, {})
         rows.append({
             "owner_id": owner_id,
@@ -510,6 +513,7 @@ async def agent_performance(
             "order_quantity": qty_map.get(owner_id, 0),
             "gross": round(gross, 2),
             "net": round(net, 2),
+            "booked_revenue": round(booked, 2),
             "calls_out": cm.get("out", 0),
             "calls_in": cm.get("in", 0),
             "calls_connected": cm.get("connected", 0),
