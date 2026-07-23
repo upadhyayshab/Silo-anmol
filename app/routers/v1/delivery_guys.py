@@ -300,6 +300,14 @@ async def update_delivery_status(
                 order = orders.items[0]
 
             order_uid = order.uid
+            
+            # Check custody: Riders can only update orders currently in their custody
+            events = await order_events_service.load_events(order_uid)
+            state = order_events_service.fold_order_state(events)
+            if state.custody != "RIDER":
+                results.append({"order_id": item.order_id, "status": "failed", "message": f"Order is not in Rider custody (currently {state.custody})."})
+                continue
+                
             updates = {}
             did_auto_reconcile = False
             if item.delivery_person_id:
