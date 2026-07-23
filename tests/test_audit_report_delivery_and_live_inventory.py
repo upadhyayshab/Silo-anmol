@@ -226,6 +226,29 @@ class TestAuditReportDeliveryAndLiveInventory(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.items[0].delivery_count, 0)
         self.assertIsNotNone(result.live_at)
 
+    async def test_submit_audit_refreshes_system_quantity_from_live_inventory(self):
+        from models.erpModels import WeeklyInventoryAuditSubmitItem
+        # Create PENDING audit with old system_quantity=100
+        await self.audit_mgr.create(InventoryAuditSchema(
+            uid="audit-sub", outlet_id="o1", week_start=WEEK_START,
+            audit_date=WEEK_START, status=AuditStatus.PENDING,
+        ))
+        await self.item_mgr.create(InventoryAuditItemSchema(
+            uid="item-sub-p1", audit_id="audit-sub", product_id="p1",
+            system_quantity=100, physical_quantity=None,
+        ))
+        # Live inventory for o1, p1 in fixture setup is 37
+        payload = IA.WeeklyInventoryAuditSubmitRequest(
+            items=[WeeklyInventoryAuditSubmitItem(product_id="p1", physical_quantity=37)]
+        )
+        ctx = IA.AuthContext(user_id="u1", scope_level="GLOBAL", is_microservice=False, perms={"inventory:write"})
+        res = await IA.submit_audit("audit-sub", payload, ctx)
+        self.assertEqual(res.match_percentage, 100)
+
+        db_item = await self.item_mgr.fetch("item-sub-p1")
+        self.assertEqual(db_item.system_quantity, 37)
+        self.assertEqual(db_item.physical_quantity, 37)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -488,11 +488,23 @@ async def submit_audit(
             if any(si.physical_quantity < 0 for si in payload.items):
                 raise HTTPException(status_code=400, detail="Physical quantity cannot be negative.")
 
+            # Refresh system_quantity to the live Available Qty at submission time
+            inventory_result = await session.execute(
+                select(InventorySchema).where(InventorySchema.outlet_id == audit.outlet_id)
+            )
+            live_inventory_map = {
+                inv.product_id: inv.quantity for inv in inventory_result.scalars().all()
+            }
+
             matched_items = 0
             for submitted_item in payload.items:
                 if submitted_item.product_id in items_map:
                     db_item = items_map[submitted_item.product_id]
                     db_item.physical_quantity = submitted_item.physical_quantity
+
+                    # Update system_quantity to live Available Qty at submission time
+                    live_qty = live_inventory_map.get(submitted_item.product_id)
+                    db_item.system_quantity = 0 if live_qty is None else live_qty
 
                     if db_item.physical_quantity == db_item.system_quantity:
                         matched_items += 1

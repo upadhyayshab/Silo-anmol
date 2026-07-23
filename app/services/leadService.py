@@ -384,12 +384,22 @@ async def create_lead(engine, payload, by_user_id: str,
                           body=f"Lead {lead.lead_number} created")
 
     if owner_id:
+        tc_name = await _resolve_user_name(engine, owner_id, {}) or owner_id
+        assigner_name = await _resolve_user_name(engine, creator, {}) if creator else "System"
+        body_text = f"Assigned to {tc_name} by {assigner_name} ({reason})"
+
         await assignmentService.record_assignment(
             engine, lead.uid, owner_id, reason=reason, assigned_by=(creator or "system"),
         )
         await record_activity(engine, lead.uid, LeadActivityType.ASSIGNMENT,
-                              user_id=creator, body=f"Assigned to telecaller ({reason})",
-                              details={"telecaller_id": owner_id, "reason": reason})
+                              user_id=creator, body=body_text,
+                              details={
+                                  "telecaller_id": owner_id,
+                                  "telecaller_name": tc_name,
+                                  "assigned_by_id": creator or "system",
+                                  "assigned_by_name": assigner_name,
+                                  "reason": reason
+                              })
 
     final = await lead_manager.fetch(lead.uid)
     _fire_capi(final, LeadStage.NEW_LEAD)
@@ -822,14 +832,26 @@ async def reassign(engine, lead: LeadSchema, telecaller_id: str, by_user_id: str
                    reason: str = AssignmentReason.MANUAL.value) -> LeadSchema:
     """Change a lead's owner. Used by the assign endpoint (manual) and distribute (round_robin)."""
     lead_manager = LeadManager(engine)
+    tc_name = await _resolve_user_name(engine, telecaller_id, {}) or telecaller_id
+    assigner_id = _real_user(by_user_id)
+    assigner_name = await _resolve_user_name(engine, assigner_id, {}) if assigner_id else "System"
+
+    body_text = f"Assigned to {tc_name} by {assigner_name} ({reason})"
+
     await assignmentService.record_assignment(
         engine, lead.uid, telecaller_id,
-        reason=reason, assigned_by=(_real_user(by_user_id) or "system"),
+        reason=reason, assigned_by=(assigner_id or "system"),
     )
     updated = await lead_manager.update(lead.uid, {"owner_id": telecaller_id})
-    await record_activity(engine, lead.uid, LeadActivityType.ASSIGNMENT, user_id=by_user_id,
-                          body=f"Reassigned ({reason})",
-                          details={"telecaller_id": telecaller_id, "reason": reason})
+    await record_activity(engine, lead.uid, LeadActivityType.ASSIGNMENT, user_id=assigner_id,
+                          body=body_text,
+                          details={
+                              "telecaller_id": telecaller_id,
+                              "telecaller_name": tc_name,
+                              "assigned_by_id": assigner_id or "system",
+                              "assigned_by_name": assigner_name,
+                              "reason": reason
+                          })
     return updated
 
 
