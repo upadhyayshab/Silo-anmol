@@ -47,11 +47,13 @@ def _order(uid, created_at, *, outlet_id=None, telecaller_id=None, order_number=
         created_at=created_at,
         order_number=order_number or f"ORD-{uid}",
         order_date=created_at,
+        expected_delivery_date=None,
         actual_delivery_date=None,
         updated_at=None,
         order_status="DELIVERED",
         status_remarks="",
         pincode="560001",
+        collection_type="doorstep",
         house_no="12", street="MG Road", address_line="Near park", village="",
         post="", hobli="", taluk="", district="Bengaluru", state="Karnataka",
         customer_name="Jane Doe", customer_phone="9800000000",
@@ -151,13 +153,13 @@ def test_header_row_matches_frontend_export_columns_exactly():
     import services.orderExportService as OES
 
     expected_labels = [
-        "Order Number", "Order Date", "Delivery Date", "Updated Date", "Status",
-        "Remarks", "Status Updated By", "Status Updated By ID", "Status Source",
-        "Order pincode", "Outlet", "Outlet Code", "outlet pincode", "Outlet Status",
-        "Cluster", "Order Source", "Customer Name", "Customer Phone", "Full Address",
-        "Items", "Quantities", "Total Quantity", "Attempt Count", "Created By",
-        "Created By Role", "Collection Type", "Gross Amount", "Discount",
-        "Net Amount", "Commission",
+        "Order Number", "Order UID", "Order Date", "Expected Delivery", "Delivery Date",
+        "Updated Date", "Status", "Remarks", "Status Updated By", "Status Updated By ID",
+        "Status Source", "Order Pincode", "Outlet", "Outlet Code", "Outlet Pincode",
+        "Outlet Status", "Cluster", "Source", "Order Type", "Customer Name",
+        "Customer Phone", "Full Address", "Items", "Quantities", "Total Quantity",
+        "Attempt Count", "Created By", "Role", "Collection Type", "Gross Amount",
+        "Discount", "Net Amount", "Commission",
     ]
     assert [h for h, _ in OES.EXPORT_COLUMNS] == expected_labels
 
