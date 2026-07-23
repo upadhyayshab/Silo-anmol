@@ -1295,29 +1295,35 @@ async def outbound_call_counts(engine, lead_ids: List[str]) -> Dict[str, int]:
 
 
 async def order_rollups(engine, lead_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Per-lead lifetime order rollup -> {qty, gross, net}, computed fresh from orders
-    (net = sum(total_amount), same as the prospect report — not the lead's incremental
-    order_value). Two batched grouped queries; keep in sync with crmReportService."""
+    """Per-lead lifetime order rollup -> {qty, gross, net, booked}, computed fresh from orders
+    (booked = sum(gross_amount - discount_applied), same as the prospect report).
+    Two batched grouped queries; keep in sync with crmReportService."""
     if not lead_ids:
         return {}
     from managers import CustomerOrderSchema, OrderItemSchema
     out: Dict[str, Dict[str, Any]] = {}
     async with LeadManager(engine).session_factory() as session:
-        for lead_id, gross, net in (await session.execute(
+        for lead_id, gross, net, booked in (await session.execute(
             db.select(CustomerOrderSchema.lead_id,
                       db.func.coalesce(db.func.sum(CustomerOrderSchema.gross_amount), 0),
-                      db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0))
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.total_amount), 0),
+                      db.func.coalesce(db.func.sum(CustomerOrderSchema.gross_amount - CustomerOrderSchema.discount_applied), 0))
               .where(CustomerOrderSchema.lead_id.in_(lead_ids))
               .group_by(CustomerOrderSchema.lead_id)
         )).all():
-            out[lead_id] = {"qty": 0, "gross": round(float(gross or 0), 2), "net": round(float(net or 0), 2)}
+            out[lead_id] = {
+                "qty": 0,
+                "gross": round(float(gross or 0), 2),
+                "net": round(float(net or 0), 2),
+                "booked": round(float(booked or 0), 2),
+            }
         for lead_id, total_qty in (await session.execute(
             db.select(CustomerOrderSchema.lead_id, db.func.sum(OrderItemSchema.quantity))
               .join(OrderItemSchema, OrderItemSchema.order_id == CustomerOrderSchema.uid)
               .where(CustomerOrderSchema.lead_id.in_(lead_ids))
               .group_by(CustomerOrderSchema.lead_id)
         )).all():
-            out.setdefault(lead_id, {"qty": 0, "gross": 0.0, "net": 0.0})["qty"] = int(total_qty or 0)
+            out.setdefault(lead_id, {"qty": 0, "gross": 0.0, "net": 0.0, "booked": 0.0})["qty"] = int(total_qty or 0)
     return out
 
 

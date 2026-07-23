@@ -176,6 +176,7 @@ async def _leads_to_responses(items):
             resp.order_quantity = r["qty"]
             resp.order_gross = r["gross"]
             resp.order_net = r["net"]
+            resp.order_booked_revenue = r.get("booked", 0.0)
         resp.agency_name = agency_names.get(resp.owner_id) if resp.owner_id else None
     return responses
 

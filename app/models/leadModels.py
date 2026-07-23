@@ -220,6 +220,7 @@ class LeadResponse(BaseModel):
     order_quantity: int = 0
     order_gross: float = 0.0
     order_net: float = 0.0
+    order_booked_revenue: float = 0.0
     do_not_call: bool = False
     do_not_sms: bool = False
     do_not_email: bool = False
