@@ -490,7 +490,9 @@ async def submit_audit(
 
             # Refresh system_quantity to the live Available Qty at submission time
             inventory_result = await session.execute(
-                select(InventorySchema).where(InventorySchema.outlet_id == audit.outlet_id)
+                select(InventorySchema)
+                .where(InventorySchema.outlet_id == audit.outlet_id)
+                .where(InventorySchema.product_id.in_(submitted_ids))
             )
             live_inventory_map = {
                 inv.product_id: inv.quantity for inv in inventory_result.scalars().all()
