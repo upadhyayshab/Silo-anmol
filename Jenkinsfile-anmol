@@ -51,15 +51,18 @@ stage('Build Docker Image') {
     sh "docker build -t ${IMAGE_NAME}:latest ."
 }
 stage('Trivy Security Scan') {
-    sh """
-        trivy image \
-          --scanners vuln \
-          --severity HIGH,CRITICAL \
-          --format table \
-          --output trivy-report.txt \
-          --exit-code 0 \
-          ${IMAGE_NAME}:latest
-    """
+    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+        sh """
+            set -o pipefail
+
+            trivy image \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --format table \
+              --exit-code 1 \
+              ${IMAGE_NAME}:latest | tee trivy-report.txt
+        """
+    }
 
     archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
 }
