@@ -52,7 +52,7 @@ stage('Build Docker Image') {
 }
 stage('Trivy Security Scan') {
     catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-        sh '''
+        sh """
             set -o pipefail
 
             trivy image \
@@ -60,8 +60,8 @@ stage('Trivy Security Scan') {
               --severity HIGH,CRITICAL \
               --format table \
               --exit-code 1 \
-              fastapi-app:latest | tee trivy-report.txt
-        '''
+              ${IMAGE_NAME}:latest | tee trivy-report.txt
+        """
     }
 
     archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
