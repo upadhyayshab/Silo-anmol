@@ -1,0 +1,83 @@
+node {
+
+    def IMAGE_NAME = "fastapi-app"
+    def CONTAINER_NAME = "fastapi-container"
+    def HOST_PORT = "8082"
+    def CONTAINER_PORT = "8000"
+
+    stage('Checkout') {
+        checkout scm
+    }
+
+    stage('Update Git Submodule URLs') {
+        sh '''#!/bin/bash
+set -e
+
+if [ ! -f .gitmodules ]; then
+    echo "No .gitmodules file found. Exiting."
+    exit 1
+fi
+
+echo "Before update:"
+cat .gitmodules
+
+# Convert HTTPS GitHub URLs to SSH
+sed -i 's|https://github.com/|git@github.com:|g' .gitmodules
+
+echo "After update:"
+cat .gitmodules
+
+# Sync and initialize submodules
+git submodule sync
+git submodule update --init --recursive
+
+echo "Submodule URLs converted to SSH successfully!"
+'''
+    }
+
+    stage('SonarQube Analysis') {
+        withSonarQubeEnv('sonarqube') {
+            sh '''
+                sonar-scanner \
+                  -Dsonar.projectKey=fastapi-app \
+                  -Dsonar.projectName=fastapi-app-backend \
+                  -Dsonar.sources=.
+            '''
+        }
+    }
+
+    stage('Build Docker Image') {
+        sh "docker build -t ${IMAGE_NAME}:latest ."
+    }
+
+    stage('Trivy Security Scan') {
+        sh """
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --format table \
+              --output trivy-report.txt \
+              --exit-code 1 \
+              ${IMAGE_NAME}:latest
+        """
+
+        archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
+    }
+
+    stage('Remove Old Container') {
+        sh "docker rm -f ${CONTAINER_NAME} || true"
+    }
+
+    stage('Run Docker Container') {
+        sh """
+            docker run -d --name ${CONTAINER_NAME} \
+              -p ${HOST_PORT}:${CONTAINER_PORT} \
+              ${IMAGE_NAME}:latest
+        """
+    }
+
+    stage('Verify Container') {
+        sh "docker ps | grep ${CONTAINER_NAME}"
+    }
+
+    echo "Application is running at http://<EC2_PUBLIC_IP>:${HOST_PORT}"
+}
