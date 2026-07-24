@@ -49,27 +49,21 @@ echo "Submodule URLs converted to SSH successfully!"
         sh "docker build -t ${IMAGE_NAME}:latest ."
     }
 
-    stage('Trivy Security Scan') {
-        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-            sh """
-                set -o pipefail
+stage('Trivy Security Scan') {
+    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+        sh """
+            set -o pipefail
 
-                trivy image \
-                  --scanners vuln \
-                  --severity HIGH,CRITICAL \
-                  --format table \
-                  --exit-code 1 \
-                  ${IMAGE_NAME}:latest | tee trivy-report.txt
-
-                echo ""
-                echo "================== TRIVY REPORT =================="
-                cat trivy-report.txt
-                echo "=================================================="
-            """
-        }
-
-        archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
+            trivy image \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              ${IMAGE_NAME}:latest | tee trivy-report.txt
+        """
     }
+
+    archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
+}
 
     stage('Remove Old Container') {
         sh "docker rm -f ${CONTAINER_NAME} || true"
