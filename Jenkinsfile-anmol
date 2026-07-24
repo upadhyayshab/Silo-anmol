@@ -39,7 +39,7 @@ echo "Submodule URLs converted to SSH successfully!"
             sh '''
                 sonar-scanner \
                   -Dsonar.projectKey=fastapi-app \
-                  -Dsonar.projectName=fastapi-app \
+                  -Dsonar.projectName=fastapi-app-backend \
                   -Dsonar.sources=.
             '''
         }
