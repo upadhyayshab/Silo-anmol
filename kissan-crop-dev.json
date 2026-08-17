@@ -1,0 +1,126 @@
+{
+    "family": "kissan-crop-dev",
+    "containerDefinitions": [
+        {
+            "name": "kissan-crop",
+            "image": "<ECR_REPOSITORY>:<IMAGE_TAG>",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp",
+                    "name": "kissan-crop-dev-8000-tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "secrets": [
+                {
+                    "name": "SERVICE_NAME",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/SERVICE_NAME"
+                },
+                {
+                    "name": "DB_NAME",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_NAME"
+                },
+                {
+                    "name": "DB_PORT",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_PORT"
+                },
+                {
+                    "name": "DB_HOST",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_HOST"
+                },
+                {
+                    "name": "DB_PASSWORD",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_PASSWORD"
+                },
+                {
+                    "name": "DB_USER",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_USER"
+                },
+                {
+                    "name": "DB_DIALECT",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_DIALECT"
+                },
+                {
+                    "name": "DB_DRIVER",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_DRIVER"
+                },
+                {
+                    "name": "DB_SUPPORTS_SCHEMA",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/DB_SUPPORTS_SCHEMA"
+                },
+                {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/JWT_SECRET"
+                },
+                {
+                    "name": "SUBSCRIPTION_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/SUBSCRIPTION_BASE_URL"
+                },
+                {
+                    "name": "ORCHESTRATOR_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/ORCHESTRATOR_API_KEY"
+                },
+                {
+                    "name": "ORCHESTRATOR_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/ORCHESTRATOR_BASE_URL"
+                },
+                {
+                    "name": "AWS_DEFAULT_REGION",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/AWS_DEFAULT_REGION"
+                },
+                {
+                    "name": "AWS_REGION",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/AWS_REGION"
+                },
+                {
+                    "name": "S3_BUCKET_PRIVATE",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/S3_BUCKET_PRIVATE"
+                },
+                {
+                    "name": "S3_BUCKET_PUBLIC",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/S3_BUCKET_PUBLIC"
+                },
+                {
+                    "name": "GOOGLE_MAPS_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/GOOGLE_MAPS_API_KEY"
+                },
+                {
+                    "name": "GOOGLE_MAPS_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/GOOGLE_MAPS_BASE_URL"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/kissan-crop-dev",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "ap-south-1",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            },
+            "systemControls": []
+        }
+    ],
+    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-kissan-crop-dev",
+    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-kissan-crop-dev",
+    "networkMode": "awsvpc",
+    "volumes": [],
+    "placementConstraints": [],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "<CPU>",
+    "memory": "<MEMORY>",
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    }
+}
