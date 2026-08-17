@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 from functools import lru_cache
+from typing import Optional
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from pydantic.v1 import BaseSettings
@@ -23,11 +25,15 @@ class Settings(BaseSettings):
     debug: bool = bool(int(os.getenv("DEBUG", "1")))
     allowed_origins: tuple[str] = tuple(os.getenv("CORS_ORIGINS", "*").split(","))
 
-    engine_url = f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+    _pw = quote_plus(os.getenv("DB_PASSWORD", ""))  # encode @ $ # etc.
+    engine_url = f"{os.getenv('DB_USER')}:{_pw}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
     engine_str: str = f"{os.getenv('DB_DIALECT')}+{os.getenv('DB_DRIVER')}://{engine_url}" \
         if os.getenv("DB_HOST") else "sqlite+aiosqlite:///:memory:"
     supports_schema = bool(int(os.getenv("DB_SUPPORTS_SCHEMA", "0")))
     master_api_key: str = os.getenv("MASTER_API_KEY", "12345678-unsafe-master-key")
+    google_maps_api_key: Optional[str] = os.getenv("GOOGLE_MAPS_API_KEY")
+    jwt_secret: str = os.getenv("JWT_SECRET", "")
+    subscription_base_url: str = os.getenv("SUBSCRIPTION_BASE_URL", "")
 
     class subservices:  # noqa
         pass
@@ -41,11 +47,18 @@ def get_settings():
 @lru_cache()
 def get_engine(schema: str):
     settings = get_settings()
+    engine_kwargs = {
+        "pool_pre_ping": True,
+        "pool_size": 20,
+        "max_overflow": 10,
+    } if not settings.engine_str.startswith("sqlite") else {}
+
     if settings.supports_schema:
         engine = create_async_engine(
             settings.engine_str,
-            execution_options={"schema_translate_map": {None: schema}}
+            execution_options={"schema_translate_map": {None: schema}},
+            **engine_kwargs
         )
     else:
-        engine = create_async_engine(settings.engine_str)
+        engine = create_async_engine(settings.engine_str, **engine_kwargs)
     return engine

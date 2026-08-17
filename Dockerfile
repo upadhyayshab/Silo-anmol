@@ -18,6 +18,14 @@ RUN rm requirements.txt
 
 FROM python:3.12-slim AS runtime
 
+# Runtime system libraries required by native extensions:
+#   libexpat1  → rasterio._base (libexpat.so.1)
+#   libpq5     → psycopg2 (libpq.so.5)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libexpat1 \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /src
 
 COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages

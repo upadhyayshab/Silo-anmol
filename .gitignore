@@ -244,3 +244,11 @@ fabric.properties
 # === custom ===
 
 # --- custom ---
+reference_docs/*
+
+prototype_app.py
+scripts/*
+tests/*
+app_streamlit.py
+*.pdf
+*.jpeg
