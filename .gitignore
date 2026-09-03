@@ -1,0 +1,9 @@
+# Google OAuth Credentials
+client_secret.json
+maps_client_secrets.json
+token.pickle
+playstore_key.json
+business_token.pickle
+
+# Environment Variables (if you haven't added this already!)
+.env
