@@ -7,3 +7,15 @@ business_token.pickle
 
 # Environment Variables (if you haven't added this already!)
 .env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Claude Code local session/config data - not part of the app
+.claude/
+
+# OS cruft
+.DS_Store
+Thumbs.db
