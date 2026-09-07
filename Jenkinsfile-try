@@ -42,9 +42,9 @@ node {
     stage('Docker Run') {
         sh '''
             docker run -d \
-              --name orm-frontend \
+              --name orm-backend \
               -p 8082:80 \
-              orm-frontend:dev
+              orm-backend:dev
         '''
     }
 
