@@ -28,14 +28,14 @@ node {
     stage('Docker Build') {
         sh '''
             docker build \
-              -t orm-frontend:dev \
+              -t orm-backend:dev \
               .
         '''
     }
 
     stage('Stop Existing Container') {
         sh '''
-            docker rm -f orm-frontend 2>/dev/null || true
+            docker rm -f orm-backend 2>/dev/null || true
         '''
     }
 
@@ -50,7 +50,7 @@ node {
 
     stage('Verify Container') {
         sh '''
-            docker ps --filter "name=orm-frontend"
+            docker ps --filter "name=orm-backend"
         '''
     }
 }
