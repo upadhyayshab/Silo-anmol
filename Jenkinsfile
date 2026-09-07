@@ -1,0 +1,27 @@
+node {
+
+    stage('Checkout Code') {
+        checkout scm
+    }
+
+    stage('SonarQube Analysis') {
+        withSonarQubeEnv('sonarqube') {
+            sh '''
+                sonar-scanner \
+                  -Dsonar.projectKey=ORM-front \
+                  -Dsonar.sources=.
+            '''
+        }
+    }
+
+    stage('Trivy Scan') {
+        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+            sh '''
+                trivy fs \
+                  --severity HIGH,CRITICAL \
+                  --format table \
+                  .
+            '''
+        }
+    }
+}
