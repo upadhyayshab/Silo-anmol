@@ -24,4 +24,33 @@ node {
             '''
         }
     }
+
+    stage('Docker Build') {
+        sh '''
+            docker build \
+              -t orm-frontend:dev \
+              .
+        '''
+    }
+
+    stage('Stop Existing Container') {
+        sh '''
+            docker rm -f orm-frontend 2>/dev/null || true
+        '''
+    }
+
+    stage('Docker Run') {
+        sh '''
+            docker run -d \
+              --name orm-frontend \
+              -p 8081:80 \
+              orm-frontend:dev
+        '''
+    }
+
+    stage('Verify Container') {
+        sh '''
+            docker ps --filter "name=orm-frontend"
+        '''
+    }
 }
