@@ -39,14 +39,14 @@ node {
         '''
     }
 
-    stage('Docker Run') {
-        sh '''
-            docker run -d \
-              --name orm-backend \
-              -p 8082:80 \
-              orm-backend:dev
-        '''
-    }
+   stage('Docker Run') {
+    sh '''
+        docker run -d \
+          --name orm-backend \
+          -p 8082:8081 \
+          orm-backend:dev
+    '''
+}
 
     stage('Verify Container') {
         sh '''
