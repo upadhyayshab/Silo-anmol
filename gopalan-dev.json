@@ -4,13 +4,13 @@
   "requiresCompatibilities": [
     "FARGATE"
   ],
-  "cpu": "256",
-  "memory": "512",
+  "cpu": "<CPU>",
+  "memory": "<MEMORY>",
   "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-gopalan-dev",
   "containerDefinitions": [
     {
       "name": "gopalan",
-      "image": "400115659362.dkr.ecr.ap-south-1.amazonaws.com/gopalan-dev:latest",
+      "image": "<ECR_REPOSITORY>:<IMAGE_TAG>",
       "cpu": 0,
       "essential": true,
       "portMappings": [
@@ -62,6 +62,22 @@
         {
           "name": "SERVICE_NAME",
           "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-gopalan-dev/SERVICE_NAME"
+        },
+        {
+          "name": "AWS_ACCESS_KEY_ID",
+          "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-gopalan-dev/AWS_ACCESS_KEY_ID"
+        },
+        {
+          "name": "AWS_SECRET_ACCESS_KEY",
+          "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-gopalan-dev/AWS_SECRET_ACCESS_KEY"
+        },
+        {
+          "name": "AWS_REGION",
+          "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-gopalan-dev/AWS_REGION"
+        },
+        {
+          "name": "S3_BUCKET_PUBLIC",
+          "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-gopalan-dev/S3_BUCKET_PUBLIC"
         }
       ],
       "logConfiguration": {
