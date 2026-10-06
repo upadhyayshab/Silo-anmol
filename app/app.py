@@ -1,30 +1,28 @@
-from contextlib import asynccontextmanager
-
-import sqlalchemy as db
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager
+from SharedBackend.managers import ApiKeyManager, EntityManager
 from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
 from config import get_settings, get_engine
 from routers import admin_router, v1_router
+from routers.manure import router as manure_router
+from routers.disease import router as disease_router
+from routers.manureReport import router as manure_report_router
+from routers.diseaseReport import router as disease_report_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    async with engine.begin() as conn:
-        if settings.supports_schema:
-            await conn.execute(db.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.name}"'))
-        await conn.run_sync(BaseSchema.metadata.create_all)
-    yield
-
-
-app = FastAPI(lifespan=lifespan)
+# Tables are created by alembic migrations only (see migrations/), never at
+# startup, so the schema can't drift from alembic_version.
+app = FastAPI()
 app.include_router(admin_router, prefix="/admin")
 app.include_router(v1_router, prefix="/api/v1")
+app.include_router(manure_router)
+app.include_router(disease_router)
+app.include_router(manure_report_router)
+app.include_router(disease_report_router)
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore

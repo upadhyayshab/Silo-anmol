@@ -28,6 +28,7 @@ class Settings(BaseSettings):
         if os.getenv("DB_HOST") else "sqlite+aiosqlite:///:memory:"
     supports_schema = bool(int(os.getenv("DB_SUPPORTS_SCHEMA", "0")))
     master_api_key: str = os.getenv("MASTER_API_KEY", "12345678-unsafe-master-key")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     class subservices:  # noqa
         pass

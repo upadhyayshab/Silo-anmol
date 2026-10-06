@@ -1,0 +1,3491 @@
+{
+ "variants": {
+  "two_pro31_low": [
+   "gemini-3.1-pro-preview",
+   "ThinkingLevel.LOW",
+   "ThinkingLevel.LOW"
+  ],
+  "two_flash38_default": [
+   "gemini-3.8-flash",
+   "None",
+   "None"
+  ],
+  "two_flash38_low": [
+   "gemini-3.8-flash",
+   "ThinkingLevel.LOW",
+   "ThinkingLevel.LOW"
+  ]
+ },
+ "flat_model": "gemini-3.1-pro-preview",
+ "runs_per_image": 3,
+ "results": [
+  {
+   "image": "circular-shaped-cow-dung-small-260nw-2642702011.webp",
+   "bytes": 64210,
+   "runs": {
+    "flat": [
+     {
+      "score": 3,
+      "sub_code": "3-G-O",
+      "fresh": null,
+      "wall_s": 8.66050739993807,
+      "calls": [
+       {
+        "latency_s": 8.66023070004303,
+        "input_tokens": 7673,
+        "output_tokens": 79,
+        "thinking_tokens": 603,
+        "total_tokens": 8355,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-G-O",
+      "fresh": null,
+      "wall_s": 7.570380500052124,
+      "calls": [
+       {
+        "latency_s": 7.570238000014797,
+        "input_tokens": 7673,
+        "output_tokens": 74,
+        "thinking_tokens": 599,
+        "total_tokens": 8346,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-G-O",
+      "fresh": null,
+      "wall_s": 8.58909909997601,
+      "calls": [
+       {
+        "latency_s": 8.589002100052312,
+        "input_tokens": 7673,
+        "output_tokens": 85,
+        "thinking_tokens": 679,
+        "total_tokens": 8437,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 6581
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm mound holding its shape well"
+       },
+       {
+        "tag": "Texture",
+        "value": "Highly textured, wrinkled surface covering the entire mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Dome-shaped with a central depression holding liquid"
+       }
+      ],
+      "wall_s": 8.318812999990769,
+      "calls": [
+       {
+        "latency_s": 4.572610499919392,
+        "input_tokens": 1962,
+        "output_tokens": 203,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1092
+        }
+       },
+       {
+        "latency_s": 3.744610899942927,
+        "input_tokens": 2802,
+        "output_tokens": 78,
+        "thinking_tokens": 0,
+        "total_tokens": 2880,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1092
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm mound holding its shape well"
+       },
+       {
+        "tag": "Texture",
+        "value": "Highly textured, wrinkled surface covering the entire mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Dome-shaped with a central depression holding liquid"
+       }
+      ],
+      "wall_s": 7.6172260999446735,
+      "calls": [
+       {
+        "latency_s": 4.827095399959944,
+        "input_tokens": 1962,
+        "output_tokens": 203,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1092
+        }
+       },
+       {
+        "latency_s": 2.789940100046806,
+        "input_tokens": 2802,
+        "output_tokens": 78,
+        "thinking_tokens": 0,
+        "total_tokens": 2880,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 1710
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm mound holding its shape well"
+       },
+       {
+        "tag": "Texture",
+        "value": "Highly textured, wrinkled surface covering the entire mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Dome-shaped with a central depression holding liquid"
+       }
+      ],
+      "wall_s": 8.197515600011684,
+      "calls": [
+       {
+        "latency_s": 4.545498499996029,
+        "input_tokens": 1962,
+        "output_tokens": 203,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1092
+        }
+       },
+       {
+        "latency_s": 3.649912300053984,
+        "input_tokens": 2802,
+        "output_tokens": 78,
+        "thinking_tokens": 0,
+        "total_tokens": 2880,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1092
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 3,
+      "sub_code": "3-G-O",
+      "fresh": false,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Round dome-shaped mound with a distinct central depression"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Holds moderate height with well-defined outer edges"
+       },
+       {
+        "tag": "Texture",
+        "value": "Uniformly dimpled across the top from rainfall"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive green to brownish green"
+       }
+      ],
+      "wall_s": 12.535588299972005,
+      "calls": [
+       {
+        "latency_s": 9.043882100027986,
+        "input_tokens": 1962,
+        "output_tokens": 238,
+        "thinking_tokens": 1268,
+        "total_tokens": 3468,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1092
+        }
+       },
+       {
+        "latency_s": 3.49141120002605,
+        "input_tokens": 2722,
+        "output_tokens": 79,
+        "thinking_tokens": 363,
+        "total_tokens": 3164,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 1630
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Thick, raised circular mound with distinct steep edges and a central hollow"
+       },
+       {
+        "tag": "Texture",
+        "value": "Heavily wrinkled and corrugated folds covering the entire top surface"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Firm and stiff mass that holds its height without slumping"
+       }
+      ],
+      "wall_s": 18.694680099957623,
+      "calls": [
+       {
+        "latency_s": 15.231501500005834,
+        "input_tokens": 1962,
+        "output_tokens": 227,
+        "thinking_tokens": 2661,
+        "total_tokens": 4850,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.462879200000316,
+        "input_tokens": 2802,
+        "output_tokens": 81,
+        "thinking_tokens": 308,
+        "total_tokens": 3191,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1092
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-G-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Circular dome-shaped pad with a distinct central depression"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Holds moderate height and shape with clean, well-defined borders"
+       },
+       {
+        "tag": "Texture",
+        "value": "Moist, dimpled surface collecting water in the center"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive green to brown"
+       }
+      ],
+      "wall_s": 9.642662000027485,
+      "calls": [
+       {
+        "latency_s": 6.909358999924734,
+        "input_tokens": 1962,
+        "output_tokens": 230,
+        "thinking_tokens": 862,
+        "total_tokens": 3054,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 2.7312657999573275,
+        "input_tokens": 2722,
+        "output_tokens": 76,
+        "thinking_tokens": 257,
+        "total_tokens": 3055,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 1630
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Thick round mound with a central depression holding liquid"
+       },
+       {
+        "tag": "Texture",
+        "value": "Heavily dimpled, bumpy, and corrugated moist surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green to brownish"
+       }
+      ],
+      "wall_s": 5.480122099979781,
+      "calls": [
+       {
+        "latency_s": 2.481097299954854,
+        "input_tokens": 1962,
+        "output_tokens": 206,
+        "thinking_tokens": 0,
+        "total_tokens": 2168,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1092
+        }
+       },
+       {
+        "latency_s": 2.9987846999429166,
+        "input_tokens": 2802,
+        "output_tokens": 78,
+        "thinking_tokens": 0,
+        "total_tokens": 2880,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 1710
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-G-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Round, well-defined mound with a central depression holding liquid"
+       },
+       {
+        "tag": "Texture",
+        "value": "Heavily dimpled, bumpy surface with dense concentric wrinkles"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green to brownish"
+       }
+      ],
+      "wall_s": 5.1865656999871135,
+      "calls": [
+       {
+        "latency_s": 2.8793886000057682,
+        "input_tokens": 1962,
+        "output_tokens": 208,
+        "thinking_tokens": 0,
+        "total_tokens": 2170,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1092
+        }
+       },
+       {
+        "latency_s": 2.3067080000182614,
+        "input_tokens": 2722,
+        "output_tokens": 85,
+        "thinking_tokens": 0,
+        "total_tokens": 2807,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1092
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Thick circular mound with a central depression holding liquid"
+       },
+       {
+        "tag": "Texture",
+        "value": "Deeply wrinkled and textured surface with multiple folds"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green to brownish"
+       }
+      ],
+      "wall_s": 7.258173499954864,
+      "calls": [
+       {
+        "latency_s": 2.31177240004763,
+        "input_tokens": 1962,
+        "output_tokens": 203,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 4.946120300097391,
+        "input_tokens": 2802,
+        "output_tokens": 107,
+        "thinking_tokens": 0,
+        "total_tokens": 2909,
+        "input_by_modality": {
+         "IMAGE": 1092,
+         "TEXT": 1710
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "image": "close-up-shot-fresh-cow-dung-forest-uttarakhand-india-255967705.webp",
+   "bytes": 98020,
+   "runs": {
+    "flat": [
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": null,
+      "wall_s": 10.16620109998621,
+      "calls": [
+       {
+        "latency_s": 10.16605769994203,
+        "input_tokens": 7645,
+        "output_tokens": 73,
+        "thinking_tokens": 862,
+        "total_tokens": 8580,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": null,
+      "wall_s": 9.341892300057225,
+      "calls": [
+       {
+        "latency_s": 9.341802400071174,
+        "input_tokens": 7645,
+        "output_tokens": 70,
+        "thinking_tokens": 825,
+        "total_tokens": 8540,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": null,
+      "wall_s": 10.727835000026971,
+      "calls": [
+       {
+        "latency_s": 10.72775580000598,
+        "input_tokens": 7645,
+        "output_tokens": 73,
+        "thinking_tokens": 908,
+        "total_tokens": 8626,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 6581
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm, segmented clumps"
+       },
+       {
+        "tag": "Texture",
+        "value": "Deeply folded and wrinkled surface"
+       },
+       {
+        "tag": "Form",
+        "value": "Stacked, irregular mound"
+       }
+      ],
+      "wall_s": 6.274589699925855,
+      "calls": [
+       {
+        "latency_s": 3.3598441999638453,
+        "input_tokens": 1934,
+        "output_tokens": 189,
+        "thinking_tokens": 0,
+        "total_tokens": 2123,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 2.9144820000510663,
+        "input_tokens": 2774,
+        "output_tokens": 79,
+        "thinking_tokens": 0,
+        "total_tokens": 2853,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1710
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm, segmented clumps"
+       },
+       {
+        "tag": "Texture",
+        "value": "Deeply folded and wrinkled surface"
+       },
+       {
+        "tag": "Form",
+        "value": "Stacked, irregular mound"
+       }
+      ],
+      "wall_s": 7.266655100043863,
+      "calls": [
+       {
+        "latency_s": 3.6761534999823198,
+        "input_tokens": 1934,
+        "output_tokens": 189,
+        "thinking_tokens": 0,
+        "total_tokens": 2123,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.590295600006357,
+        "input_tokens": 2774,
+        "output_tokens": 79,
+        "thinking_tokens": 0,
+        "total_tokens": 2853,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm, segmented clumps"
+       },
+       {
+        "tag": "Texture",
+        "value": "Deeply folded and wrinkled surface"
+       },
+       {
+        "tag": "Form",
+        "value": "Stacked, irregular mound"
+       }
+      ],
+      "wall_s": 8.144454499939457,
+      "calls": [
+       {
+        "latency_s": 3.8316432000137866,
+        "input_tokens": 1934,
+        "output_tokens": 189,
+        "thinking_tokens": 0,
+        "total_tokens": 2123,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 4.312631499953568,
+        "input_tokens": 2774,
+        "output_tokens": 79,
+        "thinking_tokens": 0,
+        "total_tokens": 2853,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Segmented mounds with dense, deep corrugated folds"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Very firm, tall, and holds shape without spreading"
+       },
+       {
+        "tag": "Texture",
+        "value": "Heavily wrinkled surface covered edge-to-edge in fissures"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green to brownish"
+       }
+      ],
+      "wall_s": 7.51180530001875,
+      "calls": [
+       {
+        "latency_s": 4.383788499981165,
+        "input_tokens": 1934,
+        "output_tokens": 228,
+        "thinking_tokens": 324,
+        "total_tokens": 2486,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.1278232999611646,
+        "input_tokens": 2774,
+        "output_tokens": 57,
+        "thinking_tokens": 340,
+        "total_tokens": 3171,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1710
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Segmented into dense, chaotic, overlapping thick ridges"
+       },
+       {
+        "tag": "Texture",
+        "value": "Brain-like corrugated folds covering the entire surface"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Very firm and stiff, holding distinct upright segments"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green to brownish-green"
+       }
+      ],
+      "wall_s": 7.430284800007939,
+      "calls": [
+       {
+        "latency_s": 3.8464780999347568,
+        "input_tokens": 1934,
+        "output_tokens": 230,
+        "thinking_tokens": 298,
+        "total_tokens": 2462,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 3.583611199981533,
+        "input_tokens": 2774,
+        "output_tokens": 88,
+        "thinking_tokens": 384,
+        "total_tokens": 3246,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very firm, stacks high in segmented clumps without spreading"
+       },
+       {
+        "tag": "Form",
+        "value": "Stacked clumps covered entirely in deep, overlapping folds"
+       },
+       {
+        "tag": "Texture",
+        "value": "Heavily corrugated with deep fissures across the whole surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green with a glossy sheen in the folds"
+       }
+      ],
+      "wall_s": 7.1881820999551564,
+      "calls": [
+       {
+        "latency_s": 3.9293177999788895,
+        "input_tokens": 1934,
+        "output_tokens": 234,
+        "thinking_tokens": 349,
+        "total_tokens": 2517,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.258655900019221,
+        "input_tokens": 2774,
+        "output_tokens": 59,
+        "thinking_tokens": 350,
+        "total_tokens": 3183,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1710
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Stacked mound segmented into heavily wrinkled, distinct lobes"
+       },
+       {
+        "tag": "Texture",
+        "value": "Dense, chaotic overlapping folds and deep fissures across entire surface"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Very firm and thick, holds rigid height without spreading"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive brownish-green"
+       }
+      ],
+      "wall_s": 6.178779800073244,
+      "calls": [
+       {
+        "latency_s": 2.7928553000092506,
+        "input_tokens": 1934,
+        "output_tokens": 240,
+        "thinking_tokens": 0,
+        "total_tokens": 2174,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.385697599966079,
+        "input_tokens": 2774,
+        "output_tokens": 83,
+        "thinking_tokens": 0,
+        "total_tokens": 2857,
+        "input_by_modality": {
+         "TEXT": 1710,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very firm, thick, and holds distinct high piles without spreading"
+       },
+       {
+        "tag": "Form",
+        "value": "Deep, corrugated, segmented folds covering the entire surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive brownish-green"
+       },
+       {
+        "tag": "Texture",
+        "value": "Heavily wrinkled and fissured resembling brain-like folds"
+       }
+      ],
+      "wall_s": 5.980260399985127,
+      "calls": [
+       {
+        "latency_s": 3.5280261000152677,
+        "input_tokens": 1934,
+        "output_tokens": 241,
+        "thinking_tokens": 0,
+        "total_tokens": 2175,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 2.452046199934557,
+        "input_tokens": 2774,
+        "output_tokens": 67,
+        "thinking_tokens": 0,
+        "total_tokens": 2841,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1710
+        }
+       }
+      ]
+     },
+     {
+      "score": 5,
+      "sub_code": "5-DRY",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Segmented, firm clumps with deep overlapping folds across entire surface"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Very firm, dry, and stacks high rather than spreading"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive green to brownish"
+       }
+      ],
+      "wall_s": 6.434848199947737,
+      "calls": [
+       {
+        "latency_s": 2.891655199928209,
+        "input_tokens": 1934,
+        "output_tokens": 201,
+        "thinking_tokens": 0,
+        "total_tokens": 2135,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 3.5429737999802455,
+        "input_tokens": 2774,
+        "output_tokens": 78,
+        "thinking_tokens": 0,
+        "total_tokens": 2852,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1710
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "image": "images (2).jpg",
+   "bytes": 53577,
+   "runs": {
+    "flat": [
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": null,
+      "wall_s": 10.678656199947,
+      "calls": [
+       {
+        "latency_s": 10.67853879998438,
+        "input_tokens": 7688,
+        "output_tokens": 70,
+        "thinking_tokens": 833,
+        "total_tokens": 8591,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": null,
+      "wall_s": 10.631581599940546,
+      "calls": [
+       {
+        "latency_s": 10.631507399957627,
+        "input_tokens": 7688,
+        "output_tokens": 70,
+        "thinking_tokens": 866,
+        "total_tokens": 8624,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": null,
+      "wall_s": 8.898113399976864,
+      "calls": [
+       {
+        "latency_s": 8.89804430003278,
+        "input_tokens": 7688,
+        "output_tokens": 70,
+        "thinking_tokens": 750,
+        "total_tokens": 8508,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Liquid and watery, spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "No mound, splattered puddle"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet sheen, indistinct edges"
+       }
+      ],
+      "wall_s": 6.855397199979052,
+      "calls": [
+       {
+        "latency_s": 3.683133800048381,
+        "input_tokens": 1977,
+        "output_tokens": 189,
+        "thinking_tokens": 0,
+        "total_tokens": 2166,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.1691904000472277,
+        "input_tokens": 4729,
+        "output_tokens": 73,
+        "thinking_tokens": 0,
+        "total_tokens": 4802,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Liquid and watery, spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "No mound, splattered puddle"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet sheen, indistinct edges"
+       }
+      ],
+      "wall_s": 6.702173999976367,
+      "calls": [
+       {
+        "latency_s": 3.949919700040482,
+        "input_tokens": 1977,
+        "output_tokens": 187,
+        "thinking_tokens": 0,
+        "total_tokens": 2164,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 2.752015499980189,
+        "input_tokens": 4729,
+        "output_tokens": 73,
+        "thinking_tokens": 0,
+        "total_tokens": 4802,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Liquid and watery, spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "No mound, splattered puddle"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet sheen, indistinct edges"
+       }
+      ],
+      "wall_s": 9.487088799942285,
+      "calls": [
+       {
+        "latency_s": 6.628998399944976,
+        "input_tokens": 1977,
+        "output_tokens": 187,
+        "thinking_tokens": 0,
+        "total_tokens": 2164,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 2.8578850000631064,
+        "input_tokens": 4729,
+        "output_tokens": 73,
+        "thinking_tokens": 0,
+        "total_tokens": 4802,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, runny paste with very low height"
+       },
+       {
+        "tag": "Form",
+        "value": "Shallow, flat spreading pad with no distinct dome"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light yellowish brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Wet, glossy surface with tiny bubbles"
+       }
+      ],
+      "wall_s": 13.092962700058706,
+      "calls": [
+       {
+        "latency_s": 8.910256100003608,
+        "input_tokens": 1977,
+        "output_tokens": 220,
+        "thinking_tokens": 1521,
+        "total_tokens": 3718,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 4.180453599896282,
+        "input_tokens": 3855,
+        "output_tokens": 72,
+        "thinking_tokens": 504,
+        "total_tokens": 4431,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 2748
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very runny, watery puddle with almost no height"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat and widely splattered without any central dome or concentric rings"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy, wet sheen covering the entire loose surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light yellowish-brown"
+       }
+      ],
+      "wall_s": 7.996604399988428,
+      "calls": [
+       {
+        "latency_s": 3.7231193999759853,
+        "input_tokens": 1977,
+        "output_tokens": 226,
+        "thinking_tokens": 284,
+        "total_tokens": 2487,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 4.27331309998408,
+        "input_tokens": 4729,
+        "output_tokens": 60,
+        "thinking_tokens": 409,
+        "total_tokens": 5198,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very watery and runny, spreading flat with no height"
+       },
+       {
+        "tag": "Form",
+        "value": "Thin, splattered puddle without defined shape or dome"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light yellowish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet sheen with tiny air bubbles"
+       }
+      ],
+      "wall_s": 7.7260758999036625,
+      "calls": [
+       {
+        "latency_s": 4.5424950999440625,
+        "input_tokens": 1977,
+        "output_tokens": 223,
+        "thinking_tokens": 485,
+        "total_tokens": 2685,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.183381399954669,
+        "input_tokens": 4729,
+        "output_tokens": 66,
+        "thinking_tokens": 368,
+        "total_tokens": 5163,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very runny and watery, spreading flat across the floor"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat puddle lacking height, dome structure, or clear edges"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet sheen with tiny air bubbles and fine particulate matter"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light yellowish-brown"
+       }
+      ],
+      "wall_s": 4.851540999952704,
+      "calls": [
+       {
+        "latency_s": 3.1259559999452904,
+        "input_tokens": 1977,
+        "output_tokens": 231,
+        "thinking_tokens": 0,
+        "total_tokens": 2208,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 1.7253102000104263,
+        "input_tokens": 4729,
+        "output_tokens": 61,
+        "thinking_tokens": 0,
+        "total_tokens": 4790,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very watery and runny, spreads completely flat across the floor"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat, splattered puddle with no height or central mound"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light yellowish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet sheen with tiny bubbles and fine dispersed particles"
+       }
+      ],
+      "wall_s": 4.946642199996859,
+      "calls": [
+       {
+        "latency_s": 2.748372899950482,
+        "input_tokens": 1977,
+        "output_tokens": 228,
+        "thinking_tokens": 0,
+        "total_tokens": 2205,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 2.1980762999737635,
+        "input_tokens": 4729,
+        "output_tokens": 61,
+        "thinking_tokens": 0,
+        "total_tokens": 4790,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 3622
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very runny and loose, forming a shallow, watery pool"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat and spreading thinly with ill-defined, feathered edges"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light yellowish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy wet surface showing finely suspended particulate matter"
+       }
+      ],
+      "wall_s": 6.704784699948505,
+      "calls": [
+       {
+        "latency_s": 3.5246275999816135,
+        "input_tokens": 1977,
+        "output_tokens": 236,
+        "thinking_tokens": 0,
+        "total_tokens": 2213,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 3.1798212999710813,
+        "input_tokens": 4729,
+        "output_tokens": 61,
+        "thinking_tokens": 0,
+        "total_tokens": 4790,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 3622
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "image": "images (3).jpg",
+   "bytes": 60148,
+   "runs": {
+    "flat": [
+     {
+      "score": 2,
+      "sub_code": "2-P",
+      "fresh": null,
+      "wall_s": 18.299404600053094,
+      "calls": [
+       {
+        "latency_s": 18.299246500013396,
+        "input_tokens": 7688,
+        "output_tokens": 72,
+        "thinking_tokens": 1752,
+        "total_tokens": 9512,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-P",
+      "fresh": null,
+      "wall_s": 13.908039400004782,
+      "calls": [
+       {
+        "latency_s": 13.907931499998085,
+        "input_tokens": 7688,
+        "output_tokens": 76,
+        "thinking_tokens": 1301,
+        "total_tokens": 9065,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-P",
+      "fresh": null,
+      "wall_s": 20.212024300009944,
+      "calls": [
+       {
+        "latency_s": 20.211911299964413,
+        "input_tokens": 7688,
+        "output_tokens": 67,
+        "thinking_tokens": 2030,
+        "total_tokens": 9785,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 6581
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 1,
+      "sub_code": "1-P",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Runny and spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat puddle with no mound"
+       },
+       {
+        "tag": "Texture",
+        "value": "Smooth and glossy wet"
+       }
+      ],
+      "wall_s": 7.402155999909155,
+      "calls": [
+       {
+        "latency_s": 4.071433599921875,
+        "input_tokens": 1977,
+        "output_tokens": 176,
+        "thinking_tokens": 0,
+        "total_tokens": 2153,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.3304160999832675,
+        "input_tokens": 4729,
+        "output_tokens": 77,
+        "thinking_tokens": 0,
+        "total_tokens": 4806,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 3622
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-P",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Runny and spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat puddle with no mound"
+       },
+       {
+        "tag": "Texture",
+        "value": "Smooth and glossy wet"
+       }
+      ],
+      "wall_s": 9.415399899939075,
+      "calls": [
+       {
+        "latency_s": 4.3571466000285,
+        "input_tokens": 1977,
+        "output_tokens": 176,
+        "thinking_tokens": 0,
+        "total_tokens": 2153,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 5.057780900038779,
+        "input_tokens": 4729,
+        "output_tokens": 77,
+        "thinking_tokens": 0,
+        "total_tokens": 4806,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Runny paste, spreads flat"
+       },
+       {
+        "tag": "Form",
+        "value": "Shallow puddle, no distinct mound"
+       },
+       {
+        "tag": "Texture",
+        "value": "Smooth, wet, glossy surface"
+       }
+      ],
+      "wall_s": 8.046170999994501,
+      "calls": [
+       {
+        "latency_s": 4.29120730003342,
+        "input_tokens": 1977,
+        "output_tokens": 189,
+        "thinking_tokens": 0,
+        "total_tokens": 2166,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 3.754763999953866,
+        "input_tokens": 3855,
+        "output_tokens": 64,
+        "thinking_tokens": 0,
+        "total_tokens": 3919,
+        "input_by_modality": {
+         "TEXT": 2748,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, runny paste spreading flat across grass"
+       },
+       {
+        "tag": "Form",
+        "value": "Very shallow pancake-like splatter with minimal height"
+       },
+       {
+        "tag": "Colour",
+        "value": "Uniform dark greenish-brown"
+       }
+      ],
+      "wall_s": 8.65336480003316,
+      "calls": [
+       {
+        "latency_s": 5.186543700052425,
+        "input_tokens": 1977,
+        "output_tokens": 189,
+        "thinking_tokens": 529,
+        "total_tokens": 2695,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.466524500050582,
+        "input_tokens": 3855,
+        "output_tokens": 83,
+        "thinking_tokens": 375,
+        "total_tokens": 4313,
+        "input_by_modality": {
+         "TEXT": 2748,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, runny paste spreading thinly across the grass"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat splattered sheet with little height and irregular edges"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Moist, loose paste lacking defined rings or layers"
+       }
+      ],
+      "wall_s": 9.30416060006246,
+      "calls": [
+       {
+        "latency_s": 5.723156499909237,
+        "input_tokens": 1977,
+        "output_tokens": 224,
+        "thinking_tokens": 649,
+        "total_tokens": 2850,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.580760100041516,
+        "input_tokens": 3855,
+        "output_tokens": 62,
+        "thinking_tokens": 416,
+        "total_tokens": 4333,
+        "input_by_modality": {
+         "TEXT": 2748,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, runny paste spreading flat without height"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat, irregular pancake splatter lacking concentric rings"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive brown"
+       }
+      ],
+      "wall_s": 9.993298399960622,
+      "calls": [
+       {
+        "latency_s": 6.578489499981515,
+        "input_tokens": 1977,
+        "output_tokens": 187,
+        "thinking_tokens": 911,
+        "total_tokens": 3075,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 3.4146403000922874,
+        "input_tokens": 3855,
+        "output_tokens": 68,
+        "thinking_tokens": 366,
+        "total_tokens": 4289,
+        "input_by_modality": {
+         "TEXT": 2748,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, wet paste spreading flat with very little height"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat splattered sheet without a dome or concentric rings"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown to greyish brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Soft, moist paste settling into surrounding grass blades"
+       }
+      ],
+      "wall_s": 5.53358309995383,
+      "calls": [
+       {
+        "latency_s": 2.743383599910885,
+        "input_tokens": 1977,
+        "output_tokens": 239,
+        "thinking_tokens": 0,
+        "total_tokens": 2216,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 2.7899475999874994,
+        "input_tokens": 3855,
+        "output_tokens": 82,
+        "thinking_tokens": 0,
+        "total_tokens": 3937,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 2748
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Flat, splattered layer spreading thinly over the grass"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Loose, runny paste with very minimal height"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark greenish-brown"
+       }
+      ],
+      "wall_s": 4.252247800002806,
+      "calls": [
+       {
+        "latency_s": 2.1389659999404103,
+        "input_tokens": 1977,
+        "output_tokens": 188,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 2.1130642999196425,
+        "input_tokens": 3855,
+        "output_tokens": 76,
+        "thinking_tokens": 0,
+        "total_tokens": 3931,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 2748
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, watery paste spreading flat without forming a dome"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat, splattered puddle with irregular, thin spreading edges"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown to greyish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Wet and pasty surface with minimal structure"
+       }
+      ],
+      "wall_s": 5.4896903000772,
+      "calls": [
+       {
+        "latency_s": 2.6848982999799773,
+        "input_tokens": 1977,
+        "output_tokens": 229,
+        "thinking_tokens": 0,
+        "total_tokens": 2206,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 2.8045925999758765,
+        "input_tokens": 3855,
+        "output_tokens": 88,
+        "thinking_tokens": 0,
+        "total_tokens": 3943,
+        "input_by_modality": {
+         "TEXT": 2748,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "image": "images (5).jpg",
+   "bytes": 112248,
+   "runs": {
+    "flat": [
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": null,
+      "wall_s": 8.178874899982475,
+      "calls": [
+       {
+        "latency_s": 8.178762000054121,
+        "input_tokens": 7645,
+        "output_tokens": 88,
+        "thinking_tokens": 643,
+        "total_tokens": 8376,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": null,
+      "wall_s": 8.261889100074768,
+      "calls": [
+       {
+        "latency_s": 8.261801299988292,
+        "input_tokens": 7645,
+        "output_tokens": 66,
+        "thinking_tokens": 540,
+        "total_tokens": 8251,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": null,
+      "wall_s": 8.861046600039117,
+      "calls": [
+       {
+        "latency_s": 8.860966400010511,
+        "input_tokens": 7645,
+        "output_tokens": 79,
+        "thinking_tokens": 630,
+        "total_tokens": 8354,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 6581
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Well-formed dome holding its shape"
+       },
+       {
+        "tag": "Form",
+        "value": "Smooth surface with a central ring"
+       },
+       {
+        "tag": "Colour",
+        "value": "Brownish-green"
+       }
+      ],
+      "wall_s": 9.629660399979912,
+      "calls": [
+       {
+        "latency_s": 4.91242249996867,
+        "input_tokens": 1934,
+        "output_tokens": 187,
+        "thinking_tokens": 0,
+        "total_tokens": 2121,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 4.717050099978223,
+        "input_tokens": 2694,
+        "output_tokens": 82,
+        "thinking_tokens": 0,
+        "total_tokens": 2776,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Well-formed dome holding its shape"
+       },
+       {
+        "tag": "Form",
+        "value": "Smooth surface with a central ring"
+       },
+       {
+        "tag": "Colour",
+        "value": "Brownish-green"
+       }
+      ],
+      "wall_s": 13.621760600013658,
+      "calls": [
+       {
+        "latency_s": 6.453533400082961,
+        "input_tokens": 1934,
+        "output_tokens": 187,
+        "thinking_tokens": 0,
+        "total_tokens": 2121,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 7.168026400031522,
+        "input_tokens": 2694,
+        "output_tokens": 82,
+        "thinking_tokens": 0,
+        "total_tokens": 2776,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1630
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Well-formed mound holding its shape"
+       },
+       {
+        "tag": "Form",
+        "value": "Dome-shaped with concentric rings"
+       },
+       {
+        "tag": "Texture",
+        "value": "Smooth and moist surface"
+       }
+      ],
+      "wall_s": 11.571165599976666,
+      "calls": [
+       {
+        "latency_s": 6.656008200021461,
+        "input_tokens": 1934,
+        "output_tokens": 192,
+        "thinking_tokens": 0,
+        "total_tokens": 2126,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 4.914812500006519,
+        "input_tokens": 2694,
+        "output_tokens": 82,
+        "thinking_tokens": 0,
+        "total_tokens": 2776,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Round dome shape with defined circular concentric ring"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Thick porridge-like mound holding height without pooling"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown uniform color"
+       },
+       {
+        "tag": "Texture",
+        "value": "Moist, smooth surface with finely processed fiber"
+       }
+      ],
+      "wall_s": 8.806699199951254,
+      "calls": [
+       {
+        "latency_s": 4.209703000029549,
+        "input_tokens": 1934,
+        "output_tokens": 218,
+        "thinking_tokens": 351,
+        "total_tokens": 2503,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 4.596635400084779,
+        "input_tokens": 2694,
+        "output_tokens": 79,
+        "thinking_tokens": 547,
+        "total_tokens": 3320,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Optimal porridge consistency holding a neat dome shape"
+       },
+       {
+        "tag": "Form",
+        "value": "Circular mound with shallow concentric rings in the centre"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-green to brownish"
+       },
+       {
+        "tag": "Texture",
+        "value": "Moist, smooth surface with a slight sheen"
+       }
+      ],
+      "wall_s": 8.104557699989527,
+      "calls": [
+       {
+        "latency_s": 4.518850399996154,
+        "input_tokens": 1934,
+        "output_tokens": 221,
+        "thinking_tokens": 391,
+        "total_tokens": 2546,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 3.5854575999546796,
+        "input_tokens": 2694,
+        "output_tokens": 95,
+        "thinking_tokens": 375,
+        "total_tokens": 3164,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Well-formed dome pat with a circular concentric depression in the center"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Thick porridge-like body that holds shape with defined borders"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark greenish-brown with a moist, reflective sheen"
+       },
+       {
+        "tag": "Texture",
+        "value": "Finely digested material with smooth concentric spiral folds"
+       }
+      ],
+      "wall_s": 9.209819099982269,
+      "calls": [
+       {
+        "latency_s": 5.155365800019354,
+        "input_tokens": 1934,
+        "output_tokens": 239,
+        "thinking_tokens": 471,
+        "total_tokens": 2644,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 4.054293799912557,
+        "input_tokens": 2694,
+        "output_tokens": 93,
+        "thinking_tokens": 416,
+        "total_tokens": 3203,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1630
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Coiled dome mound with clear circular ring indentations"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Holds moderate height like soft porridge without spreading excessively"
+       },
+       {
+        "tag": "Colour",
+        "value": "Olive-brown with a moist sheen"
+       },
+       {
+        "tag": "Texture",
+        "value": "Finely digested uniform texture with smooth moist surface"
+       }
+      ],
+      "wall_s": 5.834153499919921,
+      "calls": [
+       {
+        "latency_s": 2.4607415000209585,
+        "input_tokens": 1934,
+        "output_tokens": 234,
+        "thinking_tokens": 0,
+        "total_tokens": 2168,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.373230700031854,
+        "input_tokens": 2694,
+        "output_tokens": 83,
+        "thinking_tokens": 0,
+        "total_tokens": 2777,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Well-defined rounded dome with a slight central ring"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Thick porridge-like consistency holding moderate height"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown with a moist, glossy sheen"
+       },
+       {
+        "tag": "Texture",
+        "value": "Mostly smooth surface with subtle concentric coiling"
+       }
+      ],
+      "wall_s": 5.414774700067937,
+      "calls": [
+       {
+        "latency_s": 2.456281999940984,
+        "input_tokens": 1934,
+        "output_tokens": 230,
+        "thinking_tokens": 0,
+        "total_tokens": 2164,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 2.9582793000154197,
+        "input_tokens": 2694,
+        "output_tokens": 85,
+        "thinking_tokens": 0,
+        "total_tokens": 2779,
+        "input_by_modality": {
+         "TEXT": 1630,
+         "IMAGE": 1064
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Rounded dome-shaped mound with distinct concentric ring indentation"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Thick porridge consistency holding shape well above grass"
+       },
+       {
+        "tag": "Colour",
+        "value": "Typical greenish-brown healthy colouration"
+       },
+       {
+        "tag": "Texture",
+        "value": "Moist, smooth surface with a central dip"
+       }
+      ],
+      "wall_s": 4.873151700012386,
+      "calls": [
+       {
+        "latency_s": 3.0093697999836877,
+        "input_tokens": 1934,
+        "output_tokens": 230,
+        "thinking_tokens": 0,
+        "total_tokens": 2164,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1064
+        }
+       },
+       {
+        "latency_s": 1.8636051999637857,
+        "input_tokens": 2694,
+        "output_tokens": 82,
+        "thinking_tokens": 0,
+        "total_tokens": 2776,
+        "input_by_modality": {
+         "IMAGE": 1064,
+         "TEXT": 1630
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "image": "images (6).jpg",
+   "bytes": 19275,
+   "runs": {
+    "flat": [
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": null,
+      "wall_s": 10.758482999983244,
+      "calls": [
+       {
+        "latency_s": 10.75837220007088,
+        "input_tokens": 7661,
+        "output_tokens": 78,
+        "thinking_tokens": 884,
+        "total_tokens": 8623,
+        "input_by_modality": {
+         "TEXT": 6581,
+         "IMAGE": 1080
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": null,
+      "wall_s": 10.15547370002605,
+      "calls": [
+       {
+        "latency_s": 10.155343599966727,
+        "input_tokens": 7661,
+        "output_tokens": 63,
+        "thinking_tokens": 810,
+        "total_tokens": 8534,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-YEL-A",
+      "fresh": null,
+      "wall_s": 18.140153200016357,
+      "calls": [
+       {
+        "latency_s": 18.140088099986315,
+        "input_tokens": 7661,
+        "output_tokens": 78,
+        "thinking_tokens": 1776,
+        "total_tokens": 9515,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 6581
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Liquid and watery, spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "No mound, flat puddle"
+       },
+       {
+        "tag": "Gas/Bubbles",
+        "value": "Visible bubbles on the surface"
+       }
+      ],
+      "wall_s": 7.607670900062658,
+      "calls": [
+       {
+        "latency_s": 3.4657040999736637,
+        "input_tokens": 1950,
+        "output_tokens": 190,
+        "thinking_tokens": 0,
+        "total_tokens": 2140,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 4.141754599986598,
+        "input_tokens": 4702,
+        "output_tokens": 69,
+        "thinking_tokens": 0,
+        "total_tokens": 4771,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 3622
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Liquid and watery, spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "No mound, flat puddle"
+       },
+       {
+        "tag": "Gas/Bubbles",
+        "value": "Visible bubbles on the surface"
+       }
+      ],
+      "wall_s": 9.712127699982375,
+      "calls": [
+       {
+        "latency_s": 6.141370399971493,
+        "input_tokens": 1950,
+        "output_tokens": 190,
+        "thinking_tokens": 0,
+        "total_tokens": 2140,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 3.570581000065431,
+        "input_tokens": 4702,
+        "output_tokens": 87,
+        "thinking_tokens": 0,
+        "total_tokens": 4789,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1080
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Liquid and watery, spreading flat"
+       },
+       {
+        "tag": "Form",
+        "value": "No mound, flat puddle"
+       },
+       {
+        "tag": "Gas/Bubbles",
+        "value": "Numerous small bubbles on the surface"
+       }
+      ],
+      "wall_s": 10.969551699934527,
+      "calls": [
+       {
+        "latency_s": 5.999005699995905,
+        "input_tokens": 1950,
+        "output_tokens": 189,
+        "thinking_tokens": 0,
+        "total_tokens": 2139,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 4.970366799971089,
+        "input_tokens": 4702,
+        "output_tokens": 69,
+        "thinking_tokens": 0,
+        "total_tokens": 4771,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1080
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Watery and runny, spread thinly across the surface"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat liquid puddle with zero mound height"
+       },
+       {
+        "tag": "Colour",
+        "value": "Homogeneous olive-green shade"
+       },
+       {
+        "tag": "Gas/Bubbles",
+        "value": "Scattered small gas bubbles visible across the sheen"
+       }
+      ],
+      "wall_s": 8.140872900024988,
+      "calls": [
+       {
+        "latency_s": 4.985353199997917,
+        "input_tokens": 1950,
+        "output_tokens": 218,
+        "thinking_tokens": 578,
+        "total_tokens": 2746,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 3.1553297000937164,
+        "input_tokens": 4702,
+        "output_tokens": 76,
+        "thinking_tokens": 362,
+        "total_tokens": 5140,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1080
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very watery and runny, spreading flat with no elevation"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat splattered puddle lacking any mound or central dome"
+       },
+       {
+        "tag": "Colour",
+        "value": "Uniform olive-green to yellowish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Wet glossy sheen with small dispersed air bubbles"
+       }
+      ],
+      "wall_s": 8.160024799988605,
+      "calls": [
+       {
+        "latency_s": 3.9153661999152973,
+        "input_tokens": 1950,
+        "output_tokens": 224,
+        "thinking_tokens": 297,
+        "total_tokens": 2471,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 4.2444350000005215,
+        "input_tokens": 4702,
+        "output_tokens": 91,
+        "thinking_tokens": 532,
+        "total_tokens": 5325,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1080
+        }
+       }
+      ]
+     },
+     {
+      "score": 2,
+      "sub_code": "2-GRN-S",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Loose, runny paste spreading flat without forming a mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat sheet with minimal thickness and no concentric rings"
+       },
+       {
+        "tag": "Colour",
+        "value": "Uniform olive-green"
+       },
+       {
+        "tag": "Texture",
+        "value": "Finely textured, uniform wet paste with a glossy sheen"
+       }
+      ],
+      "wall_s": 19.346142899943516,
+      "calls": [
+       {
+        "latency_s": 8.192158099962398,
+        "input_tokens": 1950,
+        "output_tokens": 229,
+        "thinking_tokens": 1232,
+        "total_tokens": 3411,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 11.153808699920774,
+        "input_tokens": 3828,
+        "output_tokens": 70,
+        "thinking_tokens": 2207,
+        "total_tokens": 6105,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 2748
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Watery and thin, spreading broadly with virtually no height"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat puddle without dome or concentric rings"
+       },
+       {
+        "tag": "Gas/Bubbles",
+        "value": "Small gas bubbles visible across the moist surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Olive-green to yellowish-brown"
+       }
+      ],
+      "wall_s": 5.4649952000472695,
+      "calls": [
+       {
+        "latency_s": 2.7451728000305593,
+        "input_tokens": 1950,
+        "output_tokens": 221,
+        "thinking_tokens": 0,
+        "total_tokens": 2171,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 2.7196019999682903,
+        "input_tokens": 4702,
+        "output_tokens": 56,
+        "thinking_tokens": 0,
+        "total_tokens": 4758,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 3622
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very loose, fluid paste that spreads flat"
+       },
+       {
+        "tag": "Form",
+        "value": "Flat sheet with minimal height and irregular edges"
+       },
+       {
+        "tag": "Colour",
+        "value": "Pale greenish-olive"
+       },
+       {
+        "tag": "Texture",
+        "value": "Fine, watery paste with tiny uniform bumps"
+       }
+      ],
+      "wall_s": 6.627239199937321,
+      "calls": [
+       {
+        "latency_s": 3.0952533000381663,
+        "input_tokens": 1950,
+        "output_tokens": 213,
+        "thinking_tokens": 0,
+        "total_tokens": 2163,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.531795599963516,
+        "input_tokens": 4702,
+        "output_tokens": 66,
+        "thinking_tokens": 0,
+        "total_tokens": 4768,
+        "input_by_modality": {
+         "IMAGE": 1080,
+         "TEXT": 3622
+        }
+       }
+      ]
+     },
+     {
+      "score": 1,
+      "sub_code": "1-YEL",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Very runny and liquid, spreads flat like a puddle"
+       },
+       {
+        "tag": "Form",
+        "value": "Completely flat pool with no mound or dome structure"
+       },
+       {
+        "tag": "Colour",
+        "value": "Light greenish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Glossy, uniform wet surface with tiny dispersed bubbles"
+       }
+      ],
+      "wall_s": 5.5099714999087155,
+      "calls": [
+       {
+        "latency_s": 2.7403044999809936,
+        "input_tokens": 1950,
+        "output_tokens": 226,
+        "thinking_tokens": 0,
+        "total_tokens": 2176,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1080
+        }
+       },
+       {
+        "latency_s": 2.7694535000482574,
+        "input_tokens": 4702,
+        "output_tokens": 62,
+        "thinking_tokens": 0,
+        "total_tokens": 4764,
+        "input_by_modality": {
+         "TEXT": 3622,
+         "IMAGE": 1080
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "image": "istockphoto-1444657605-1024x1024.jpg",
+   "bytes": 181247,
+   "runs": {
+    "flat": [
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": null,
+      "wall_s": 9.023992600035854,
+      "calls": [
+       {
+        "latency_s": 9.023829400073737,
+        "input_tokens": 7688,
+        "output_tokens": 83,
+        "thinking_tokens": 737,
+        "total_tokens": 8508,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": null,
+      "wall_s": 13.616266499971971,
+      "calls": [
+       {
+        "latency_s": 13.61617659998592,
+        "input_tokens": 7688,
+        "output_tokens": 87,
+        "thinking_tokens": 1140,
+        "total_tokens": 8915,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 6581
+        }
+       }
+      ]
+     },
+     {
+      "score": 3,
+      "sub_code": "3-S-O",
+      "fresh": null,
+      "wall_s": 7.9250065999804065,
+      "calls": [
+       {
+        "latency_s": 7.924934500013478,
+        "input_tokens": 7688,
+        "output_tokens": 88,
+        "thinking_tokens": 651,
+        "total_tokens": 8427,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 6581
+        }
+       }
+      ]
+     }
+    ],
+    "two_pro31_low": [
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm, tall stacked mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Thick layers holding shape well"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, coarse surface"
+       }
+      ],
+      "wall_s": 7.774028000072576,
+      "calls": [
+       {
+        "latency_s": 4.000674600014463,
+        "input_tokens": 1977,
+        "output_tokens": 187,
+        "thinking_tokens": 0,
+        "total_tokens": 2164,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 3.7731225999305025,
+        "input_tokens": 2488,
+        "output_tokens": 80,
+        "thinking_tokens": 0,
+        "total_tokens": 2568,
+        "input_by_modality": {
+         "TEXT": 1381,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm, tall stacked mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Distinct layers holding shape well"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, coarse surface"
+       }
+      ],
+      "wall_s": 8.481013600016013,
+      "calls": [
+       {
+        "latency_s": 3.676743899937719,
+        "input_tokens": 1977,
+        "output_tokens": 188,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 4.801728799939156,
+        "input_tokens": 2488,
+        "output_tokens": 88,
+        "thinking_tokens": 0,
+        "total_tokens": 2576,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 1381
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm, tall stacked mound"
+       },
+       {
+        "tag": "Form",
+        "value": "Distinct layers holding shape well"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, coarse surface"
+       }
+      ],
+      "wall_s": 8.139935499988496,
+      "calls": [
+       {
+        "latency_s": 3.9980067999567837,
+        "input_tokens": 1977,
+        "output_tokens": 188,
+        "thinking_tokens": 0,
+        "total_tokens": 2165,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 4.141617699991912,
+        "input_tokens": 2488,
+        "output_tokens": 80,
+        "thinking_tokens": 0,
+        "total_tokens": 2568,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 1381
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_default": [
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Thick, firm, and holds substantial height without spreading"
+       },
+       {
+        "tag": "Form",
+        "value": "Tall stacked circular ring with a distinct central depression"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, coarse, and fibrous surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown"
+       }
+      ],
+      "wall_s": 8.09932340006344,
+      "calls": [
+       {
+        "latency_s": 4.835735999979079,
+        "input_tokens": 1977,
+        "output_tokens": 221,
+        "thinking_tokens": 354,
+        "total_tokens": 2552,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.2633985000429675,
+        "input_tokens": 2488,
+        "output_tokens": 85,
+        "thinking_tokens": 300,
+        "total_tokens": 2873,
+        "input_by_modality": {
+         "TEXT": 1381,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm and thick, holds a tall shape without spreading"
+       },
+       {
+        "tag": "Form",
+        "value": "Stacked circular ring with a distinct central depression"
+       },
+       {
+        "tag": "Texture",
+        "value": "Coarse, dense, and layered surface"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive brownish-green"
+       }
+      ],
+      "wall_s": 9.448682599933818,
+      "calls": [
+       {
+        "latency_s": 5.579162999987602,
+        "input_tokens": 1977,
+        "output_tokens": 221,
+        "thinking_tokens": 667,
+        "total_tokens": 2865,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 3.8692945000948384,
+        "input_tokens": 2488,
+        "output_tokens": 81,
+        "thinking_tokens": 343,
+        "total_tokens": 2912,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 1381
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm and stiff, holding substantial vertical height without spreading"
+       },
+       {
+        "tag": "Form",
+        "value": "Tall stacked mound with distinct steep sides and central depression"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, coarse, and fibrous surface texture"
+       },
+       {
+        "tag": "Colour",
+        "value": "Uniform olive brown to dark greenish-brown"
+       }
+      ],
+      "wall_s": 10.155368000036106,
+      "calls": [
+       {
+        "latency_s": 6.366843599942513,
+        "input_tokens": 1977,
+        "output_tokens": 231,
+        "thinking_tokens": 820,
+        "total_tokens": 3028,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 3.788336000056006,
+        "input_tokens": 2488,
+        "output_tokens": 78,
+        "thinking_tokens": 372,
+        "total_tokens": 2938,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 1381
+        }
+       }
+      ]
+     }
+    ],
+    "two_flash38_low": [
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Thick, tall mound with an elevated ring and central depression"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Firm and upright, stacking well above the ground"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, fibrous surface with layered edges"
+       },
+       {
+        "tag": "Colour",
+        "value": "Dark olive-brown"
+       }
+      ],
+      "wall_s": 7.68012659996748,
+      "calls": [
+       {
+        "latency_s": 5.1785823999671265,
+        "input_tokens": 1977,
+        "output_tokens": 221,
+        "thinking_tokens": 586,
+        "total_tokens": 2784,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 2.5013539000647143,
+        "input_tokens": 2488,
+        "output_tokens": 92,
+        "thinking_tokens": 0,
+        "total_tokens": 2580,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 1381
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Form",
+        "value": "Thick, elevated mound stacked in concentric rings with a central depression"
+       },
+       {
+        "tag": "Consistency",
+        "value": "Firm, stiff, holding considerable height without slumping"
+       },
+       {
+        "tag": "Colour",
+        "value": "Uniform greenish-brown"
+       },
+       {
+        "tag": "Texture",
+        "value": "Rough, slightly fibrous, cohesive surface"
+       }
+      ],
+      "wall_s": 5.53133050003089,
+      "calls": [
+       {
+        "latency_s": 3.512719399994239,
+        "input_tokens": 1977,
+        "output_tokens": 227,
+        "thinking_tokens": 0,
+        "total_tokens": 2204,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 870
+        }
+       },
+       {
+        "latency_s": 2.0183751999866217,
+        "input_tokens": 2488,
+        "output_tokens": 86,
+        "thinking_tokens": 0,
+        "total_tokens": 2574,
+        "input_by_modality": {
+         "TEXT": 1381,
+         "IMAGE": 1107
+        }
+       }
+      ]
+     },
+     {
+      "score": 4,
+      "sub_code": "4-S-W",
+      "fresh": true,
+      "is_manure": true,
+      "tags": [
+       {
+        "tag": "Consistency",
+        "value": "Firm and thick, holding a distinct upright stack"
+       },
+       {
+        "tag": "Form",
+        "value": "High layered mound with a central depression and firm edges"
+       },
+       {
+        "tag": "Texture",
+        "value": "Coarse and fibrous surface with visible stacked rings"
+       },
+       {
+        "tag": "Colour",
+        "value": "Olive-brown colour throughout"
+       }
+      ],
+      "wall_s": 7.141993700060993,
+      "calls": [
+       {
+        "latency_s": 4.351739099947736,
+        "input_tokens": 1977,
+        "output_tokens": 227,
+        "thinking_tokens": 329,
+        "total_tokens": 2533,
+        "input_by_modality": {
+         "TEXT": 870,
+         "IMAGE": 1107
+        }
+       },
+       {
+        "latency_s": 2.790057700010948,
+        "input_tokens": 2488,
+        "output_tokens": 98,
+        "thinking_tokens": 0,
+        "total_tokens": 2586,
+        "input_by_modality": {
+         "IMAGE": 1107,
+         "TEXT": 1381
+        }
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

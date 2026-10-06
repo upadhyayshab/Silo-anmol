@@ -1,0 +1,48 @@
+### Manure report — with cow_id (premium body, cow_id echoed back)
+#@name Manure Report
+POST http://localhost:8000/manure/report
+x-upid: {{ upid }}
+x-subscription-id: test-subs-001
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="lang_code"
+
+en
+--boundary
+Content-Disposition: form-data; name="category"
+
+manure
+--boundary
+Content-Disposition: form-data; name="cow_id"
+
+cow_test_001
+--boundary
+Content-Disposition: form-data; name="image"; filename="dung.webp"
+Content-Type: image/webp
+
+< ../../test_images/close-up-shot-fresh-cow-dung-forest-uttarakhand-india-255967705.webp
+--boundary--
+
+### Manure report — by image_url, no cow_id (cow_id absent from response), Hindi tags
+POST http://localhost:8000/manure/report
+x-upid: {{ upid }}
+Content-Type: application/x-www-form-urlencoded
+
+lang_code=hi&image_url=https://your-host/path/to/dung.jpg
+
+### Expect 422 NOT_MANURE — a cow photo instead of dung
+POST http://localhost:8000/manure/report
+x-upid: {{ upid }}
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="lang_code"
+
+en
+--boundary
+Content-Disposition: form-data; name="image"; filename="cow.jpg"
+Content-Type: image/jpeg
+
+< ../../images (4).jpg
+--boundary--

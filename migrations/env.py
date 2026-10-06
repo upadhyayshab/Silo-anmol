@@ -7,7 +7,7 @@ sys.path.append(str(Path(__file__).parents[1] / "SharedBackend" / "src"))
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 
 from alembic import context
 
@@ -24,6 +24,17 @@ if config.config_file_name is not None: fileConfig(config.config_file_name)
 target_metadata = BaseSchema.metadata
 
 config.set_main_option("sqlalchemy.url", settings.engine_str.replace("+aiosqlite", "").replace("+asyncpg", ""))
+
+# This service's schema. It must be explicit: the shared dev DB login is named
+# after another service's schema, so Postgres' default search_path ("$user")
+# would otherwise put these tables — and alembic_version — in that schema.
+SCHEMA = settings.name if settings.supports_schema else None
+
+
+def _include_object(obj, name, type_, reflected, compare_to):
+    # With search_path pinned to SCHEMA, autogenerate reflects alembic's own
+    # version table as an unknown table and proposes dropping it.
+    return not (type_ == "table" and name == "alembic_version")
 
 
 def run_migrations_offline() -> None:
@@ -44,9 +55,13 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table_schema=SCHEMA,
     )
 
     with context.begin_transaction():
+        if SCHEMA:
+            context.execute(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"')
+            context.execute(f'SET search_path TO "{SCHEMA}"')
         context.run_migrations()
 
 
@@ -64,8 +79,13 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        if SCHEMA:
+            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+            connection.execute(text(f'SET search_path TO "{SCHEMA}"'))
+            connection.commit()
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, target_metadata=target_metadata, version_table_schema=SCHEMA,
+            include_object=_include_object,
         )
 
         with context.begin_transaction():

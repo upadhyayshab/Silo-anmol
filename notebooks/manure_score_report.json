@@ -1,0 +1,36 @@
+{
+  "results": [
+    {
+      "image_path": "D:\\Work_repo\\vlm-detectors\\test_images\\close-up-shot-fresh-cow-dung-forest-uttarakhand-india-255967705.webp",
+      "model": "gemini-3.1-pro-preview",
+      "manure_score": 4,
+      "health_status": "Slow Digestion",
+      "priority": "Moderate",
+      "reasoning": "The dung forms a firm, highly stacked pat with deep segments and folds, indicating a thicker, drier consistency characteristic of slow digestion."
+    },
+    {
+      "image_path": "D:\\Work_repo\\vlm-detectors\\test_images\\d9cbd6e02737a00e2dfbc5d692a7a93f279f8a984be897d82df86beb4d3f7a6e.jpg",
+      "model": "gemini-3.1-pro-preview",
+      "manure_score": 3,
+      "health_status": "Healthy",
+      "priority": "Normal",
+      "reasoning": "The dung forms a cohesive, semi-solid dome-shaped pat that holds its own shape without spreading, indicating a healthy consistency."
+    },
+    {
+      "image_path": "D:\\Work_repo\\vlm-detectors\\test_images\\istockphoto-1444657605-1024x1024.jpg",
+      "model": "gemini-3.1-pro-preview",
+      "manure_score": 4,
+      "health_status": "Slow Digestion",
+      "priority": "Moderate",
+      "reasoning": "The dung forms a firm, thick, stacked pat that holds a rigid shape with visible fibre, indicating slower digestion."
+    },
+    {
+      "image_path": "D:\\Work_repo\\vlm-detectors\\test_images\\istockphoto-1445818811-612x612.jpg",
+      "model": "gemini-3.1-pro-preview",
+      "manure_score": 4,
+      "health_status": "Slow Digestion",
+      "priority": "Moderate",
+      "reasoning": "The dung forms a firm, highly stacked and segmented pat with a dry appearance and visible fibre, indicating slow digestion."
+    }
+  ]
+}
