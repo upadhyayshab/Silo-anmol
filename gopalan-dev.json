@@ -1,0 +1,51 @@
+```json
+{
+    "family": "gopalan-dev",
+    "containerDefinitions": [
+        {
+            "name": "gopalan",
+            "image": "<ECR_REPOSITORY>:<IMAGE_TAG>",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "name": "gopalan-dev-8000-tcp",
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "stopTimeout": 120,
+            "environment": [],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/gopalan-dev",
+                    "awslogs-create-group": "true",
+                    "awslogs-region": "ap-south-1",
+                    "awslogs-stream-prefix": "ecs"
+                },
+                "secretOptions": []
+            },
+            "systemControls": []
+        }
+    ],
+    "taskRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-gopalan-dev",
+    "executionRoleArn": "arn:aws:iam::400115659362:role/ecsExecutionRole-gopalan-dev",
+    "networkMode": "awsvpc",
+    "volumes": [],
+    "placementConstraints": [],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "<CPU>",
+    "memory": "<MEMORY>",
+    "runtimePlatform": {
+        "cpuArchitecture": "X86_64",
+        "operatingSystemFamily": "LINUX"
+    }
+}
+```
