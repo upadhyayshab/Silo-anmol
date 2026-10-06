@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from models.diseaseReportModels import DiseaseReportResponse
 from routers.manure import _resolve_image
 from services.diseaseReportService import disease_report_service
+from services.s3Service import s3_service_public
 
 router = APIRouter()
 
@@ -39,7 +40,17 @@ async def disease_report(
     cow_id = (cow_id or "").strip() or None
 
     image_bytes, mime_type = await _resolve_image(image, image_url)
-    img_url = (image_url or "").strip() or (image.filename if image else "upload:image")
+    
+    # If image file uploaded, upload to S3; otherwise use given image_url
+    if image is not None:
+        img_url = await s3_service_public.upload_file(
+            file=image_bytes,
+            filename=image.filename,
+            content_type=mime_type,
+            prefix="cow-images",
+        )
+    else:
+        img_url = (image_url or "").strip()
 
     try:
         report = await disease_report_service.create_report(

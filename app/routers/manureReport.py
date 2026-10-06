@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from models.manureReportModels import ManureReportResponse
 from routers.manure import _resolve_image
 from services.manureReportService import ManureReportService
+from services.s3Service import s3_service_public
 
 router = APIRouter()
 manure_report_service = ManureReportService()
@@ -41,8 +42,16 @@ async def manure_report(
     cow_id = (cow_id or "").strip() or None
 
     image_bytes, mime_type = await _resolve_image(image, image_url)
-    # Local file name for now; replaced by the S3 URL once uploads are wired.
-    img_url = (image_url or "").strip() or image.filename
+    
+    if image is not None:
+        img_url = await s3_service_public.upload_file(
+            file=image_bytes,
+            filename=image.filename,
+            content_type=mime_type,
+            prefix="cow-images",
+        )
+    else:
+        img_url = (image_url or "").strip()
 
     try:
         report = await manure_report_service.create_report(
