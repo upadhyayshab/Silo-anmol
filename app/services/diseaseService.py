@@ -31,11 +31,19 @@ THINKING_LEVEL = types.ThinkingLevel.HIGH
 # All 31 diseases (D01 to D31) from cow_disease_kb
 ENABLED_DISEASE_IDS = tuple(f"D{i:02d}" for i in range(1, 32))
 
-_KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb.json"
+_KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb_multilingual.json"
+if not _KB_PATH.exists():
+    _KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb.json"
+
 with open(_KB_PATH, encoding="utf-8") as _f:
     DISEASE_KB: list[dict] = json.load(_f)
 
-_KB_BY_ID: dict[str, dict] = {row["disease_id"]: row for row in DISEASE_KB}
+_KB_BY_LANG_AND_ID: dict[tuple[str, str], dict] = {
+    (row.get("lang_code", "en"), row["disease_id"]): row for row in DISEASE_KB
+}
+_KB_BY_ID: dict[str, dict] = {
+    row["disease_id"]: row for row in DISEASE_KB if row.get("lang_code", "en") == "en"
+}
 ENABLED_DISEASES: list[dict] = [_KB_BY_ID[disease_id] for disease_id in ENABLED_DISEASE_IDS]
 
 SYSTEM_PROMPT = build_disease_system_prompt(ENABLED_DISEASES)
@@ -119,7 +127,7 @@ class DiseaseService:
         settings = get_settings()
         self._client = genai.Client(api_key=settings.gemini_api_key)
 
-    async def detect(self, image_bytes: bytes, mime_type: str) -> dict:
+    async def detect(self, image_bytes: bytes, mime_type: str, lang_code: str = "en") -> dict:
         response = await self._client.aio.models.generate_content(
             model=MODEL,
             contents=[
@@ -144,10 +152,16 @@ class DiseaseService:
             raise ValueError(f"Gemini returned no parseable screening: {response.text!r}")
 
         assessments_by_id = {a.disease_id: a for a in (screening.assessments or [])}
-        findings = [
-            _to_finding(row, assessments_by_id.get(row["disease_id"]) if screening.is_cattle_image else None)
-            for row in ENABLED_DISEASES
-        ]
+        findings = []
+        for did in ENABLED_DISEASE_IDS:
+            assessment = assessments_by_id.get(did) if screening.is_cattle_image else None
+            loc_row = (
+                _KB_BY_LANG_AND_ID.get((lang_code, did))
+                or _KB_BY_ID.get(did)
+                or {"disease_id": did, "disease_name": did}
+            )
+            findings.append(_to_finding(loc_row, assessment))
+
         return {
             "is_cattle_image": screening.is_cattle_image,
             "image_view": screening.image_view,

@@ -30,11 +30,19 @@ THINKING_LEVEL = types.ThinkingLevel.HIGH
 ENABLED_DISEASE_IDS = tuple(f"D{i:02d}" for i in range(1, 32))
 
 # Fallback JSON path for offline/unit tests
-_KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb.json"
+_KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb_multilingual.json"
+if not _KB_PATH.exists():
+    _KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb.json"
+
 with open(_KB_PATH, encoding="utf-8") as _f:
     _FALLBACK_KB: list[dict] = json.load(_f)
 
-_FALLBACK_BY_ID: dict[str, dict] = {row["disease_id"]: row for row in _FALLBACK_KB}
+_FALLBACK_BY_LANG_AND_ID: dict[tuple[str, str], dict] = {
+    (row.get("lang_code", "en"), row["disease_id"]): row for row in _FALLBACK_KB
+}
+_FALLBACK_BY_ID: dict[str, dict] = {
+    row["disease_id"]: row for row in _FALLBACK_KB if row.get("lang_code", "en") == "en"
+}
 
 
 class _DiseaseAssessment(BaseModel):
@@ -207,10 +215,27 @@ class DiseaseReportService:
             )
 
         assessments_by_id = {a.disease_id: a for a in (screening.assessments or [])}
-        findings = [
-            _to_finding(row, assessments_by_id.get(row["disease_id"]))
-            for row in enabled_diseases
-        ]
+        findings = []
+        for did in ENABLED_DISEASE_IDS:
+            assessment = assessments_by_id.get(did)
+            loc_schema = await disease_kb_service.get_by_id(did, lang_code=lang_code)
+            if loc_schema:
+                row_dict = {
+                    "disease_id": loc_schema.disease_id,
+                    "disease_name": loc_schema.disease_name,
+                    "severity_and_urgency": loc_schema.severity_and_urgency,
+                    "confirmatory_action": loc_schema.confirmatory_action,
+                    "farmer_question": loc_schema.farmer_question,
+                    "image_quality_needed": loc_schema.image_quality_needed,
+                    "also_known_as": loc_schema.also_known_as,
+                }
+            else:
+                row_dict = (
+                    _FALLBACK_BY_LANG_AND_ID.get((lang_code, did))
+                    or _FALLBACK_BY_ID.get(did)
+                    or {"disease_id": did, "disease_name": did}
+                )
+            findings.append(_to_finding(row_dict, assessment))
 
         detected_count = sum(1 for f in findings if f["status"] == "detected")
         suspected_count = sum(1 for f in findings if f["status"] == "suspected")

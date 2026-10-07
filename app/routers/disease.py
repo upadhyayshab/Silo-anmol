@@ -32,7 +32,7 @@ async def detect_disease(
     """
     image_bytes, mime_type = await _resolve_image(image, image_url)
     try:
-        result = await disease_service.detect(image_bytes, mime_type)
+        result = await disease_service.detect(image_bytes, mime_type, lang_code=lang_code)
     except HTTPException:
         raise
     except Exception as e:
