@@ -26,7 +26,8 @@ MODEL = "gemini-3.1-pro-preview"
 TEMPERATURE = 0.0
 THINKING_LEVEL = types.ThinkingLevel.HIGH
 
-ENABLED_DISEASE_IDS = ("D01", "D02", "D03", "D04")
+# All 31 diseases (D01 to D31) from disease_kb
+ENABLED_DISEASE_IDS = tuple(f"D{i:02d}" for i in range(1, 32))
 
 # Fallback JSON path for offline/unit tests
 _KB_PATH = Path(__file__).parents[1] / "data" / "cow_disease_kb.json"
@@ -37,6 +38,7 @@ _FALLBACK_BY_ID: dict[str, dict] = {row["disease_id"]: row for row in _FALLBACK_
 
 
 class _DiseaseAssessment(BaseModel):
+    disease_id: str = Field(..., description="Disease ID, e.g. 'D01', 'D02', ..., 'D31'")
     key_region_observation: str = Field(
         ...,
         description=(
@@ -45,26 +47,23 @@ class _DiseaseAssessment(BaseModel):
             "Describe only; do not name the disease or give a verdict here."
         ),
     )
-    signs_observed: list[str] = Field(..., description="Signs of this disease actually visible. Empty if none.")
-    signs_against: list[str] = Field(..., description="Visible signs that argue against this disease. Empty if none.")
+    signs_observed: list[str] = Field(default_factory=list, description="Signs of this disease actually visible. Empty if none.")
+    signs_against: list[str] = Field(default_factory=list, description="Visible signs that argue against this disease. Empty if none.")
     assessable: bool = Field(..., description="False if the required view/regions are not visible enough to judge.")
     detected: bool = Field(..., description="True only if the minimum evidence to report is visible.")
-    confidence: Confidence = Field(..., description="Per this disease's confidence rules.")
-    severity: Severity = Field(..., description="Healthy unless detected.")
+    confidence: Optional[Confidence] = Field(None, description="Per this disease's confidence rules.")
+    severity: Severity = Field("Healthy", description="Healthy unless detected.")
     reasoning: str = Field(..., description="One-to-two sentence justification citing the visual evidence.")
 
 
+class _DiseaseScreening(BaseModel):
+    is_cattle_image: bool = Field(..., description="True if this is a real photo of a cow or buffalo.")
+    image_view: str = Field(..., description="View shown, e.g. 'left side', 'right side', 'face front', 'rear', 'udder close-up'.")
+    assessments: list[_DiseaseAssessment] = Field(..., description="Assessment for each of the 31 listed diseases in order (D01 to D31).")
+
+
 def _build_screening_schema(enabled_rows: list[dict]) -> type[BaseModel]:
-    return create_model(
-        "_DiseaseScreeningDynamic",
-        is_cattle_image=(bool, Field(..., description="True if this is a real photo of a cow or buffalo.")),
-        image_view=(str, Field(..., description="View shown, e.g. 'left side', 'right side', 'face front', 'rear', 'udder close-up'.")),
-        **{
-            row["disease_id"]: (_DiseaseAssessment, Field(..., description=f"Assessment for {row['disease_id']} — {row['disease_name']}."))
-            for row in enabled_rows
-        },
-        __base__=BaseModel,
-    )
+    return _DiseaseScreening
 
 
 def _farmer_questions(row: dict) -> list[str]:
@@ -207,8 +206,9 @@ class DiseaseReportService:
                 detail={"code": "NOT_CATTLE", "message": "Image is not a photo of a cow or buffalo."},
             )
 
+        assessments_by_id = {a.disease_id: a for a in (screening.assessments or [])}
         findings = [
-            _to_finding(row, getattr(screening, row["disease_id"], None))
+            _to_finding(row, assessments_by_id.get(row["disease_id"]))
             for row in enabled_diseases
         ]
 

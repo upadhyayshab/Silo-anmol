@@ -1,9 +1,8 @@
 """
 Disease screening endpoint — mounted at the app root alongside /detect/manure.
 
-  - POST /detect/disease — screens one cattle photo for the KB diseases enabled
-    in DiseaseService (currently D01-D04: bloat, TRP, lumpy jaw, listeriosis)
-    in a single Gemini call.
+  - POST /detect/disease — screens one cattle photo for all 31 KB diseases enabled
+    in DiseaseService (D01-D31) in a single Gemini call.
 """
 from typing import Optional
 
