@@ -9,6 +9,7 @@ from routers.manure import router as manure_router
 from routers.disease import router as disease_router
 from routers.manureReport import router as manure_report_router
 from routers.diseaseReport import router as disease_report_router
+from routers.reports import router as reports_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -23,6 +24,7 @@ app.include_router(manure_router)
 app.include_router(disease_router)
 app.include_router(manure_report_router)
 app.include_router(disease_report_router)
+app.include_router(reports_router)
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore
