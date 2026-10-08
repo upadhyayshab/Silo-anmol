@@ -1,0 +1,15 @@
+node {
+
+    stage('Checkout Code') {
+        checkout scm
+    }
+
+    stage('SonarQube Analysis') {
+        withSonarQubeEnv('sonarqube') {
+            sh '''
+                sonar-scanner \
+                  -Dsonar.projectKey=gopa-back \
+                  -Dsonar.sources=.
+            '''
+        }
+    }
