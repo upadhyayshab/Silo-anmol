@@ -47,12 +47,13 @@ class TestMappingHelpers(IsolatedAsyncioTestCase):
 
 
 class TestWizardSubmit(IsolatedAsyncioTestCase):
+    @patch("routers.v2.wizard.user_crop_report_manager")
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_submit_without_farm_id_uses_payload_location(
-        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
@@ -62,6 +63,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
+        mock_ucr_manager.create = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(
             results=[CropRecommendation(
                 crop="Tomato", family="Vegetable", horizon="SEASONAL",
@@ -277,12 +279,13 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
     """DEF-03: every wizard recommendation must be logged to
     recommendation_history, same as /api/v1/recommend."""
 
+    @patch("routers.v2.wizard.user_crop_report_manager")
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_successful_submission_writes_recommendation_history(
-        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
@@ -291,6 +294,7 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
+        mock_ucr_manager.create = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(
             zone_filter_applied=True, soil_class_detected=4, soil_texture_label="Clay Loam",
             notes=["note"],
