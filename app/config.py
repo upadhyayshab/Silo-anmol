@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     jwt_secret: str = os.getenv("JWT_SECRET", "")
     subscription_base_url: str = os.getenv("SUBSCRIPTION_BASE_URL", "")
 
+    msk_bootstrap_servers: str = os.getenv("MSK_BOOTSTRAP_SERVERS", "")
+    msk_region: str = os.getenv("MSK_REGION", "") or os.getenv("REGION_NAME", "ap-south-1")
+    msk_role_arn: str = os.getenv("MSK_ROLE_ARN", "")
+    crop_guide_completed_topic: str = os.getenv("CROP_GUIDE_COMPLETED_TOPIC", "crop_guide_completed")
+
     class subservices:  # noqa
         pass
 
