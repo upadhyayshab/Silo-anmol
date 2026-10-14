@@ -1,0 +1,59 @@
+"""Crop guide report/dossier endpoints — spec §5 Phase 5, mounted at
+/api/v2/reports rather than the spec's literal /api/v6 (this plan's
+versioning decision)."""
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Path, Query
+
+from config import get_engine, get_settings
+from dependencies.auth import require_jwt
+from managers.cropReportManagers import CropReportManager, UserCropReportManager
+from models.reportModels import SingleCropDossier, UnifiedCropReportResponse, UserReportsListResponse
+from services.cropReportService import CropReportService
+
+router = APIRouter(prefix="/reports", tags=["Crop Guide Reports v2"])
+settings = get_settings()
+engine = get_engine(settings.name)
+report_service = CropReportService(
+    crop_report_manager=CropReportManager(engine),
+    user_crop_report_manager=UserCropReportManager(engine),
+)
+
+
+@router.get("/users/{user_id}/reports", response_model=UserReportsListResponse)
+async def list_user_reports(
+    user_id: str = Path(...),
+    farm_id: Optional[str] = Query(None),
+    recommendation_id: Optional[str] = Query(None),
+    lang: str = Query("en"),
+    auth_payload: dict = Depends(require_jwt),
+):
+    return await report_service.list_user_reports(
+        user_id=user_id, farm_id=farm_id, recommendation_id=recommendation_id, lang=lang,
+    )
+
+
+@router.get("/recommendations/{recommendation_id}/report", response_model=UnifiedCropReportResponse)
+async def get_recommendation_report(
+    recommendation_id: str = Path(...),
+    lang: str = Query("en"),
+    crop_id: Optional[str] = Query(None),
+    farm_id: Optional[str] = Query(None),
+    auth_payload: dict = Depends(require_jwt),
+):
+    return await report_service.get_or_create_unified_report(
+        recommendation_id=recommendation_id, user_id=auth_payload.get("upid"),
+        farm_id=farm_id, lang=lang, focus_crop_id=crop_id,
+    )
+
+
+@router.get("/crops/{crop_id}/report", response_model=SingleCropDossier)
+async def get_master_crop_report(
+    crop_id: str = Path(...),
+    lang: str = Query("en"),
+    auth_payload: dict = Depends(require_jwt),
+):
+    return await report_service.get_master_report(crop_id=crop_id.lower(), lang=lang)
+
+
+__all__ = ["router"]
