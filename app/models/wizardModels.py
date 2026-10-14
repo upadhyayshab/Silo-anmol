@@ -67,6 +67,7 @@ class WizardRecommendationItem(BaseModel):
 
 class WizardSubmitResponse(BaseModel):
     recommendations: List[WizardRecommendationItem]
+    recommendation_id: str
 
 
 __all__ = [

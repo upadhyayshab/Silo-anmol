@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from config import get_engine, get_settings
 from dependencies.auth import require_jwt
 from managers.cropManagers import CropManager, RecommendationHistoryManager, RecommendationHistorySchema
+from managers.cropReportManagers import UserCropReportManager, UserCropReportSchema
 from models.wizardModels import (
     FarmContext, WizardQuestion, WizardQuestionOption, WizardQuestionsResponse,
 )
@@ -37,6 +38,7 @@ scoring_engine = CropScoringEngine(engine)
 subscription_service = SubscriptionService()
 event_broker = EventBrokerService()
 history_manager = RecommendationHistoryManager(engine)
+user_crop_report_manager = UserCropReportManager(engine)
 
 ALL_QUESTIONS: list[WizardQuestion] = [
     WizardQuestion(id="location", type="map_pin", label="Where is your farm?", required=True),
@@ -216,6 +218,8 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
         previous_crop_family=previous_crop_family, was_fallow=was_fallow, top_n=5,
     )
 
+    recommendation_id = str(uuid.uuid4())
+
     # DEF-02: meter usage against the same subscription quota /api/v1/recommend
     # already enforces — verify before the (paid) scoring pipeline runs.
     verify_ok, _ = await subscription_service.verify(upid, payload.subscription_id)
@@ -253,9 +257,33 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
             soil_texture_label=response.soil_texture_label,
             results=[r.model_dump() for r in response.results],
             notes=response.notes,
+            farm_id=payload.farmId,
+            farm_name=answers.farm_name or (farm.get("name") if farm else None),
+            livestock=answers.livestock,
+            current_crop_code=rotation_crop_name,
+            sowing_date=answers.sowing_date,
         ))
     except Exception as exc:
         logger.error(f"failed to write wizard recommendation history for upid={upid}: {exc}")
+
+    try:
+        if response.results:
+            top = response.results[0]
+            await user_crop_report_manager.create(UserCropReportSchema(
+                user_id=upid,
+                farm_id=payload.farmId,
+                recommendation_id=recommendation_id,
+                farm_name=answers.farm_name or (farm.get("name") if farm else None),
+                season=season,
+                language="en",
+                top_crop_id=top.crop.lower().replace(" ", "_"),
+                top_crop_name=top.crop,
+                top_crop_score=round(top.suitability_pct),
+                total_recommendations=len(response.results),
+                report_data={"results": [r.model_dump() for r in response.results]},
+            ))
+    except Exception as exc:
+        logger.error(f"failed to pre-hydrate user_crop_reports for upid={upid}: {exc}")
 
     recommendations = [
         WizardRecommendationItem(
@@ -272,20 +300,21 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
     # Focus) -- it falls back to the event_outbox internally; awaiting here
     # (instead of asyncio.create_task) keeps the call deterministic for
     # tests and avoids a task that can outlive the request's own lifecycle.
-    await _publish_crop_guide_completed(upid, payload, farm, season, budget_bucket)
+    await _publish_crop_guide_completed(upid, payload, farm, season, budget_bucket, recommendation_id)
 
-    return WizardSubmitResponse(recommendations=recommendations)
+    return WizardSubmitResponse(recommendations=recommendations, recommendation_id=recommendation_id)
 
 
 async def _publish_crop_guide_completed(
-    upid: str, payload: WizardSubmitRequest, farm: dict | None, season: str, budget_bucket: str
+    upid: str, payload: WizardSubmitRequest, farm: dict | None, season: str, budget_bucket: str,
+    recommendation_id: str,
 ) -> None:
     """Awaited by the caller; EventBrokerService.publish never raises (it
     falls back to the event_outbox on a Kafka outage), so a broker failure
     never turns a working recommendation into a 500."""
     answers = payload.answers
     event = {
-        "event_id": str(uuid.uuid4()),
+        "event_id": recommendation_id,
         "event_type": "CropGuideCompleted",
         "version": "1.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),

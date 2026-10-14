@@ -180,6 +180,11 @@ class RecommendationHistorySchema(BaseSchema):
     soil_texture_label = db.Column(db.String, nullable=True)
     results = db.Column(db.JSON, nullable=False)
     notes = db.Column(db.JSON, nullable=False)
+    farm_id = db.Column(db.String(255), nullable=True)
+    farm_name = db.Column(db.String(255), nullable=True)
+    livestock = db.Column(db.String(255), nullable=True)
+    current_crop_code = db.Column(db.String(255), nullable=True)
+    sowing_date = db.Column(db.Date(), nullable=True)
 
 
 class RecommendationHistoryManager(GenericManager[RecommendationHistorySchema]):
