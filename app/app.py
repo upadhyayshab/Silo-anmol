@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager
 from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
 from config import get_settings, get_engine
-from routers import admin_router, v1_router
+from routers import admin_router, v1_router, v2_router
 
 settings = get_settings()
 engine = get_engine(settings.name)
@@ -25,6 +25,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(admin_router, prefix="/admin")
 app.include_router(v1_router, prefix="/api/v1")
+app.include_router(v2_router, prefix="/api/v2")
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore
