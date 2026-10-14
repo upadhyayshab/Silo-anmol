@@ -66,6 +66,17 @@ async def replay_pending_events(outbox_manager: EventOutboxManager, session, lim
         try:
             await publish_event(row.topic, json.dumps(row.payload), key=row.event_key)
             await outbox_manager.update(uid=row.uid, updates={"status": "COMPLETED"}, session=session)
+            # Commit per-row, not once per up-to-50-row batch: update() above only
+            # flushes. If asyncio.CancelledError (an ordinary SIGTERM shutdown, not
+            # just a crash) arrives while a later row in this same batch is still
+            # awaiting publish_event, it propagates out of this function before any
+            # batch-level commit runs, and an uncommitted flush is discarded on
+            # session close -- silently reverting this row to PENDING even though
+            # publish_event already succeeded, causing a real double-publish on the
+            # next process start. Committing immediately after each row reaches a
+            # terminal state closes that window down to "mid-publish-call-for-this-
+            # exact-row", the inherent, accepted limit of any non-2PC outbox.
+            await session.commit()
             replayed += 1
         except Exception as exc:
             new_retry_count = row.retry_count + 1
@@ -76,6 +87,7 @@ async def replay_pending_events(outbox_manager: EventOutboxManager, session, lim
                 updates={"status": new_status, "retry_count": new_retry_count, "last_error": str(exc)},
                 session=session,
             )
+            await session.commit()
 
     return replayed
 
@@ -83,12 +95,18 @@ async def replay_pending_events(outbox_manager: EventOutboxManager, session, lim
 async def run_replay_loop(outbox_manager: EventOutboxManager, poll_interval_seconds: int = 60) -> None:
     """Runs until cancelled (app.py cancels this task on shutdown). Each
     iteration opens its own session so a single failed commit doesn't wedge
-    the loop for the rest of the process's lifetime."""
+    the loop for the rest of the process's lifetime.
+
+    No commit happens here: replay_pending_events commits after each row's
+    terminal update, not once for the whole batch, so a CancelledError
+    arriving mid-batch can only discard the uncommitted claim-flip of the
+    row currently in flight (which reverts to its original PENDING state,
+    safe to re-claim) -- never a row already published and flushed to
+    COMPLETED/FAILED/retry-PENDING by an earlier iteration of this loop."""
     while True:
         try:
             async with outbox_manager.session_factory() as session:
                 count = await replay_pending_events(outbox_manager, session, limit=50)
-                await session.commit()
             if count:
                 logger.info(f"Replayed {count} outbox event(s)")
         except asyncio.CancelledError:
