@@ -135,6 +135,14 @@ class CropScoringEngine:
                     notes.append(f"Zone mapping not found for pincode {pincode}. Skipping zone filtering.")
             else:
                 notes.append("Pincode could not be resolved from coordinates. Skipping zone filtering.")
+        elif request.pincode:
+            mapping = await self.pincode_manager.fetch_all(limit=1, filters={"pincode": request.pincode})
+            if mapping.items:
+                zone = mapping.items[0].zone
+                zone_resolved = True
+                notes.append(f"Agro-climatic zone resolved to Zone {zone} (from pincode {request.pincode}).")
+            else:
+                notes.append(f"Zone mapping not found for pincode {request.pincode}. Skipping zone filtering.")
         else:
             notes.append(ZONE_SKIPPED_NOTE)
 

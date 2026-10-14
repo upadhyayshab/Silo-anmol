@@ -9,6 +9,7 @@ class RecommendationRequest(BaseModel):
     """Internal request model used by the scoring engine and Streamlit app."""
     lat: Optional[float] = Field(None, ge=-90, le=90, description="Latitude of the location")
     lon: Optional[float] = Field(None, ge=-180, le=180, description="Longitude of the location")
+    pincode: Optional[str] = Field(None, description="6-digit Indian postal code fallback when lat/lon are omitted")
     season: Season
     water_methods: list[WaterMethod] = Field(..., min_length=1, description="Q5, select all methods the farmer has")
     soil_class: int = Field(0, ge=0, le=12, description="Q4 USDA class (1-12); 0 = No Data, skipped/neutral")
