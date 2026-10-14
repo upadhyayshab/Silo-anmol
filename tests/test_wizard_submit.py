@@ -2,6 +2,7 @@
 subscription quota metering, recommendation audit trail, and rotation
 baseline (DEF-02/DEF-03/DEF-04)."""
 import sys
+from datetime import date
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -612,4 +613,81 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
         self.assertEqual(history_row.farm_id, "farm-9")
         self.assertEqual(history_row.farm_name, "East Plot")
         self.assertEqual(history_row.livestock, "cattle")
-        self.assertEqual(history_row.sowing_date, "2026-10-15")
+        # Regression for review finding Critical #1: sowing_date is a real
+        # db.Date() column -- SQLAlchemy does not coerce strings, so this
+        # must be a real date object, not the raw ISO string, or the write
+        # raises a TypeError against a real engine (silently swallowed by
+        # the try/except around this call in production).
+        self.assertEqual(history_row.sowing_date, date(2026, 10, 15))
+
+    @patch("routers.v2.wizard.user_crop_report_manager")
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.event_broker")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_malformed_sowing_date_falls_back_to_none_not_raise(
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager
+    ):
+        # A malformed sowing_date must not lose the whole audit row -- it
+        # falls back to None rather than raising.
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_event_broker.publish = AsyncMock()
+        mock_ucr_manager.create = AsyncMock()
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_1",
+            answers=WizardAnswersPayload(
+                location=[73.0, 18.0], season="Rabi", irrigation=["Drip"], sowing_date="not-a-date",
+            ),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
+
+        history_row = mock_history_manager.create.call_args.args[0]
+        self.assertIsNone(history_row.sowing_date)
+
+    @patch("routers.v2.wizard.user_crop_report_manager")
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.event_broker")
+    @patch("routers.v2.wizard.crop_manager")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_current_crop_code_uses_answers_crop_when_no_farm_and_active_crop_yes(
+        self, mock_scoring_engine, mock_crop_manager, mock_event_broker, mock_sub_service,
+        mock_history_manager, mock_ucr_manager
+    ):
+        # Regression for review finding Important #2: for a farmId-less
+        # submission where the farmer reports an active crop, current_crop_code
+        # must store THAT crop (answers.crop) -- not rotation_crop_name, which
+        # in the no-farm branch is answers.previous_crop (a different field).
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_event_broker.publish = AsyncMock()
+        mock_ucr_manager.create = AsyncMock()
+        wheat_crop = MagicMock(family="Cereal")
+        mock_crop_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[wheat_crop]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_1",
+            answers=WizardAnswersPayload(
+                location=[73.0, 18.0], season="Rabi", irrigation=["Drip"],
+                has_active_crop="Yes", crop="Tomato", previous_crop="Wheat",
+            ),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        history_row = mock_history_manager.create.call_args.args[0]
+        self.assertEqual(history_row.current_crop_code, "Tomato")
+        # previous_crop_code (the rotation baseline) is the DIFFERENT field --
+        # confirms this isn't accidentally asserting the same value twice.
+        self.assertEqual(history_row.previous_crop_code, "Wheat")

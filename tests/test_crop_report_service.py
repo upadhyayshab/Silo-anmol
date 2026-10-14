@@ -131,3 +131,68 @@ class TestGetOrCreateUnifiedReport(IsolatedAsyncioTestCase):
         self.assertEqual(report.top_crop_id, "wheat")
         self.assertEqual(report.top_crop_name, "Wheat")
         self.assertEqual(report.top_crop_score, 84)
+
+
+class TestListUserReportsCropIdResolution(IsolatedAsyncioTestCase):
+    """Regression for review finding Important #3: the real crop_reports.crop_id
+    doesn't always follow the naive `name.lower().replace(" ", "_")` slug rule
+    (e.g. a crop named 'Rice (Paddy)' has a real crop_id that is NOT
+    'rice_(paddy)'). list_user_reports must resolve the REAL catalog crop_id
+    through the same _find_master_row lookup get_or_create_unified_report
+    already uses, not fabricate a different id via naive slugification."""
+
+    async def test_crop_id_resolved_from_catalog_not_naive_slug(self):
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-9", recommendation_id="rec-9", user_id="usr_1", farm_id=None,
+                farm_name=None, season="RABI", top_crop_name="Rice (Paddy)", top_crop_score=88,
+                total_recommendations=1, created_at=None,
+                report_data={"results": [
+                    {"crop": "Rice (Paddy)", "family": "Cereal", "suitability_pct": 88.0},
+                ]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        # Real catalog row's crop_id does NOT match the naive slug
+        # ("rice_(paddy)") -- this is the whole point of the regression.
+        mock_crop_report_manager.fetch_all = AsyncMock(
+            return_value=MagicMock(items=[_crop_report_row(crop_id="paddy_rice", name_en="Rice (Paddy)")])
+        )
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        result = await service.list_user_reports(user_id="usr_1")
+
+        card = result.reports[0]
+        self.assertEqual(card.top_crop_id, "paddy_rice")
+        self.assertEqual(card.recommended_crops_summary[0].crop_id, "paddy_rice")
+
+    async def test_crop_id_falls_back_to_naive_slug_when_not_in_catalog(self):
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-10", recommendation_id="rec-10", user_id="usr_1", farm_id=None,
+                farm_name=None, season="RABI", top_crop_name="Obscure Crop", top_crop_score=70,
+                total_recommendations=1, created_at=None,
+                report_data={"results": [
+                    {"crop": "Obscure Crop", "family": "Unknown", "suitability_pct": 70.0},
+                ]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[]))  # no catalog row at all
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        result = await service.list_user_reports(user_id="usr_1")
+
+        card = result.reports[0]
+        self.assertEqual(card.top_crop_id, "obscure_crop")
+        self.assertEqual(card.recommended_crops_summary[0].crop_id, "obscure_crop")

@@ -19,6 +19,24 @@ class TestEventBrokerServiceMemoryMode(IsolatedAsyncioTestCase):
 
         mock_publish.assert_not_called()
 
+    @patch("services.eventBrokerService.logger")
+    @patch("services.eventBrokerService.get_settings")
+    @patch("services.eventBrokerService.publish_event", new_callable=AsyncMock)
+    async def test_memory_mode_logs_at_warning_not_debug(self, mock_publish, mock_get_settings, mock_logger):
+        # Regression for review finding Important #4: a misconfigured
+        # production deployment (BROKER_TYPE left at its "memory" default)
+        # must be loud about dropping every CropGuideCompleted event --
+        # logger.debug sits below most production log levels and would make
+        # the drop invisible.
+        from services.eventBrokerService import EventBrokerService
+        mock_get_settings.return_value.broker_type = "memory"
+
+        service = EventBrokerService()
+        await service.publish("crop_guide_completed", {"event_id": "evt-1"}, key="k1")
+
+        mock_logger.warning.assert_called_once()
+        mock_logger.debug.assert_not_called()
+
 
 class TestEventBrokerServiceKafkaMode(IsolatedAsyncioTestCase):
     @patch("services.eventBrokerService.EventOutboxManager")

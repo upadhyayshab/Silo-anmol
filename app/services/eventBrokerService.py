@@ -23,7 +23,11 @@ class EventBrokerService:
         settings = get_settings()
 
         if settings.broker_type == "memory":
-            logger.debug(f"[MEMORY BROKER] {topic}: {payload}")
+            # warning, not debug: a production deployment that forgets to set
+            # BROKER_TYPE=kafka must see this loudly in its own logs, not have
+            # every CropGuideCompleted event silently dropped below the
+            # default log level (Review finding Important #4).
+            logger.warning(f"[MEMORY BROKER] {topic}: {payload}")
             return
 
         if settings.broker_type == "sqs":

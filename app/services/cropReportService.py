@@ -105,25 +105,35 @@ class CropReportService:
             filters["recommendation_id"] = recommendation_id
         runs = await self.user_crop_report_manager.fetch_all(limit=0, filters=filters, sorts=["-created_at"])
 
-        cards = [
-            UserReportSummaryCard(
+        cards = []
+        for run in runs.items:
+            summaries = []
+            for i, r in enumerate(run.report_data.get("results", [])):
+                summaries.append(RecommendedCropSummaryItem(
+                    crop_id=await self._resolve_crop_id(r["crop"]), crop_name=r["crop"],
+                    crop_name_vernacular=r["crop"], match_score=round(r["suitability_pct"]),
+                    is_top_pick=(i == 0),
+                ))
+            cards.append(UserReportSummaryCard(
                 report_id=run.uid, recommendation_id=run.recommendation_id, farm_id=run.farm_id,
-                farm_name=run.farm_name, season=run.season, top_crop_id=run.top_crop_name.lower().replace(" ", "_"),
+                farm_name=run.farm_name, season=run.season, top_crop_id=await self._resolve_crop_id(run.top_crop_name),
                 top_crop_name=run.top_crop_name, top_crop_vernacular=run.top_crop_name,
                 top_crop_score=run.top_crop_score, total_recommended_crops=run.total_recommendations,
-                recommended_crops_summary=[
-                    RecommendedCropSummaryItem(
-                        crop_id=r["crop"].lower().replace(" ", "_"), crop_name=r["crop"],
-                        crop_name_vernacular=r["crop"], match_score=round(r["suitability_pct"]),
-                        is_top_pick=(i == 0),
-                    )
-                    for i, r in enumerate(run.report_data.get("results", []))
-                ],
+                recommended_crops_summary=summaries,
                 created_at=run.created_at.isoformat() if run.created_at else "",
-            )
-            for run in runs.items
-        ]
+            ))
         return UserReportsListResponse(user_id=user_id, total=len(cards), reports=cards)
+
+    async def _resolve_crop_id(self, crop_name: str) -> str:
+        """The real crop_reports.crop_id doesn't always follow the naive
+        `name.lower().replace(" ", "_")` slug rule (e.g. 'Rice (Paddy)'), so
+        resolve it through the same master-catalog lookup used elsewhere in
+        this class, falling back to the naive slug only when no catalog row
+        exists for that crop name (Review finding Important #3)."""
+        master_row = await self._find_master_row(crop_name)
+        if master_row is not None:
+            return master_row.crop_id
+        return crop_name.lower().replace(" ", "_")
 
 
 __all__ = ["CropReportService"]

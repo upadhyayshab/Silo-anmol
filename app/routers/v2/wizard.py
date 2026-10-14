@@ -13,7 +13,7 @@ from services.agroInternalService import AgroInternalService
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
 
@@ -141,6 +141,21 @@ def _map_budget(budget: str) -> str:
     return mapped
 
 
+def _parse_sowing_date(raw: Optional[str]) -> Optional[date]:
+    """RecommendationHistorySchema.sowing_date is a real db.Date() column --
+    SQLAlchemy does not coerce strings into Python date objects, so passing
+    the wizard's raw ISO string through raises a TypeError at write time (the
+    bug this guards against). A malformed value must not lose the whole
+    audit row, so it's logged and dropped rather than raised."""
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except (ValueError, TypeError) as exc:
+        logger.warning(f"failed to parse sowing_date '{raw}': {exc}")
+        return None
+
+
 _VALID_WATER_METHODS = {"RAINFED", "SURFACE", "DRIP", "SPRINKLER"}
 
 
@@ -260,8 +275,15 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
             farm_id=payload.farmId,
             farm_name=answers.farm_name or (farm.get("name") if farm else None),
             livestock=answers.livestock,
-            current_crop_code=rotation_crop_name,
-            sowing_date=answers.sowing_date,
+            # current_crop_code must describe what's actually standing on the
+            # field right now, not the rotation predecessor used for scoring
+            # (rotation_crop_name) -- those are different things when there's
+            # no farm record and the farmer just reported a fresh active crop.
+            current_crop_code=(
+                farm.get("crop") if (farm and farm.get("has_active_crop"))
+                else (answers.crop if (answers.has_active_crop or "").lower() == "yes" else None)
+            ),
+            sowing_date=_parse_sowing_date(answers.sowing_date),
         ))
     except Exception as exc:
         logger.error(f"failed to write wizard recommendation history for upid={upid}: {exc}")
