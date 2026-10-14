@@ -3,6 +3,8 @@ from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 
 
@@ -40,3 +42,32 @@ class TestReportsRouter(IsolatedAsyncioTestCase):
         await get_master_crop_report(crop_id="MUSTARD", lang="en", auth_payload={"upid": "usr_1"})
 
         mock_service.get_master_report.assert_awaited_once_with(crop_id="mustard", lang="en")
+
+    @patch("routers.v2.reports.report_service")
+    async def test_list_user_reports_rejects_mismatched_user_id(self, mock_service):
+        """Finding 1 (Critical, IDOR): the path user_id must match the
+        authenticated caller's upid, otherwise any JWT holder could read
+        another user's report list by changing the URL."""
+        from routers.v2.reports import list_user_reports
+        mock_service.list_user_reports = AsyncMock()
+
+        with self.assertRaises(HTTPException) as ctx:
+            await list_user_reports(
+                user_id="usr_other", farm_id=None, recommendation_id=None, lang="en",
+                auth_payload={"upid": "usr_1"},
+            )
+
+        self.assertEqual(ctx.exception.status_code, 403)
+        mock_service.list_user_reports.assert_not_called()
+
+    @patch("routers.v2.reports.report_service")
+    async def test_get_master_crop_report_translates_value_error_to_404(self, mock_service):
+        """Finding 2 (Important): an unknown crop_id raises ValueError from
+        the service layer and must become a 404, not an unhandled 500."""
+        from routers.v2.reports import get_master_crop_report
+        mock_service.get_master_report = AsyncMock(side_effect=ValueError("crop_id 'unknown' not found"))
+
+        with self.assertRaises(HTTPException) as ctx:
+            await get_master_crop_report(crop_id="unknown", lang="en", auth_payload={"upid": "usr_1"})
+
+        self.assertEqual(ctx.exception.status_code, 404)

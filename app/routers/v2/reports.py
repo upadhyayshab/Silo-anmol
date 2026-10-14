@@ -3,7 +3,7 @@
 versioning decision)."""
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from config import get_engine, get_settings
 from dependencies.auth import require_jwt
@@ -28,6 +28,8 @@ async def list_user_reports(
     lang: str = Query("en"),
     auth_payload: dict = Depends(require_jwt),
 ):
+    if user_id != auth_payload.get("upid"):
+        raise HTTPException(status_code=403, detail="Forbidden")
     return await report_service.list_user_reports(
         user_id=user_id, farm_id=farm_id, recommendation_id=recommendation_id, lang=lang,
     )
@@ -41,10 +43,13 @@ async def get_recommendation_report(
     farm_id: Optional[str] = Query(None),
     auth_payload: dict = Depends(require_jwt),
 ):
-    return await report_service.get_or_create_unified_report(
-        recommendation_id=recommendation_id, user_id=auth_payload.get("upid"),
-        farm_id=farm_id, lang=lang, focus_crop_id=crop_id,
-    )
+    try:
+        return await report_service.get_or_create_unified_report(
+            recommendation_id=recommendation_id, user_id=auth_payload.get("upid"),
+            farm_id=farm_id, lang=lang, focus_crop_id=crop_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.get("/crops/{crop_id}/report", response_model=SingleCropDossier)
@@ -53,7 +58,10 @@ async def get_master_crop_report(
     lang: str = Query("en"),
     auth_payload: dict = Depends(require_jwt),
 ):
-    return await report_service.get_master_report(crop_id=crop_id.lower(), lang=lang)
+    try:
+        return await report_service.get_master_report(crop_id=crop_id.lower(), lang=lang)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 __all__ = ["router"]
