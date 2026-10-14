@@ -92,3 +92,42 @@ class TestGetOrCreateUnifiedReport(IsolatedAsyncioTestCase):
 
         self.assertEqual(report.crops, [])
         self.assertEqual(report.total_recommended_crops, 1)  # count reflects the scoring run, not the dossiers found
+
+    async def test_actual_top_pick_missing_from_catalog_rebase_onto_survivor(self):
+        # Review finding: when the ranked-index-0 crop (the real top pick) has no
+        # crop_reports row, the surviving dossier (ranked index 1) must become the
+        # is_top_pick=True entry, and top_crop_id/top_crop_name/top_crop_score must
+        # all consistently describe that SAME surviving crop — not three different
+        # crops (one from top_crop_id, another from run.top_crop_name/score, and
+        # none flagged is_top_pick in `crops`).
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-3", recommendation_id="rec-3", user_id="usr_1", farm_id=None,
+                farm_name="North Plot", season="RABI", top_crop_name="ObscureCrop", top_crop_score=95,
+                report_data={"results": [
+                    {"crop": "ObscureCrop", "family": "Unknown", "suitability_pct": 95.0},
+                    {"crop": "Wheat", "family": "Cereal", "suitability_pct": 84.0},
+                ]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(side_effect=[
+            MagicMock(items=[]),  # ObscureCrop: name_en lookup misses
+            MagicMock(items=[]),  # ObscureCrop: full-table fallback scan also misses
+            MagicMock(items=[_crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal")]),  # Wheat: found
+        ])
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        report = await service.get_or_create_unified_report(recommendation_id="rec-3", user_id="usr_1")
+
+        self.assertEqual(len(report.crops), 1)
+        self.assertEqual(report.crops[0].crop_id, "wheat")
+        self.assertTrue(report.crops[0].is_top_pick)
+        self.assertEqual(report.top_crop_id, "wheat")
+        self.assertEqual(report.top_crop_name, "Wheat")
+        self.assertEqual(report.top_crop_score, 84)

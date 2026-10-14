@@ -65,21 +65,31 @@ class CropReportService:
 
         ranked = run.report_data.get("results", [])
         dossiers: list[SingleCropDossier] = []
-        for i, crop_result in enumerate(ranked):
+        for crop_result in ranked:
             master_row = await self._find_master_row(crop_result["crop"])
             if master_row is None:
                 logger.warning(f"No crop_reports row for scored crop '{crop_result['crop']}' — skipping dossier")
                 continue
+            # is_top_pick is based on position within the *surviving* dossiers list, not the
+            # original ranked index — if the true top-ranked crop has no crop_reports row,
+            # the first dossier that actually makes it into `crops` is the one flagged.
             dossiers.append(self._to_dossier(
-                master_row, match_score=round(crop_result["suitability_pct"]), is_top_pick=(i == 0),
+                master_row, match_score=round(crop_result["suitability_pct"]), is_top_pick=(len(dossiers) == 0),
                 match_reasons=[f"Suitability {crop_result['suitability_pct']:.0f}% for {run.season.title()} season."],
             ))
+
+        # top_crop_id/name/score must all describe the same crop. Derive them from the first
+        # surviving dossier (same source that drives is_top_pick above) rather than trusting
+        # run.top_crop_name/top_crop_score, which describe the original ranked-list top crop
+        # and may refer to a crop that didn't survive the master-catalog lookup.
+        top_dossier = dossiers[0] if dossiers else None
 
         return UnifiedCropReportResponse(
             report_id=run.uid, recommendation_id=run.recommendation_id, user_id=run.user_id,
             farm_id=run.farm_id, farm_name=run.farm_name, season=run.season, language=lang,
-            top_crop_id=dossiers[0].crop_id if dossiers else "",
-            top_crop_name=run.top_crop_name, top_crop_score=run.top_crop_score,
+            top_crop_id=top_dossier.crop_id if top_dossier else "",
+            top_crop_name=top_dossier.name_en if top_dossier else run.top_crop_name,
+            top_crop_score=top_dossier.match_score if top_dossier else run.top_crop_score,
             total_recommended_crops=len(ranked), crops=dossiers, more_for_your_farm=[],
             created_at=datetime.now(timezone.utc).isoformat(),
         )
