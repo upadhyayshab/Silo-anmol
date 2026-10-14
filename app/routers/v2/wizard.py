@@ -10,6 +10,7 @@ from models.wizardModels import (
 )
 from services.agroInternalService import AgroInternalService
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -134,8 +135,17 @@ def _map_budget(budget: str) -> str:
     return mapped
 
 
+_VALID_WATER_METHODS = {"RAINFED", "SURFACE", "DRIP", "SPRINKLER"}
+
+
 def _map_irrigation(methods: list[str]) -> list[str]:
-    return [m.upper() for m in methods]
+    mapped = [m.upper() for m in methods]
+    unknown = [m for m in mapped if m not in _VALID_WATER_METHODS]
+    if unknown:
+        raise ValueError(
+            f"Unrecognized irrigation method(s) {unknown}. Expected one of: Rainfed, Surface, Drip, Sprinkler"
+        )
+    return mapped
 
 
 @router.post("/wizard/submit", response_model=WizardSubmitResponse)
@@ -215,7 +225,8 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
 async def _publish_crop_guide_completed(
     upid: str, payload: WizardSubmitRequest, farm: dict | None, season: str, budget_bucket: str
 ) -> None:
-    """Fire-and-forget: logs on failure, never raises into the caller."""
+    """Awaited by the caller, but failures are caught and logged here, never
+    raised — a Kafka outage never turns a working recommendation into a 500."""
     answers = payload.answers
     event = {
         "event_id": str(uuid.uuid4()),
@@ -238,6 +249,6 @@ async def _publish_crop_guide_completed(
         },
     }
     try:
-        await publish_event("crop_guide_completed", str(event), key=payload.farmId or event["event_id"])
+        await publish_event("crop_guide_completed", json.dumps(event), key=payload.farmId or event["event_id"])
     except Exception:
         logger.exception("Failed to publish CropGuideCompleted event_id=%s", event["event_id"])

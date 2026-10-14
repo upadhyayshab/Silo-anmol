@@ -32,6 +32,17 @@ class TestMappingHelpers(IsolatedAsyncioTestCase):
         from routers.v2.wizard import _map_irrigation
         self.assertEqual(_map_irrigation(["drip", "Sprinkler"]), ["DRIP", "SPRINKLER"])
 
+    async def test_irrigation_mapping_unknown_value_raises_value_error(self):
+        # Regression for review finding Important #3: an unmapped irrigation
+        # value (e.g. "Flood" — a real example value in
+        # FM_frontend_api_contract_guide.md's ExistingFarmContext, not in
+        # WaterMethod) must raise cleanly here, not reach
+        # RecommendationRequest's Pydantic validator and crash as an
+        # unhandled 500 — same contract as _map_season/_map_budget.
+        from routers.v2.wizard import _map_irrigation
+        with self.assertRaises(ValueError):
+            _map_irrigation(["Flood"])
+
 
 class TestWizardSubmit(IsolatedAsyncioTestCase):
     @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
@@ -117,3 +128,28 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         )
         result = await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
         self.assertEqual(result.recommendations, [])
+
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_published_payload_is_valid_json_not_python_repr(self, mock_scoring_engine, mock_publish):
+        # Regression for review finding Critical #1: the payload must be real
+        # JSON (json.loads-able) — Agro's consumer does json.loads() on it.
+        # str(python_dict) produces single-quoted Python literals (None/True)
+        # instead of JSON (null/true), which raises JSONDecodeError on every
+        # single message, silently dropping the whole event stream.
+        import json
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None,
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        published_payload = mock_publish.call_args.args[1]
+        parsed = json.loads(published_payload)  # must not raise
+        self.assertEqual(parsed["event_type"], "CropGuideCompleted")
+        self.assertEqual(parsed["user_id"], "usr_1")
