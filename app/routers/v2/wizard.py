@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from config import get_engine, get_settings
 from dependencies.auth import require_jwt
-from managers.cropManagers import CropManager
+from managers.cropManagers import CropManager, RecommendationHistoryManager, RecommendationHistorySchema
 from models.wizardModels import (
     FarmContext, WizardQuestion, WizardQuestionOption, WizardQuestionsResponse,
 )
@@ -20,6 +20,7 @@ from fastapi import HTTPException
 from models.recommendationModels import RecommendationRequest
 from models.wizardModels import WizardRecommendationItem, WizardSubmitRequest, WizardSubmitResponse
 from services.kafka_client import publish_event
+from services.subscriptionService import SubscriptionService
 from utils.scoringEngine import CropScoringEngine
 
 router = APIRouter(tags=["Wizard v2"])
@@ -34,6 +35,8 @@ agro_internal_service = AgroInternalService(
 
 logger = logging.getLogger("wizard_router")
 scoring_engine = CropScoringEngine(engine)
+subscription_service = SubscriptionService()
+history_manager = RecommendationHistoryManager(engine)
 
 ALL_QUESTIONS: list[WizardQuestion] = [
     WizardQuestion(id="location", type="map_pin", label="Where is your farm?", required=True),
@@ -178,8 +181,16 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
     if not irrigation:
         raise HTTPException(status_code=400, detail="answers.irrigation is required (at least one method)")
 
-    previous_crop = answers.previous_crop or (farm.get("previous_crop") if farm else None)
-    was_fallow = previous_crop is None
+    # DEF-04: when the farm has an active standing crop, THAT crop is the real
+    # rotation predecessor for "what to plant next" — not the wizard's
+    # previous_crop answer (which describes what was grown before the
+    # standing crop, if anything). Never written back to the farm — this
+    # only feeds the scoring engine's rotation input.
+    if farm and farm.get("has_active_crop") and farm.get("crop"):
+        rotation_crop_name = farm["crop"]
+    else:
+        rotation_crop_name = answers.previous_crop or (farm.get("previous_crop") if farm else None)
+    was_fallow = rotation_crop_name is None
 
     previous_crop_family = None
     if not was_fallow:
@@ -187,14 +198,14 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
         # (app/routers/v1/recommend.py) — exact match first, then a
         # case-insensitive scan, then a clear 400 rather than letting
         # RecommendationRequest's validator raise on a None family.
-        crops_res = await crop_manager.fetch_all(limit=1, filters={"name_en": previous_crop})
+        crops_res = await crop_manager.fetch_all(limit=1, filters={"name_en": rotation_crop_name})
         if crops_res.items:
             previous_crop_family = crops_res.items[0].family
         else:
             all_crops = await crop_manager.fetch_all(limit=0)
-            matched = next((c for c in all_crops.items if c.name_en.lower() == previous_crop.lower()), None)
+            matched = next((c for c in all_crops.items if c.name_en.lower() == rotation_crop_name.lower()), None)
             if not matched:
-                raise HTTPException(status_code=400, detail=f"previous_crop '{previous_crop}' not found in crop database")
+                raise HTTPException(status_code=400, detail=f"previous_crop '{rotation_crop_name}' not found in crop database")
             previous_crop_family = matched.family
 
     rec_request = RecommendationRequest(
@@ -202,7 +213,47 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
         season=season, water_methods=irrigation, budget_bucket=budget_bucket,
         previous_crop_family=previous_crop_family, was_fallow=was_fallow, top_n=5,
     )
-    response = await scoring_engine.recommend(rec_request, auto_detect_soil=True)
+
+    # DEF-02: meter usage against the same subscription quota /api/v1/recommend
+    # already enforces — verify before the (paid) scoring pipeline runs.
+    verify_ok, _ = await subscription_service.verify(upid, payload.subscription_id)
+    if not verify_ok:
+        raise HTTPException(status_code=480, detail="limit exceeded, subscribe now")
+
+    try:
+        response = await scoring_engine.recommend(rec_request, auto_detect_soil=True)
+    except Exception:
+        await subscription_service.rollback(upid, payload.subscription_id)
+        raise
+
+    # Usage consumed successfully -- confirm and log history. Both are
+    # best-effort: a subscription-service hiccup or a history-write failure
+    # shouldn't turn an already-generated recommendation into an error.
+    confirm_ok, _ = await subscription_service.confirm(upid, payload.subscription_id)
+    if not confirm_ok:
+        logger.error(f"subscription confirm failed for upid={upid} subscription_id={payload.subscription_id}")
+
+    try:
+        await history_manager.create(RecommendationHistorySchema(
+            upid=upid,
+            subscription_id=payload.subscription_id,
+            lat=rec_request.lat,
+            lon=rec_request.lon,
+            season=season,
+            water_methods=irrigation,
+            budget_bucket=budget_bucket,
+            previous_crop_code=rotation_crop_name,
+            was_fallow=was_fallow,
+            top_n=5,
+            lang="en",
+            zone_filter_applied=response.zone_filter_applied,
+            soil_class_detected=response.soil_class_detected,
+            soil_texture_label=response.soil_texture_label,
+            results=[r.model_dump() for r in response.results],
+            notes=response.notes,
+        ))
+    except Exception as exc:
+        logger.error(f"failed to write wizard recommendation history for upid={upid}: {exc}")
 
     recommendations = [
         WizardRecommendationItem(

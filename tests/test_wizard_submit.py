@@ -1,4 +1,6 @@
-"""Unit tests for POST /wizard/submit — field mapping and farm-context merge."""
+"""Unit tests for POST /wizard/submit — field mapping, farm-context merge,
+subscription quota metering, recommendation audit trail, and rotation
+baseline (DEF-02/DEF-03/DEF-04)."""
 import sys
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
@@ -45,12 +47,19 @@ class TestMappingHelpers(IsolatedAsyncioTestCase):
 
 
 class TestWizardSubmit(IsolatedAsyncioTestCase):
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
     @patch("routers.v2.wizard.scoring_engine")
-    async def test_submit_without_farm_id_uses_payload_location(self, mock_scoring_engine, mock_publish):
+    async def test_submit_without_farm_id_uses_payload_location(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
 
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(
             results=[CropRecommendation(
                 crop="Tomato", family="Vegetable", horizon="SEASONAL",
@@ -60,7 +69,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         ))
 
         req = WizardSubmitRequest(
-            farmId=None,
+            farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(
                 location=[73.85, 18.52], season="Rabi", irrigation=["Drip"], budget="high",
                 # previous_crop omitted -> was_fallow=True, skips the crop_manager lookup entirely
@@ -77,24 +86,31 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         self.assertEqual(rec_request.season, "RABI")
         self.assertEqual(rec_request.budget_bucket, "B4")
 
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.crop_manager")
     @patch("routers.v2.wizard.agro_internal_service")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_submit_with_farm_id_uses_farm_center_when_location_omitted(
-        self, mock_scoring_engine, mock_agro_service, mock_publish
+        self, mock_scoring_engine, mock_agro_service, mock_crop_manager, mock_publish, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
         mock_agro_service.get_farm = AsyncMock(return_value={
             "farm_id": "farm-1", "center": [73.0, 18.0], "crop": "Rice", "has_active_crop": True,
         })
+        # Active standing crop ("Rice") is now the rotation predecessor (DEF-04).
+        mock_crop_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[MagicMock(family="Cereal")]))
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
 
         req = WizardSubmitRequest(
-            farmId="farm-1",
+            farmId="farm-1", subscription_id="sub_1",
             answers=WizardAnswersPayload(season="Rabi", budget="low", irrigation=["Drip"]),
-            # previous_crop omitted and not on the mocked farm -> was_fallow=True, skips crop lookup
         )
         await submit_wizard(req, auth_payload={"upid": "usr_1"})
 
@@ -107,31 +123,42 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         from routers.v2.wizard import submit_wizard
         from fastapi import HTTPException
 
-        req = WizardSubmitRequest(farmId=None, answers=WizardAnswersPayload(season="Rabi"))
+        req = WizardSubmitRequest(farmId=None, subscription_id="sub_1", answers=WizardAnswersPayload(season="Rabi"))
         with self.assertRaises(HTTPException) as ctx:
             await submit_wizard(req, auth_payload={"upid": "usr_1"})
         self.assertEqual(ctx.exception.status_code, 400)
 
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
     @patch("routers.v2.wizard.scoring_engine")
-    async def test_kafka_publish_failure_does_not_break_response(self, mock_scoring_engine, mock_publish):
+    async def test_kafka_publish_failure_does_not_break_response(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
         # Review Focus: Kafka outage must not turn a working recommendation into a 500.
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
         mock_publish.side_effect = RuntimeError("MSK unreachable")
 
         req = WizardSubmitRequest(
-            farmId=None,
+            farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         result = await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
         self.assertEqual(result.recommendations, [])
 
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
     @patch("routers.v2.wizard.scoring_engine")
-    async def test_published_payload_is_valid_json_not_python_repr(self, mock_scoring_engine, mock_publish):
+    async def test_published_payload_is_valid_json_not_python_repr(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
         # Regression for review finding Critical #1: the payload must be real
         # JSON (json.loads-able) — Agro's consumer does json.loads() on it.
         # str(python_dict) produces single-quoted Python literals (None/True)
@@ -141,10 +168,13 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
 
         req = WizardSubmitRequest(
-            farmId=None,
+            farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         await submit_wizard(req, auth_payload={"upid": "usr_1"})
@@ -153,3 +183,224 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         parsed = json.loads(published_payload)  # must not raise
         self.assertEqual(parsed["event_type"], "CropGuideCompleted")
         self.assertEqual(parsed["user_id"], "usr_1")
+
+
+class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
+    """DEF-02: the wizard must meter usage against the same subscription
+    quota /api/v1/recommend already enforces — otherwise recommendations
+    via the wizard are free."""
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_quota_verified_before_scoring_and_confirmed_after_success(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_42",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        mock_sub_service.verify.assert_awaited_once_with("usr_1", "sub_42")
+        mock_sub_service.confirm.assert_awaited_once_with("usr_1", "sub_42")
+        mock_sub_service.rollback.assert_not_called()
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_quota_exceeded_returns_480_and_skips_scoring(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from fastapi import HTTPException
+
+        mock_sub_service.verify = AsyncMock(return_value=(False, {}))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_42",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        self.assertEqual(ctx.exception.status_code, 480)
+        mock_scoring_engine.recommend.assert_not_called()
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_scoring_failure_rolls_back_quota_and_reraises(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.rollback = AsyncMock(return_value=(True, {}))
+        mock_scoring_engine.recommend = AsyncMock(side_effect=RuntimeError("scoring engine blew up"))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_42",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        with self.assertRaises(RuntimeError):
+            await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        mock_sub_service.rollback.assert_awaited_once_with("usr_1", "sub_42")
+        mock_sub_service.confirm.assert_not_called()
+
+
+class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
+    """DEF-03: every wizard recommendation must be logged to
+    recommendation_history, same as /api/v1/recommend."""
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_successful_submission_writes_recommendation_history(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse, CropRecommendation
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(
+            zone_filter_applied=True, soil_class_detected=4, soil_texture_label="Clay Loam",
+            notes=["note"],
+            results=[CropRecommendation(
+                crop="Tomato", family="Solanaceae", horizon="SEASONAL",
+                total=90, max_total=100, suitability_pct=90.0, factors=[],
+            )],
+        ))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_42",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        mock_history_manager.create.assert_awaited_once()
+        history_row = mock_history_manager.create.call_args.args[0]
+        self.assertEqual(history_row.upid, "usr_1")
+        self.assertEqual(history_row.subscription_id, "sub_42")
+        self.assertEqual(history_row.lat, 18.0)
+        self.assertEqual(history_row.lon, 73.0)
+        self.assertEqual(history_row.season, "RABI")
+        self.assertEqual(history_row.water_methods, ["DRIP"])
+        self.assertTrue(history_row.zone_filter_applied)
+        self.assertEqual(history_row.soil_class_detected, 4)
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_history_write_failure_does_not_break_response(
+        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock(side_effect=RuntimeError("DB down"))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_42",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        result = await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
+        self.assertEqual(result.recommendations, [])
+
+
+class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
+    """DEF-04: rotation scoring must use the farm's ACTIVE standing crop as
+    the predecessor baseline when one exists — not just the wizard's
+    previous_crop answer — without ever overwriting it (Standing Crop
+    Protection stays untouched; this only affects scoring input)."""
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.crop_manager")
+    @patch("routers.v2.wizard.agro_internal_service")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_active_standing_crop_used_as_rotation_predecessor(
+        self, mock_scoring_engine, mock_agro_service, mock_crop_manager,
+        mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_agro_service.get_farm = AsyncMock(return_value={
+            "farm_id": "farm-441", "center": [73.0, 18.0],
+            "crop": "Tomato", "has_active_crop": True,
+            "previous_crop": "Wheat",  # must be ignored in favor of the active crop
+        })
+        tomato_crop = MagicMock(family="Solanaceae")
+        mock_crops_result = MagicMock(items=[tomato_crop])
+        mock_crop_manager.fetch_all = AsyncMock(return_value=mock_crops_result)
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId="farm-441", subscription_id="sub_1",
+            answers=WizardAnswersPayload(season="Summer", budget="low", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        rec_request = mock_scoring_engine.recommend.call_args[0][0]
+        self.assertEqual(rec_request.previous_crop_family, "Solanaceae")
+        self.assertFalse(rec_request.was_fallow)
+        mock_crop_manager.fetch_all.assert_awaited_once_with(limit=1, filters={"name_en": "Tomato"})
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.crop_manager")
+    @patch("routers.v2.wizard.agro_internal_service")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_falls_back_to_previous_crop_when_no_active_crop(
+        self, mock_scoring_engine, mock_agro_service, mock_crop_manager,
+        mock_publish, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_agro_service.get_farm = AsyncMock(return_value={
+            "farm_id": "farm-2", "center": [73.0, 18.0],
+            "crop": None, "has_active_crop": False, "previous_crop": "Wheat",
+        })
+        wheat_crop = MagicMock(family="Cereal")
+        mock_crops_result = MagicMock(items=[wheat_crop])
+        mock_crop_manager.fetch_all = AsyncMock(return_value=mock_crops_result)
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId="farm-2", subscription_id="sub_1",
+            answers=WizardAnswersPayload(season="Rabi", budget="low", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        rec_request = mock_scoring_engine.recommend.call_args[0][0]
+        self.assertEqual(rec_request.previous_crop_family, "Cereal")
+        mock_crop_manager.fetch_all.assert_awaited_once_with(limit=1, filters={"name_en": "Wheat"})

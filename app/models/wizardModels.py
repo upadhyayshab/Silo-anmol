@@ -49,6 +49,7 @@ class WizardAnswersPayload(BaseModel):
 
 class WizardSubmitRequest(BaseModel):
     farmId: Optional[str] = None
+    subscription_id: str = Field(..., description="Active subscription id, used for usage metering")
     answers: WizardAnswersPayload
 
 

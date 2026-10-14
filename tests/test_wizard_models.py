@@ -29,9 +29,18 @@ class TestWizardAnswersPayload(TestCase):
 
 class TestWizardSubmitRequest(TestCase):
     def test_farm_id_nullable(self):
-        req = WizardSubmitRequest(farmId=None, answers=WizardAnswersPayload(season="Rabi"))
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_1", answers=WizardAnswersPayload(season="Rabi")
+        )
         self.assertIsNone(req.farmId)
 
     def test_farm_id_present(self):
-        req = WizardSubmitRequest(farmId="farm-1", answers=WizardAnswersPayload(season="Rabi"))
+        req = WizardSubmitRequest(
+            farmId="farm-1", subscription_id="sub_1", answers=WizardAnswersPayload(season="Rabi")
+        )
         self.assertEqual(req.farmId, "farm-1")
+
+    def test_subscription_id_required(self):
+        from pydantic import ValidationError
+        with self.assertRaises(ValidationError):
+            WizardSubmitRequest(farmId=None, answers=WizardAnswersPayload(season="Rabi"))
