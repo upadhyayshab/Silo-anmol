@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 import sqlalchemy as db
@@ -6,11 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from SharedBackend.managers import ApiKeyManager, BaseSchema, EntityManager
 from SharedBackend.middlewares import SDKMiddleware, EntityMiddleware
+from managers import EventOutboxManager
 from config import get_settings, get_engine
 from routers import admin_router, v1_router, v2_router
+from workers.event_outbox_replayer import run_replay_loop
 
 settings = get_settings()
 engine = get_engine(settings.name)
+outbox_manager = EventOutboxManager(engine)
 
 
 @asynccontextmanager
@@ -19,7 +23,16 @@ async def lifespan(_: FastAPI):
         if settings.supports_schema:
             await conn.execute(db.text(f'CREATE SCHEMA IF NOT EXISTS "{settings.name}"'))
         await conn.run_sync(BaseSchema.metadata.create_all)
-    yield
+
+    replay_task = asyncio.create_task(run_replay_loop(outbox_manager))
+    try:
+        yield
+    finally:
+        replay_task.cancel()
+        try:
+            await replay_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(lifespan=lifespan)
