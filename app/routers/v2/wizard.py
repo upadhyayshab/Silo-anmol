@@ -92,13 +92,14 @@ SUPPRESSION_RULES: list[tuple[str, list[str]]] = [
 ]
 
 
-@router.get("/wizard/questions", response_model=WizardQuestionsResponse, dependencies=[Depends(require_jwt)])
-async def get_wizard_questions(farmId: Optional[str] = Query(None)):
+@router.get("/wizard/questions", response_model=WizardQuestionsResponse)
+async def get_wizard_questions(farmId: Optional[str] = Query(None), auth_payload: dict = Depends(require_jwt)):
+    upid = auth_payload["upid"]
     farm_context = None
     suppressed_ids: set[str] = set()
 
     if farmId:
-        farm = await agro_internal_service.get_farm(farmId, user_id="")
+        farm = await agro_internal_service.get_farm(farmId, upid)
         if farm:
             farm_context = FarmContext(
                 farm_id=farm.get("farm_id") or farm.get("id"),

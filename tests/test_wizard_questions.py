@@ -16,7 +16,7 @@ class TestWizardQuestions(IsolatedAsyncioTestCase):
         mock_crops_result.items = [MagicMock(name_en="Rice"), MagicMock(name_en="Wheat")]
         mock_crop_manager.fetch_all = AsyncMock(return_value=mock_crops_result)
 
-        result = await get_wizard_questions(farmId=None)
+        result = await get_wizard_questions(farmId=None, auth_payload={"upid": "usr_1"})
 
         self.assertIsNone(result.farm_context)
         question_ids = [q.id for q in result.questions]
@@ -45,7 +45,7 @@ class TestWizardQuestions(IsolatedAsyncioTestCase):
             "irrigation_methods": ["Drip"], "boundary_status": "MAPPED",
         })
 
-        result = await get_wizard_questions(farmId="farm-1")
+        result = await get_wizard_questions(farmId="farm-1", auth_payload={"upid": "usr_1"})
 
         self.assertIsNotNone(result.farm_context)
         self.assertEqual(result.farm_context.farm_id, "farm-1")
@@ -61,6 +61,10 @@ class TestWizardQuestions(IsolatedAsyncioTestCase):
         self.assertIn("season", question_ids)
         self.assertIn("budget", question_ids)
         self.assertIn("livestock", question_ids)
+        # Regression for review finding Critical #2: the authenticated upid
+        # must actually be forwarded to Agro's ownership-scoped lookup, not
+        # an empty string (which would make the internal endpoint reject it).
+        mock_agro_service.get_farm.assert_awaited_once_with("farm-1", "usr_1")
 
     @patch("routers.v2.wizard.agro_internal_service")
     @patch("routers.v2.wizard.crop_manager")
@@ -75,7 +79,7 @@ class TestWizardQuestions(IsolatedAsyncioTestCase):
         mock_crop_manager.fetch_all = AsyncMock(return_value=mock_crops_result)
         mock_agro_service.get_farm = AsyncMock(return_value=None)
 
-        result = await get_wizard_questions(farmId="farm-unreachable")
+        result = await get_wizard_questions(farmId="farm-unreachable", auth_payload={"upid": "usr_1"})
 
         self.assertIsNone(result.farm_context)
         question_ids = [q.id for q in result.questions]
