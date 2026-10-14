@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     crop_guide_completed_topic: str = os.getenv("CROP_GUIDE_COMPLETED_TOPIC", "crop_guide_completed")
     agro_internal_base_url: str = os.getenv("AGRO_INTERNAL_BASE_URL", "")
     internal_service_secret: str = os.getenv("INTERNAL_SERVICE_SECRET", "")
+    broker_type: str = os.getenv("BROKER_TYPE", "memory")  # memory | kafka | sqs
 
     class subservices:  # noqa
         pass
