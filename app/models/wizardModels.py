@@ -36,6 +36,7 @@ class WizardAnswersPayload(BaseModel):
     """Matches FM_frontend_api_contract_guide.md's WizardAnswersPayload TS
     interface field-for-field."""
     location: Optional[List[float]] = Field(None, description="[lng, lat]")
+    pincode: Optional[str] = Field(None, description="6-digit Indian PIN code fallback when no GPS location")
     season: str
     has_active_crop: Optional[str] = None  # "Yes" | "No" | string, per the TS interface
     crop: Optional[str] = None
@@ -50,6 +51,7 @@ class WizardAnswersPayload(BaseModel):
 class WizardSubmitRequest(BaseModel):
     farmId: Optional[str] = None
     subscription_id: str = Field(..., description="Active subscription id, used for usage metering")
+    wizard_session_id: Optional[str] = Field(None, description="Client-generated idempotency key, forwarded as-is")
     answers: WizardAnswersPayload
 
 

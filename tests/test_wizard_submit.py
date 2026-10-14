@@ -49,13 +49,15 @@ class TestMappingHelpers(IsolatedAsyncioTestCase):
 class TestWizardSubmit(IsolatedAsyncioTestCase):
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_submit_without_farm_id_uses_payload_location(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
+
+        mock_event_broker.publish = AsyncMock()
 
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
@@ -88,16 +90,17 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.crop_manager")
     @patch("routers.v2.wizard.agro_internal_service")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_submit_with_farm_id_uses_farm_center_when_location_omitted(
-        self, mock_scoring_engine, mock_agro_service, mock_crop_manager, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_agro_service, mock_crop_manager, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_event_broker.publish = AsyncMock()
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
@@ -118,11 +121,12 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         self.assertEqual(rec_request.lat, 18.0)
         self.assertEqual(rec_request.lon, 73.0)
 
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
-    async def test_submit_without_location_and_without_farm_id_returns_400(self, mock_publish):
+    @patch("routers.v2.wizard.event_broker")
+    async def test_submit_without_location_and_without_farm_id_returns_400(self, mock_event_broker):
         from routers.v2.wizard import submit_wizard
         from fastapi import HTTPException
 
+        mock_event_broker.publish = AsyncMock()
         req = WizardSubmitRequest(farmId=None, subscription_id="sub_1", answers=WizardAnswersPayload(season="Rabi"))
         with self.assertRaises(HTTPException) as ctx:
             await submit_wizard(req, auth_payload={"upid": "usr_1"})
@@ -130,12 +134,19 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
-    async def test_kafka_publish_failure_does_not_break_response(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+    async def test_event_broker_publish_failure_propagates_not_caught_here(
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
-        # Review Focus: Kafka outage must not turn a working recommendation into a 500.
+        # Review Focus (updated for Task 5): the "Kafka outage must not break
+        # the response" guarantee now lives inside EventBrokerService.publish
+        # itself -- it falls back to the event_outbox internally and is
+        # already covered by test_event_broker_service.py's
+        # test_publish_failure_falls_back_to_outbox_not_raise. The router no
+        # longer wraps the call in its own try/except (that would be dead
+        # code -- EventBrokerService.publish is documented to never raise),
+        # so if a failure somehow still escapes it, it propagates as-is.
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
@@ -143,34 +154,34 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
-        mock_publish.side_effect = RuntimeError("MSK unreachable")
+        mock_event_broker.publish = AsyncMock(side_effect=RuntimeError("MSK unreachable"))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        result = await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
-        self.assertEqual(result.recommendations, [])
+        with self.assertRaises(RuntimeError):
+            await submit_wizard(req, auth_payload={"upid": "usr_1"})
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_published_payload_is_valid_json_not_python_repr(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         # Regression for review finding Critical #1: the payload must be real
-        # JSON (json.loads-able) — Agro's consumer does json.loads() on it.
-        # str(python_dict) produces single-quoted Python literals (None/True)
-        # instead of JSON (null/true), which raises JSONDecodeError on every
-        # single message, silently dropping the whole event stream.
-        import json
+        # JSON-serializable data -- Agro's consumer does json.loads() on it.
+        # EventBrokerService.publish takes a dict now (it serializes
+        # internally only in kafka mode), so this asserts directly against
+        # the dict's shape rather than round-tripping through json.loads.
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
+        mock_event_broker.publish = AsyncMock()
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
 
         req = WizardSubmitRequest(
@@ -179,10 +190,10 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         )
         await submit_wizard(req, auth_payload={"upid": "usr_1"})
 
-        published_payload = mock_publish.call_args.args[1]
-        parsed = json.loads(published_payload)  # must not raise
-        self.assertEqual(parsed["event_type"], "CropGuideCompleted")
-        self.assertEqual(parsed["user_id"], "usr_1")
+        published_payload = mock_event_broker.publish.call_args.args[1]
+        self.assertIsInstance(published_payload, dict)
+        self.assertEqual(published_payload["event_type"], "CropGuideCompleted")
+        self.assertEqual(published_payload["user_id"], "usr_1")
 
 
 class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
@@ -192,14 +203,15 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_quota_verified_before_scoring_and_confirmed_after_success(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_event_broker.publish = AsyncMock()
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
@@ -217,10 +229,10 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_quota_exceeded_returns_480_and_skips_scoring(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from fastapi import HTTPException
@@ -239,10 +251,10 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_scoring_failure_rolls_back_quota_and_reraises(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
 
@@ -267,14 +279,15 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_successful_submission_writes_recommendation_history(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
 
+        mock_event_broker.publish = AsyncMock()
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
@@ -306,14 +319,15 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_history_write_failure_does_not_break_response(
-        self, mock_scoring_engine, mock_publish, mock_sub_service, mock_history_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_event_broker.publish = AsyncMock()
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock(side_effect=RuntimeError("DB down"))
@@ -335,17 +349,18 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.crop_manager")
     @patch("routers.v2.wizard.agro_internal_service")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_active_standing_crop_used_as_rotation_predecessor(
         self, mock_scoring_engine, mock_agro_service, mock_crop_manager,
-        mock_publish, mock_sub_service, mock_history_manager
+        mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_event_broker.publish = AsyncMock()
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
@@ -372,17 +387,18 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
-    @patch("routers.v2.wizard.publish_event", new_callable=AsyncMock)
+    @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.crop_manager")
     @patch("routers.v2.wizard.agro_internal_service")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_falls_back_to_previous_crop_when_no_active_crop(
         self, mock_scoring_engine, mock_agro_service, mock_crop_manager,
-        mock_publish, mock_sub_service, mock_history_manager
+        mock_event_broker, mock_sub_service, mock_history_manager
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse
 
+        mock_event_broker.publish = AsyncMock()
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
@@ -404,3 +420,84 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
         rec_request = mock_scoring_engine.recommend.call_args[0][0]
         self.assertEqual(rec_request.previous_crop_family, "Cereal")
         mock_crop_manager.fetch_all.assert_awaited_once_with(limit=1, filters={"name_en": "Wheat"})
+
+
+class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.event_broker")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_pincode_used_when_location_and_farm_both_absent(
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_event_broker.publish = AsyncMock()
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_1",
+            answers=WizardAnswersPayload(pincode="411001", season="Rabi", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise 400
+
+        rec_request = mock_scoring_engine.recommend.call_args[0][0]
+        self.assertIsNone(rec_request.lat)
+        self.assertIsNone(rec_request.lon)
+        self.assertEqual(rec_request.pincode, "411001")
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.event_broker")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_wizard_session_id_forwarded_to_broker_event(
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
+    ):
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_event_broker.publish = AsyncMock()
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_1", wizard_session_id="wiz-sess-abc",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        published_payload = mock_event_broker.publish.call_args.args[1]
+        self.assertEqual(published_payload["data"]["wizard_session_id"], "wiz-sess-abc")
+
+    @patch("routers.v2.wizard.history_manager")
+    @patch("routers.v2.wizard.subscription_service")
+    @patch("routers.v2.wizard.event_broker")
+    @patch("routers.v2.wizard.scoring_engine")
+    async def test_wizard_session_id_omitted_forwards_null_not_generated(
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
+    ):
+        # Review Focus: must forward None, never silently generate a fresh
+        # UUID — a generated-per-request value would defeat idempotency.
+        from routers.v2.wizard import submit_wizard
+        from models.recommendationModels import RecommendationResponse
+
+        mock_sub_service.verify = AsyncMock(return_value=(True, {}))
+        mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
+        mock_history_manager.create = AsyncMock()
+        mock_event_broker.publish = AsyncMock()
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+
+        req = WizardSubmitRequest(
+            farmId=None, subscription_id="sub_1",
+            answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
+        )
+        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+
+        published_payload = mock_event_broker.publish.call_args.args[1]
+        self.assertIsNone(published_payload["data"]["wizard_session_id"])

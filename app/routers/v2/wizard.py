@@ -10,7 +10,6 @@ from models.wizardModels import (
 )
 from services.agroInternalService import AgroInternalService
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -19,7 +18,7 @@ from fastapi import HTTPException
 
 from models.recommendationModels import RecommendationRequest
 from models.wizardModels import WizardRecommendationItem, WizardSubmitRequest, WizardSubmitResponse
-from services.kafka_client import publish_event
+from services.eventBrokerService import EventBrokerService
 from services.subscriptionService import SubscriptionService
 from utils.scoringEngine import CropScoringEngine
 
@@ -36,6 +35,7 @@ agro_internal_service = AgroInternalService(
 logger = logging.getLogger("wizard_router")
 scoring_engine = CropScoringEngine(engine)
 subscription_service = SubscriptionService()
+event_broker = EventBrokerService()
 history_manager = RecommendationHistoryManager(engine)
 
 ALL_QUESTIONS: list[WizardQuestion] = [
@@ -166,7 +166,7 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
     location = answers.location
     if location is None and farm:
         location = farm.get("location") or farm.get("center")
-    if location is None:
+    if location is None and not answers.pincode:
         raise HTTPException(status_code=400, detail="answers.location is required when farmId is not provided or the farm has no boundary yet")
 
     try:
@@ -209,7 +209,9 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
             previous_crop_family = matched.family
 
     rec_request = RecommendationRequest(
-        lat=location[1], lon=location[0],
+        lat=location[1] if location else None,
+        lon=location[0] if location else None,
+        pincode=answers.pincode if location is None else None,
         season=season, water_methods=irrigation, budget_bucket=budget_bucket,
         previous_crop_family=previous_crop_family, was_fallow=was_fallow, top_n=5,
     )
@@ -265,9 +267,10 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
         for i, r in enumerate(response.results)
     ]
 
-    # Awaited, not fire-and-forget: the try/except inside already guarantees
-    # a Kafka outage never raises into this response (Review Focus); awaiting
-    # here (instead of asyncio.create_task) keeps the call deterministic for
+    # Awaited, not fire-and-forget: EventBrokerService.publish already
+    # guarantees a Kafka outage never raises into this response (Review
+    # Focus) -- it falls back to the event_outbox internally; awaiting here
+    # (instead of asyncio.create_task) keeps the call deterministic for
     # tests and avoids a task that can outlive the request's own lifecycle.
     await _publish_crop_guide_completed(upid, payload, farm, season, budget_bucket)
 
@@ -277,8 +280,9 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
 async def _publish_crop_guide_completed(
     upid: str, payload: WizardSubmitRequest, farm: dict | None, season: str, budget_bucket: str
 ) -> None:
-    """Awaited by the caller, but failures are caught and logged here, never
-    raised — a Kafka outage never turns a working recommendation into a 500."""
+    """Awaited by the caller; EventBrokerService.publish never raises (it
+    falls back to the event_outbox on a Kafka outage), so a broker failure
+    never turns a working recommendation into a 500."""
     answers = payload.answers
     event = {
         "event_id": str(uuid.uuid4()),
@@ -298,9 +302,7 @@ async def _publish_crop_guide_completed(
             "season": season,
             "budget": budget_bucket,
             "livestock": answers.livestock,
+            "wizard_session_id": payload.wizard_session_id,
         },
     }
-    try:
-        await publish_event("crop_guide_completed", json.dumps(event), key=payload.farmId or event["event_id"])
-    except Exception:
-        logger.exception("Failed to publish CropGuideCompleted event_id=%s", event["event_id"])
+    await event_broker.publish("crop_guide_completed", event, key=payload.farmId or event["event_id"])
