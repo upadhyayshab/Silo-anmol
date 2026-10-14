@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     msk_region: str = os.getenv("MSK_REGION", "") or os.getenv("REGION_NAME", "ap-south-1")
     msk_role_arn: str = os.getenv("MSK_ROLE_ARN", "")
     crop_guide_completed_topic: str = os.getenv("CROP_GUIDE_COMPLETED_TOPIC", "crop_guide_completed")
+    agro_internal_base_url: str = os.getenv("AGRO_INTERNAL_BASE_URL", "")
+    internal_service_secret: str = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
     class subservices:  # noqa
         pass
