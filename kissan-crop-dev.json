@@ -94,6 +94,14 @@
                 {
                     "name": "GOOGLE_MAPS_BASE_URL",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/GOOGLE_MAPS_BASE_URL"
+                },
+                {
+                    "name": "AGRO_INTERNAL_BASE_URL",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/AGRO_INTERNAL_BASE_URL"
+                },
+                {
+                    "name": "INTERNAL_SERVICE_SECRET",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/INTERNAL_SERVICE_SECRET"
                 }
             ],
             "logConfiguration": {
