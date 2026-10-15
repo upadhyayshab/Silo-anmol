@@ -15,6 +15,8 @@ class WizardQuestion(BaseModel):
     description: Optional[str] = None
     options: Optional[List[WizardQuestionOption]] = None
     required: bool = True
+    search_endpoint: Optional[str] = None
+    depends_on: Optional[dict] = None
 
 
 class FarmContext(BaseModel):
@@ -58,6 +60,7 @@ class WizardSubmitRequest(BaseModel):
 class WizardRecommendationItem(BaseModel):
     id: str
     crop_name: str
+    crop_name_vernacular: Optional[str] = None
     suitability_score: float
     roi_estimate: str
     duration_days: Optional[int] = None

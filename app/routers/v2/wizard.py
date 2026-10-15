@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, Query
 from config import get_engine, get_settings
 from dependencies.auth import require_jwt
 from managers.cropManagers import CropManager, RecommendationHistoryManager, RecommendationHistorySchema
-from managers.cropReportManagers import UserCropReportManager, UserCropReportSchema
+from managers.cropReportManagers import CropReportManager, UserCropReportManager, UserCropReportSchema
 from models.wizardModels import (
     FarmContext, WizardQuestion, WizardQuestionOption, WizardQuestionsResponse,
 )
 from services.agroInternalService import AgroInternalService
+from utils.languages import SUPPORTED_LANGUAGES
 
 import logging
 import uuid
@@ -39,6 +40,19 @@ subscription_service = SubscriptionService()
 event_broker = EventBrokerService()
 history_manager = RecommendationHistoryManager(engine)
 user_crop_report_manager = UserCropReportManager(engine)
+crop_report_manager = CropReportManager(engine)
+
+
+async def _find_master_crop_row(name_en: str):
+    """Mirrors CropReportService._find_master_row -- a small, local lookup
+    so the submit handler can enrich recommendations (GAP-07/GAP-11) without
+    depending on the reports router's service instance."""
+    result = await crop_report_manager.fetch_all(limit=1, filters={"name_en": name_en})
+    if result.items:
+        return result.items[0]
+    all_rows = await crop_report_manager.fetch_all(limit=0)
+    return next((r for r in all_rows.items if r.name_en.lower() == name_en.lower()), None)
+
 
 ALL_QUESTIONS: list[WizardQuestion] = [
     WizardQuestion(id="location", type="map_pin", label="Where is your farm?", required=True),
@@ -55,9 +69,20 @@ ALL_QUESTIONS: list[WizardQuestion] = [
         id="has_active_crop", type="radio", label="Do you currently have a crop growing?",
         options=[WizardQuestionOption(label="Yes", value="Yes"), WizardQuestionOption(label="No", value="No")],
     ),
-    WizardQuestion(id="crop", type="search", label="Which crop is growing?", required=False, description="Shown only if has_active_crop=Yes"),
-    WizardQuestion(id="sowing_date", type="date", label="When did you sow?", required=False, description="Shown only if has_active_crop=Yes"),
-    WizardQuestion(id="previous_crop", type="search", label="What was grown here before?", required=False),
+    WizardQuestion(
+        id="crop", type="search", label="Which crop is growing?", required=False,
+        search_endpoint="/api/v6/crops",
+        depends_on={"field": "has_active_crop", "value": "Yes"},
+    ),
+    WizardQuestion(
+        id="sowing_date", type="date", label="When did you sow?", required=False,
+        depends_on={"field": "has_active_crop", "value": "Yes"},
+    ),
+    WizardQuestion(
+        id="previous_crop", type="search", label="What was grown here before?", required=False,
+        search_endpoint="/api/v6/crops",
+        depends_on={"field": "has_active_crop", "value": "No"},
+    ),
     WizardQuestion(
         id="irrigation", type="multi_select", label="How do you water this field?",
         options=[
@@ -68,19 +93,22 @@ ALL_QUESTIONS: list[WizardQuestion] = [
         ],
     ),
     WizardQuestion(
-        id="budget", type="radio", label="What is your planned investment capacity per acre?",
+        id="budget", type="radio", label="How much can you spend per acre next season?",
         options=[
-            WizardQuestionOption(label="Low (< ₹15,000 / acre)", value="low"),
-            WizardQuestionOption(label="Medium (₹15,000 - ₹35,000 / acre)", value="medium"),
-            WizardQuestionOption(label="High (> ₹35,000 / acre)", value="high"),
+            WizardQuestionOption(label="<₹10k", value="<₹10k"),
+            WizardQuestionOption(label="₹10–25k", value="₹10–25k"),
+            WizardQuestionOption(label="₹25–50k", value="₹25–50k"),
+            WizardQuestionOption(label=">₹50k", value=">₹50k"),
         ],
     ),
     WizardQuestion(
-        id="livestock", type="radio", label="Do you have livestock on your farm?",
+        id="livestock", type="radio", label="What type of farm do you have?",
         options=[
-            WizardQuestionOption(label="Cattle / Buffaloes", value="cattle"),
-            WizardQuestionOption(label="Goats / Sheep", value="small_ruminants"),
-            WizardQuestionOption(label="No livestock", value="none"),
+            WizardQuestionOption(label="Cattle farm - Cows & Buffaloes", value="Cattle farm - Cows & Buffaloes"),
+            WizardQuestionOption(label="Cattle farm - Goat, Sheep, & Pig", value="Cattle farm - Goat, Sheep, & Pig"),
+            WizardQuestionOption(label="Poultry farm", value="Poultry farm"),
+            WizardQuestionOption(label="Fisheries", value="Fisheries"),
+            WizardQuestionOption(label="I don't have any livestock", value="I don't have any live stock"),
         ],
     ),
     WizardQuestion(id="farm_name", type="text", label="Give your farm a name", required=False),
@@ -118,13 +146,31 @@ async def get_wizard_questions(farmId: Optional[str] = Query(None), auth_payload
             for farm_field, suppressed in SUPPRESSION_RULES:
                 if farm.get(farm_field):
                     suppressed_ids.update(suppressed)
+            # DEF-04's active-crop baseline makes previous_crop moot even when
+            # the farm has no recorded previous_crop value of its own.
+            if farm.get("has_active_crop") or farm.get("crop"):
+                suppressed_ids.add("previous_crop")
 
     questions = [q for q in ALL_QUESTIONS if q.id not in suppressed_ids]
     return WizardQuestionsResponse(farm_context=farm_context, questions=questions)
 
 
 _SEASON_MAP = {"kharif": "KHARIF", "rabi": "RABI", "summer": "ZAID", "annual": "LONGTERM"}
-_BUDGET_MAP = {"low": "B1", "medium": "B3", "high": "B4"}
+
+_BUDGET_MAP = {
+    # Flowchart / TRD brackets (standard values and shorthands)
+    "20k-40k": "B1", "40k-70k": "B2", "70k-1l": "B3", "1l-1.2l": "B4",
+    "70k-1lakh": "B3", "1lakh-1.2lakh": "B4", "70k-100k": "B3", "100k-120k": "B4",
+    # Full numeric range values without k/l shorthand
+    "20000-40000": "B1", "40000-70000": "B2", "70000-100000": "B3", "100000-120000": "B4",
+    # Questionnaire (v3) formats
+    "<10k": "B1", "<10000": "B1", "10-25k": "B2", "10k-25k": "B2",
+    "25-50k": "B3", "25k-50k": "B3", ">50k": "B4", ">50000": "B4",
+    # Direct canonical codes
+    "b1": "B1", "b2": "B2", "b3": "B3", "b4": "B4",
+    # Backwards compatibility with the earlier 3-tier wizard options
+    "low": "B1", "medium": "B3", "high": "B4",
+}
 
 
 def _map_season(season: str) -> str:
@@ -135,9 +181,17 @@ def _map_season(season: str) -> str:
 
 
 def _map_budget(budget: str) -> str:
-    mapped = _BUDGET_MAP.get(budget.lower())
+    cleaned = (
+        budget.strip().lower().replace(" ", "")
+        .replace("₹", "").replace(",", "").replace("/acre", "")
+        .replace("–", "-").replace("—", "-")  # unicode en-dash / em-dash
+    )
+    mapped = _BUDGET_MAP.get(cleaned)
     if mapped is None:
-        raise ValueError(f"Unrecognized budget '{budget}'. Expected one of: low, medium, high")
+        raise ValueError(
+            f"Unrecognized budget '{budget}'. Expected one of: 20K-40K, 40K-70K, 70K-1L, 1L-1.2L "
+            "(or B1-B4, <10k, 10-25k, etc.)"
+        )
     return mapped
 
 
@@ -170,10 +224,17 @@ def _map_irrigation(methods: list[str]) -> list[str]:
 
 
 @router.post("/wizard/submit", response_model=WizardSubmitResponse)
-async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depends(require_jwt)):
+async def submit_wizard(
+    payload: WizardSubmitRequest,
+    lang: str = Query("en", description="ISO 639-1 language code"),
+    auth_payload: dict = Depends(require_jwt),
+):
     """TRD §8.6/§8.7: synchronous ML recommendation + async CropGuideCompleted
     emission. The Kafka publish never blocks or fails the HTTP response
     (Review Focus) — it's fired and its result is only logged."""
+    lang_code = lang.lower().strip()
+    if lang_code not in SUPPORTED_LANGUAGES:
+        lang_code = "en"
     upid = auth_payload["upid"]
     answers = payload.answers
     farm = None
@@ -242,7 +303,7 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
         raise HTTPException(status_code=480, detail="limit exceeded, subscribe now")
 
     try:
-        response = await scoring_engine.recommend(rec_request, auto_detect_soil=True)
+        response = await scoring_engine.recommend(rec_request, lang=lang_code, auto_detect_soil=True)
     except Exception:
         await subscription_service.rollback(upid, payload.subscription_id)
         raise
@@ -266,7 +327,7 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
             previous_crop_code=rotation_crop_name,
             was_fallow=was_fallow,
             top_n=5,
-            lang="en",
+            lang=lang_code,
             zone_filter_applied=response.zone_filter_applied,
             soil_class_detected=response.soil_class_detected,
             soil_texture_label=response.soil_texture_label,
@@ -297,7 +358,7 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
                 recommendation_id=recommendation_id,
                 farm_name=answers.farm_name or (farm.get("name") if farm else None),
                 season=season,
-                language="en",
+                language=lang_code,
                 top_crop_id=top.crop.lower().replace(" ", "_"),
                 top_crop_name=top.crop,
                 top_crop_score=round(top.suitability_pct),
@@ -307,15 +368,18 @@ async def submit_wizard(payload: WizardSubmitRequest, auth_payload: dict = Depen
     except Exception as exc:
         logger.error(f"failed to pre-hydrate user_crop_reports for upid={upid}: {exc}")
 
-    recommendations = [
-        WizardRecommendationItem(
-            id=f"rec_{i}", crop_name=r.crop, suitability_score=round(r.suitability_pct),
+    recommendations = []
+    for i, r in enumerate(response.results):
+        master = await _find_master_crop_row(r.crop)
+        recommendations.append(WizardRecommendationItem(
+            id=f"rec_{i}", crop_name=r.crop,
+            crop_name_vernacular=r.translated_name or r.crop,
+            suitability_score=round(r.suitability_pct),
             roi_estimate="High" if r.suitability_pct >= 80 else "Medium" if r.suitability_pct >= 50 else "Low",
-            duration_days=None, water_requirement=None,
+            duration_days=master.duration_days if master else None,
+            water_requirement=master.water_requirement if master else None,
             reason=f"Suitability {r.suitability_pct:.0f}% for {season.title()} season.",
-        )
-        for i, r in enumerate(response.results)
-    ]
+        ))
 
     # Awaited, not fire-and-forget: EventBrokerService.publish already
     # guarantees a Kafka outage never raises into this response (Review

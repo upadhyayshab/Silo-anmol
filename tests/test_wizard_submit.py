@@ -27,9 +27,31 @@ class TestMappingHelpers(IsolatedAsyncioTestCase):
 
     async def test_budget_mapping(self):
         from routers.v2.wizard import _map_budget
+        # Flowchart / TRD canonical brackets
+        self.assertEqual(_map_budget("20K-40K"), "B1")
+        self.assertEqual(_map_budget("40K-70K"), "B2")
+        self.assertEqual(_map_budget("70K-1L"), "B3")
+        self.assertEqual(_map_budget("1L-1.2L"), "B4")
+        # Full labels with currency, commas, and /acre
+        self.assertEqual(_map_budget("₹20,000 - ₹40,000 / acre"), "B1")
+        self.assertEqual(_map_budget("₹40,000 – ₹70,000 / acre"), "B2")  # unicode en-dash
+        # Questionnaire (v3) formats
+        self.assertEqual(_map_budget("<₹10k"), "B1")
+        self.assertEqual(_map_budget("₹10–25k"), "B2")
+        self.assertEqual(_map_budget("₹25-50k"), "B3")
+        self.assertEqual(_map_budget(">₹50k"), "B4")
+        # Canonical bucket codes
+        self.assertEqual(_map_budget("B1"), "B1")
+        self.assertEqual(_map_budget("b2"), "B2")
+        # Legacy 3-tier backwards compatibility
         self.assertEqual(_map_budget("low"), "B1")
         self.assertEqual(_map_budget("medium"), "B3")
         self.assertEqual(_map_budget("high"), "B4")
+
+    async def test_budget_mapping_unknown_raises_value_error(self):
+        from routers.v2.wizard import _map_budget
+        with self.assertRaises(ValueError):
+            _map_budget("free")
 
     async def test_irrigation_mapping(self):
         from routers.v2.wizard import _map_irrigation
@@ -48,18 +70,21 @@ class TestMappingHelpers(IsolatedAsyncioTestCase):
 
 
 class TestWizardSubmit(IsolatedAsyncioTestCase):
+    @patch("routers.v2.wizard.crop_report_manager")
     @patch("routers.v2.wizard.user_crop_report_manager")
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_submit_without_farm_id_uses_payload_location(
-        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager,
+        mock_crop_report_manager,
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
 
         mock_event_broker.publish = AsyncMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[]))
 
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
@@ -80,7 +105,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
                 # previous_crop omitted -> was_fallow=True, skips the crop_manager lookup entirely
             ),
         )
-        result = await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        result = await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         self.assertEqual(len(result.recommendations), 1)
         self.assertEqual(result.recommendations[0].crop_name, "Tomato")
@@ -118,7 +143,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
             farmId="farm-1", subscription_id="sub_1",
             answers=WizardAnswersPayload(season="Rabi", budget="low", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         rec_request = mock_scoring_engine.recommend.call_args[0][0]
         self.assertEqual(rec_request.lat, 18.0)
@@ -132,7 +157,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         mock_event_broker.publish = AsyncMock()
         req = WizardSubmitRequest(farmId=None, subscription_id="sub_1", answers=WizardAnswersPayload(season="Rabi"))
         with self.assertRaises(HTTPException) as ctx:
-            await submit_wizard(req, auth_payload={"upid": "usr_1"})
+            await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
         self.assertEqual(ctx.exception.status_code, 400)
 
     @patch("routers.v2.wizard.history_manager")
@@ -164,7 +189,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         with self.assertRaises(RuntimeError):
-            await submit_wizard(req, auth_payload={"upid": "usr_1"})
+            await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
@@ -191,7 +216,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         published_payload = mock_event_broker.publish.call_args.args[1]
         self.assertIsInstance(published_payload, dict)
@@ -224,7 +249,7 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_42",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         mock_sub_service.verify.assert_awaited_once_with("usr_1", "sub_42")
         mock_sub_service.confirm.assert_awaited_once_with("usr_1", "sub_42")
@@ -247,7 +272,7 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         with self.assertRaises(HTTPException) as ctx:
-            await submit_wizard(req, auth_payload={"upid": "usr_1"})
+            await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         self.assertEqual(ctx.exception.status_code, 480)
         mock_scoring_engine.recommend.assert_not_called()
@@ -270,7 +295,7 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         with self.assertRaises(RuntimeError):
-            await submit_wizard(req, auth_payload={"upid": "usr_1"})
+            await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         mock_sub_service.rollback.assert_awaited_once_with("usr_1", "sub_42")
         mock_sub_service.confirm.assert_not_called()
@@ -280,18 +305,21 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
     """DEF-03: every wizard recommendation must be logged to
     recommendation_history, same as /api/v1/recommend."""
 
+    @patch("routers.v2.wizard.crop_report_manager")
     @patch("routers.v2.wizard.user_crop_report_manager")
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_successful_submission_writes_recommendation_history(
-        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager,
+        mock_crop_report_manager,
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
 
         mock_event_broker.publish = AsyncMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[]))
         mock_sub_service.verify = AsyncMock(return_value=(True, {}))
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
@@ -309,7 +337,7 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_42",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         mock_history_manager.create.assert_awaited_once()
         history_row = mock_history_manager.create.call_args.args[0]
@@ -342,7 +370,7 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_42",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        result = await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
+        result = await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})  # must NOT raise
         self.assertEqual(result.recommendations, [])
 
 
@@ -383,7 +411,7 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
             farmId="farm-441", subscription_id="sub_1",
             answers=WizardAnswersPayload(season="Summer", budget="low", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         rec_request = mock_scoring_engine.recommend.call_args[0][0]
         self.assertEqual(rec_request.previous_crop_family, "Solanaceae")
@@ -420,7 +448,7 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
             farmId="farm-2", subscription_id="sub_1",
             answers=WizardAnswersPayload(season="Rabi", budget="low", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         rec_request = mock_scoring_engine.recommend.call_args[0][0]
         self.assertEqual(rec_request.previous_crop_family, "Cereal")
@@ -448,7 +476,7 @@ class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(pincode="411001", season="Rabi", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise 400
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})  # must NOT raise 400
 
         rec_request = mock_scoring_engine.recommend.call_args[0][0]
         self.assertIsNone(rec_request.lat)
@@ -475,7 +503,7 @@ class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_1", wizard_session_id="wiz-sess-abc",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         published_payload = mock_event_broker.publish.call_args.args[1]
         self.assertEqual(published_payload["data"]["wizard_session_id"], "wiz-sess-abc")
@@ -502,20 +530,22 @@ class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         published_payload = mock_event_broker.publish.call_args.args[1]
         self.assertIsNone(published_payload["data"]["wizard_session_id"])
 
 
 class TestWizardSubmitReportPreHydration(IsolatedAsyncioTestCase):
+    @patch("routers.v2.wizard.crop_report_manager")
     @patch("routers.v2.wizard.user_crop_report_manager")
     @patch("routers.v2.wizard.history_manager")
     @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
     async def test_successful_submission_writes_user_crop_report_and_returns_recommendation_id(
-        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager
+        self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager, mock_ucr_manager,
+        mock_crop_report_manager,
     ):
         from routers.v2.wizard import submit_wizard
         from models.recommendationModels import RecommendationResponse, CropRecommendation
@@ -525,6 +555,7 @@ class TestWizardSubmitReportPreHydration(IsolatedAsyncioTestCase):
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
         mock_ucr_manager.create = AsyncMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[]))
         mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(
             results=[
                 CropRecommendation(crop="Mustard", family="Brassica", horizon="SEASONAL",
@@ -540,7 +571,7 @@ class TestWizardSubmitReportPreHydration(IsolatedAsyncioTestCase):
                 location=[73.0, 18.0], season="Rabi", irrigation=["Drip"], farm_name="East Plot",
             ),
         )
-        result = await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        result = await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         self.assertTrue(result.recommendation_id)
         mock_ucr_manager.create.assert_awaited_once()
@@ -574,7 +605,7 @@ class TestWizardSubmitReportPreHydration(IsolatedAsyncioTestCase):
             farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
-        result = await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
+        result = await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})  # must NOT raise
         self.assertEqual(result.recommendations, [])
 
 
@@ -607,7 +638,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
                 farm_name="East Plot", livestock="cattle", sowing_date="2026-10-15",
             ),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         history_row = mock_history_manager.create.call_args.args[0]
         self.assertEqual(history_row.farm_id, "farm-9")
@@ -646,7 +677,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
                 location=[73.0, 18.0], season="Rabi", irrigation=["Drip"], sowing_date="not-a-date",
             ),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})  # must NOT raise
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})  # must NOT raise
 
         history_row = mock_history_manager.create.call_args.args[0]
         self.assertIsNone(history_row.sowing_date)
@@ -684,7 +715,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
                 has_active_crop="Yes", crop="Tomato", previous_crop="Wheat",
             ),
         )
-        await submit_wizard(req, auth_payload={"upid": "usr_1"})
+        await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
         history_row = mock_history_manager.create.call_args.args[0]
         self.assertEqual(history_row.current_crop_code, "Tomato")

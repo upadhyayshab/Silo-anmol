@@ -1,6 +1,9 @@
 """Crop guide report/dossier endpoints — spec §5 Phase 5, mounted at
-/api/v2/reports rather than the spec's literal /api/v6 (this plan's
-versioning decision)."""
+/api/v2 rather than the spec's literal /api/v6 (this plan's versioning
+decision). GAP-06: routes live at their clean REST paths (no router-level
+"/reports" prefix, which previously doubled up with each route's own
+trailing "/reports" segment); the old doubled paths stay registered as
+hidden aliases for any client still calling them."""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -11,7 +14,7 @@ from managers.cropReportManagers import CropReportManager, UserCropReportManager
 from models.reportModels import SingleCropDossier, UnifiedCropReportResponse, UserReportsListResponse
 from services.cropReportService import CropReportService
 
-router = APIRouter(prefix="/reports", tags=["Crop Guide Reports v2"])
+router = APIRouter(tags=["Crop Guide Reports v2"])
 settings = get_settings()
 engine = get_engine(settings.name)
 report_service = CropReportService(
@@ -21,6 +24,9 @@ report_service = CropReportService(
 
 
 @router.get("/users/{user_id}/reports", response_model=UserReportsListResponse)
+@router.get(
+    "/reports/users/{user_id}/reports", response_model=UserReportsListResponse, include_in_schema=False,
+)
 async def list_user_reports(
     user_id: str = Path(...),
     farm_id: Optional[str] = Query(None),
@@ -36,6 +42,10 @@ async def list_user_reports(
 
 
 @router.get("/recommendations/{recommendation_id}/report", response_model=UnifiedCropReportResponse)
+@router.get(
+    "/reports/recommendations/{recommendation_id}/report",
+    response_model=UnifiedCropReportResponse, include_in_schema=False,
+)
 async def get_recommendation_report(
     recommendation_id: str = Path(...),
     lang: str = Query("en"),
@@ -53,6 +63,9 @@ async def get_recommendation_report(
 
 
 @router.get("/crops/{crop_id}/report", response_model=SingleCropDossier)
+@router.get(
+    "/reports/crops/{crop_id}/report", response_model=SingleCropDossier, include_in_schema=False,
+)
 async def get_master_crop_report(
     crop_id: str = Path(...),
     lang: str = Query("en"),

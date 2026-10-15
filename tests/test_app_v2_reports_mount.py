@@ -9,6 +9,11 @@ class TestV2ReportsMount(TestCase):
     def test_reports_routes_mounted_under_api_v2(self):
         import app as app_module
         paths = [r.path for r in app_module.app.routes]
+        # GAP-06: clean REST paths (no redundant "/reports" prefix) are now primary.
+        self.assertIn("/api/v2/users/{user_id}/reports", paths)
+        self.assertIn("/api/v2/recommendations/{recommendation_id}/report", paths)
+        self.assertIn("/api/v2/crops/{crop_id}/report", paths)
+        # Old doubled paths stay registered as hidden aliases for existing clients.
         self.assertIn("/api/v2/reports/users/{user_id}/reports", paths)
         self.assertIn("/api/v2/reports/recommendations/{recommendation_id}/report", paths)
         self.assertIn("/api/v2/reports/crops/{crop_id}/report", paths)

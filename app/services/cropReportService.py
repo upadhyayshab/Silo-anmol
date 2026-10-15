@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from managers.cropReportManagers import CropReportManager, UserCropReportManager
 from models.reportModels import (
-    CropRisk, CropTip, SingleCropDossier, SoilEconomicBenefits, SowingWindow,
+    CropRisk, CropTip, MoreForYourFarmItem, SingleCropDossier, SoilEconomicBenefits, SowingWindow,
     UnifiedCropReportResponse, UserReportSummaryCard, UserReportsListResponse,
     RecommendedCropSummaryItem, WeatherMetric,
 )
@@ -84,13 +84,23 @@ class CropReportService:
         # and may refer to a crop that didn't survive the master-catalog lookup.
         top_dossier = dossiers[0] if dossiers else None
 
+        # GAP-09: "More for your farm" surfaces every dossier after the top
+        # pick -- same surviving list `dossiers` already assembled above.
+        more_for_your_farm = [
+            MoreForYourFarmItem(
+                crop_id=d.crop_id, name_en=d.name_en, name_local=d.name_local,
+                match_score=d.match_score, is_top_pick=False, profit_note=d.profit_note,
+            )
+            for d in dossiers[1:]
+        ]
+
         return UnifiedCropReportResponse(
             report_id=run.uid, recommendation_id=run.recommendation_id, user_id=run.user_id,
             farm_id=run.farm_id, farm_name=run.farm_name, season=run.season, language=lang,
             top_crop_id=top_dossier.crop_id if top_dossier else "",
             top_crop_name=top_dossier.name_en if top_dossier else run.top_crop_name,
             top_crop_score=top_dossier.match_score if top_dossier else run.top_crop_score,
-            total_recommended_crops=len(ranked), crops=dossiers, more_for_your_farm=[],
+            total_recommended_crops=len(ranked), crops=dossiers, more_for_your_farm=more_for_your_farm,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
 
@@ -109,17 +119,24 @@ class CropReportService:
         for run in runs.items:
             summaries = []
             for i, r in enumerate(run.report_data.get("results", [])):
+                master_row = await self._find_master_row(r["crop"])
+                local_name = master_row.name_local.get(lang, r["crop"]) if master_row else r["crop"]
                 summaries.append(RecommendedCropSummaryItem(
                     crop_id=await self._resolve_crop_id(r["crop"]), crop_name=r["crop"],
-                    crop_name_vernacular=r["crop"], match_score=round(r["suitability_pct"]),
+                    crop_name_vernacular=local_name, match_score=round(r["suitability_pct"]),
                     is_top_pick=(i == 0),
                 ))
+
+            top_master = await self._find_master_row(run.top_crop_name)
+            top_local_name = top_master.name_local.get(lang, run.top_crop_name) if top_master else run.top_crop_name
+            thumbnail_url = (top_master.icon_url or top_master.hero_image_url) if top_master else None
+
             cards.append(UserReportSummaryCard(
                 report_id=run.uid, recommendation_id=run.recommendation_id, farm_id=run.farm_id,
                 farm_name=run.farm_name, season=run.season, top_crop_id=await self._resolve_crop_id(run.top_crop_name),
-                top_crop_name=run.top_crop_name, top_crop_vernacular=run.top_crop_name,
+                top_crop_name=run.top_crop_name, top_crop_vernacular=top_local_name,
                 top_crop_score=run.top_crop_score, total_recommended_crops=run.total_recommendations,
-                recommended_crops_summary=summaries,
+                recommended_crops_summary=summaries, thumbnail_url=thumbnail_url,
                 created_at=run.created_at.isoformat() if run.created_at else "",
             ))
         return UserReportsListResponse(user_id=user_id, total=len(cards), reports=cards)

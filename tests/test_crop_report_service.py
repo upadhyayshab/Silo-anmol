@@ -6,15 +6,16 @@ from unittest.mock import AsyncMock, MagicMock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 
 
-def _crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica"):
+def _crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica",
+                      name_local=None, hero_image_url=None, icon_url=None):
     return MagicMock(
-        crop_id=crop_id, name_en=name_en, name_local={"hi": "सरसों"}, family=family,
+        crop_id=crop_id, name_en=name_en, name_local=name_local or {"hi": "सरसों"}, family=family,
         crop_type="annual", seasons=["rabi"], duration_days=115, years_to_first_harvest=None,
         cost_per_acre_inr=12000, expected_yield_per_acre=8.0, yield_unit="quintal",
         profit_potential="high", sowing_windows=[{"season": "rabi", "start": "10-01", "end": "10-20"}],
         profit_note="note", weather=[], risks=[], tips=[],
         soil_economic_benefits={"title": "t", "soil": [], "economic": []},
-        hero_image_url=None, icon_url=None,
+        hero_image_url=hero_image_url, icon_url=icon_url,
     )
 
 
@@ -131,6 +132,121 @@ class TestGetOrCreateUnifiedReport(IsolatedAsyncioTestCase):
         self.assertEqual(report.top_crop_id, "wheat")
         self.assertEqual(report.top_crop_name, "Wheat")
         self.assertEqual(report.top_crop_score, 84)
+
+
+class TestMoreForYourFarm(IsolatedAsyncioTestCase):
+    async def test_more_for_your_farm_populated_from_dossiers_after_top_pick(self):
+        # GAP-09: more_for_your_farm was hardcoded to []; it must now carry
+        # every surviving dossier ranked after the top pick.
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-4", recommendation_id="rec-4", user_id="usr_1", farm_id=None,
+                farm_name="East Plot", season="RABI", top_crop_name="Mustard", top_crop_score=95,
+                report_data={"results": [
+                    {"crop": "Mustard", "family": "Brassica", "suitability_pct": 95.0},
+                    {"crop": "Wheat", "family": "Cereal", "suitability_pct": 84.0},
+                    {"crop": "Gram", "family": "Legume", "suitability_pct": 70.0},
+                ]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(side_effect=[
+            MagicMock(items=[_crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica")]),
+            MagicMock(items=[_crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal")]),
+            MagicMock(items=[_crop_report_row(crop_id="gram", name_en="Gram", family="Legume")]),
+        ])
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        report = await service.get_or_create_unified_report(recommendation_id="rec-4", user_id="usr_1")
+
+        self.assertEqual(len(report.more_for_your_farm), 2)
+        self.assertEqual([i.crop_id for i in report.more_for_your_farm], ["wheat", "gram"])
+        self.assertTrue(all(not i.is_top_pick for i in report.more_for_your_farm))
+
+
+class TestListUserReportsLocalizationAndThumbnail(IsolatedAsyncioTestCase):
+    async def test_crop_name_vernacular_resolved_from_master_row_name_local(self):
+        # GAP-08: crop_name_vernacular/top_crop_vernacular were always the
+        # English name; they must resolve through master_row.name_local[lang].
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-5", recommendation_id="rec-5", user_id="usr_1", farm_id=None,
+                farm_name=None, season="RABI", top_crop_name="Mustard", top_crop_score=95,
+                total_recommendations=1, created_at=None,
+                report_data={"results": [{"crop": "Mustard", "family": "Brassica", "suitability_pct": 95.0}]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(
+            items=[_crop_report_row(name_local={"hi": "सरसों / राय"})]
+        ))
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        result = await service.list_user_reports(user_id="usr_1", lang="hi")
+
+        card = result.reports[0]
+        self.assertEqual(card.top_crop_vernacular, "सरसों / राय")
+        self.assertEqual(card.recommended_crops_summary[0].crop_name_vernacular, "सरसों / राय")
+
+    async def test_vernacular_falls_back_to_english_when_lang_missing_from_name_local(self):
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-6", recommendation_id="rec-6", user_id="usr_1", farm_id=None,
+                farm_name=None, season="RABI", top_crop_name="Mustard", top_crop_score=95,
+                total_recommendations=1, created_at=None,
+                report_data={"results": [{"crop": "Mustard", "family": "Brassica", "suitability_pct": 95.0}]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(
+            items=[_crop_report_row(name_local={"hi": "सरसों / राय"})]
+        ))
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        result = await service.list_user_reports(user_id="usr_1", lang="mr")  # not in name_local
+
+        self.assertEqual(result.reports[0].top_crop_vernacular, "Mustard")
+
+    async def test_thumbnail_url_populated_from_top_crop_icon_url(self):
+        # GAP-10: thumbnail_url was always omitted; it must resolve from the
+        # top crop's icon_url (falling back to hero_image_url).
+        from services.cropReportService import CropReportService
+
+        mock_user_crop_report_manager = MagicMock()
+        mock_user_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            MagicMock(
+                uid="ucr-7", recommendation_id="rec-7", user_id="usr_1", farm_id=None,
+                farm_name=None, season="RABI", top_crop_name="Mustard", top_crop_score=95,
+                total_recommendations=1, created_at=None,
+                report_data={"results": [{"crop": "Mustard", "family": "Brassica", "suitability_pct": 95.0}]},
+            )
+        ]))
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(
+            items=[_crop_report_row(icon_url="https://cdn.example/mustard-icon.png")]
+        ))
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
+        )
+
+        result = await service.list_user_reports(user_id="usr_1")
+
+        self.assertEqual(result.reports[0].thumbnail_url, "https://cdn.example/mustard-icon.png")
 
 
 class TestListUserReportsCropIdResolution(IsolatedAsyncioTestCase):
