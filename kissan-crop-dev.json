@@ -15,7 +15,20 @@
                 }
             ],
             "essential": true,
-            "environment": [],
+            "environment": [
+                {
+                    "name": "BROKER_TYPE",
+                    "value": "kafka"
+                },
+                {
+                    "name": "MSK_REGION",
+                    "value": "ap-south-1"
+                },
+                {
+                    "name": "MSK_BOOTSTRAP_SERVERS",
+                    "value": "b-1.kissanmskprototype.so1kou.c2.kafka.ap-south-1.amazonaws.com:9098,b-3.kissanmskprototype.so1kou.c2.kafka.ap-south-1.amazonaws.com:9098,b-2.kissanmskprototype.so1kou.c2.kafka.ap-south-1.amazonaws.com:9098"
+                }
+            ],
             "mountPoints": [],
             "volumesFrom": [],
             "secrets": [
@@ -102,6 +115,10 @@
                 {
                     "name": "INTERNAL_SERVICE_SECRET",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/INTERNAL_SERVICE_SECRET"
+                },
+                {
+                    "name": "MASTER_API_KEY",
+                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/MASTER_API_KEY"
                 }
             ],
             "logConfiguration": {

@@ -10,11 +10,12 @@ WORKDIR /src
 RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir gunicorn
 
-COPY requirements/dev.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-COPY SharedBackend/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-RUN rm requirements.txt
+# Exact versions for Python 3.12 / linux, compiled from requirements/dev.txt +
+# SharedBackend/requirements.txt (reproducible builds). After changing either:
+#   uv pip compile requirements/dev.txt SharedBackend/requirements.txt \
+#     --python-version 3.12 --python-platform linux --no-header --no-annotate -o requirements/prod.txt
+COPY requirements/prod.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && rm requirements.txt
 
 FROM python:3.12-slim AS runtime
 
