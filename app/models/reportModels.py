@@ -1,5 +1,5 @@
 """Pydantic models for the crop-guide report/dossier system — copied
-verbatim from spec §5.4, under /api/v2 rather than the spec's literal
+verbatim from spec Section 5.4, under /api/v2 rather than the spec's literal
 /api/v6 mount point."""
 from typing import List, Optional, Dict, Literal
 from pydantic import BaseModel
@@ -98,6 +98,7 @@ class UnifiedCropReportResponse(BaseModel):
     crops: List[SingleCropDossier]
     more_for_your_farm: List[MoreForYourFarmItem]
     created_at: str
+    focused_crop_id: Optional[str] = None  # the crop the farmer tapped, shown first in `crops`
 
 
 class RecommendedCropSummaryItem(BaseModel):

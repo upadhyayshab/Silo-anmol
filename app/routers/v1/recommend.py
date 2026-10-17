@@ -5,13 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from config import get_settings, get_engine
 from dependencies.auth import require_jwt
 from managers import CropManager, RecommendationHistoryManager, RecommendationHistorySchema
+from managers.cropReportManagers import CropReportManager
 from models import (
     PublicRecommendationRequest,
     RecommendationRequest,
     RecommendationResponse,
 )
 from services import SubscriptionService
-from utils.languages import SUPPORTED_LANGUAGES
+from services.cropCatalog import CropCatalog
+from utils.languages import SUPPORTED_LANGUAGES, canonical_lang
 from utils.scoringEngine import CropScoringEngine
 
 logger = logging.getLogger("recommend_router")
@@ -23,6 +25,7 @@ crop_manager = CropManager(engine)
 scoring_engine = CropScoringEngine(engine)
 subscription_service = SubscriptionService()
 history_manager = RecommendationHistoryManager(engine)
+crop_catalog = CropCatalog(CropReportManager(engine), crop_manager)
 
 
 @router.post("", response_model=RecommendationResponse)
@@ -30,7 +33,7 @@ async def post_recommend(
     payload: PublicRecommendationRequest,
     lat: float = Query(..., ge=-90.0, le=90.0, description="Latitude of the farm location"),
     lon: float = Query(..., ge=-180.0, le=180.0, description="Longitude of the farm location"),
-    lang: str = Query("en", description="Language code for translated crop names (e.g. 'en', 'kn', 'hn')"),
+    lang: str = Query("en", description="Language code for translated crop names (e.g. 'en', 'hi', 'kn')"),
     auth_payload: dict = Depends(require_jwt),
 ):
     """
@@ -40,13 +43,14 @@ async def post_recommend(
     - **Subscription**: Requires a `subscription_id` with remaining usage; usage is verified before
       scoring and confirmed after a report is successfully generated (rolled back if generation fails).
     - **Location**: `lat` & `lon` automatically resolve Agro-Climatic Zone and USDA Soil Texture.
-    - **Language**: Translates crop names to requested language if available (`lang=kn`, `hn`, `ta`, etc.).
+    - **Language**: Translates crop names to requested language if available (`lang=hi`, `kn`, `ta`, etc.;
+      the legacy Hindi code `hn` and locale forms like `hi-IN` are also accepted).
     - **Previous Crop**: Provide `previous_crop_code` (e.g. 'Wheat') or set `was_fallow=true` if land was barren.
     """
     upid = auth_payload["upid"]
 
-    lang_code = lang.lower().strip()
-    if lang_code not in SUPPORTED_LANGUAGES:
+    lang_code = canonical_lang(lang)
+    if lang_code is None:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported language code '{lang}'. Supported codes: {list(SUPPORTED_LANGUAGES.keys())}",
@@ -59,23 +63,15 @@ async def post_recommend(
                 status_code=400,
                 detail="previous_crop_code is required when was_fallow is false",
             )
-        # Look up crop by name to get its family
-        crops_res = await crop_manager.fetch_all(limit=1, filters={"name_en": payload.previous_crop_code})
-        if not crops_res.items:
-            # Fallback: check case-insensitive match
-            all_crops = await crop_manager.fetch_all(limit=0)
-            matched = next(
-                (c for c in all_crops.items if c.name_en.lower() == payload.previous_crop_code.lower()),
-                None,
+        # Any spelling, Hindi/Marathi name or common alias of a catalog crop;
+        # v1's contract still rejects a crop it can't place.
+        matched = await crop_catalog.find_scoring(payload.previous_crop_code)
+        if not matched:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Previous crop '{payload.previous_crop_code}' not found in database. Use /api/v1/options to get valid crop names.",
             )
-            if not matched:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Previous crop '{payload.previous_crop_code}' not found in database. Use /api/v1/options to get valid crop names.",
-                )
-            previous_crop_family = matched.family
-        else:
-            previous_crop_family = crops_res.items[0].family
+        previous_crop_family = matched.family
 
     # Construct internal recommendation request
     internal_request = RecommendationRequest(
@@ -90,10 +86,9 @@ async def post_recommend(
         top_n=payload.top_n,
     )
 
-    # ── Subscription usage: verify before running the (paid) scoring pipeline ──
-    verify_ok, verify_resp = await subscription_service.verify(upid, payload.subscription_id)
-    if not verify_ok:
-        raise HTTPException(status_code=480, detail="limit exceeded, subscribe now")
+    # ── Subscription: the farmer's own, not-cancelled subscription with a
+    # credit left, checked before running the (paid) scoring pipeline ──
+    await subscription_service.check_quota(upid, payload.subscription_id)
 
     # Run recommendation with soil auto-detection and language translation
     try:

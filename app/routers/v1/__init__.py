@@ -4,7 +4,6 @@ from config import get_settings, get_engine
 
 from models import *
 
-from .example import router as example_router
 from .soil import router as soil_router
 from .options import router as options_router
 from .recommendations import router as recommendations_router
@@ -15,7 +14,7 @@ settings = get_settings()
 engine = get_engine(settings.name)
 
 router = APIRouter()
-router.include_router(example_router)
+# The template /examples route wrote rows to the DB with no auth; it is not mounted.
 router.include_router(soil_router)
 router.include_router(options_router)
 router.include_router(recommendations_router)

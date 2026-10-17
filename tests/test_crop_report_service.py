@@ -38,6 +38,23 @@ class TestGetMasterReport(IsolatedAsyncioTestCase):
         self.assertEqual(dossier.family, "Brassica")
 
 
+    async def test_resolves_any_case_spelling_or_local_name(self):
+        from services.cropReportService import CropReportService
+
+        mock_crop_report_manager = MagicMock()
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            _crop_report_row(),
+            _crop_report_row(crop_id="lime_lemon", name_en="Lime / Lemon", name_local={"hi": "नींबू"}),
+        ]))
+        service = CropReportService(
+            crop_report_manager=mock_crop_report_manager, user_crop_report_manager=MagicMock(),
+        )
+
+        for query, expected in [("MUSTARD", "mustard"), ("सरसों", "mustard"), ("Lime/lemon", "lime_lemon")]:
+            self.assertEqual((await service.get_master_report(query)).crop_id, expected)
+        mock_crop_report_manager.fetch_all.assert_awaited_once_with(limit=0)
+
+
 class TestGetOrCreateUnifiedReport(IsolatedAsyncioTestCase):
     async def test_builds_dossier_per_ranked_crop_from_cached_run(self):
         from services.cropReportService import CropReportService
@@ -54,10 +71,11 @@ class TestGetOrCreateUnifiedReport(IsolatedAsyncioTestCase):
             )
         ]))
         mock_crop_report_manager = MagicMock()
-        mock_crop_report_manager.fetch_all = AsyncMock(side_effect=[
-            MagicMock(items=[_crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica")]),
-            MagicMock(items=[_crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal")]),
-        ])
+        # The catalog loads every crop_reports row once, then resolves in memory.
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            _crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica"),
+            _crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal"),
+        ]))
         service = CropReportService(
             crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
         )
@@ -115,11 +133,10 @@ class TestGetOrCreateUnifiedReport(IsolatedAsyncioTestCase):
             )
         ]))
         mock_crop_report_manager = MagicMock()
-        mock_crop_report_manager.fetch_all = AsyncMock(side_effect=[
-            MagicMock(items=[]),  # ObscureCrop: name_en lookup misses
-            MagicMock(items=[]),  # ObscureCrop: full-table fallback scan also misses
-            MagicMock(items=[_crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal")]),  # Wheat: found
-        ])
+        # ObscureCrop has no catalog row; Wheat does.
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            _crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal"),
+        ]))
         service = CropReportService(
             crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
         )
@@ -153,11 +170,11 @@ class TestMoreForYourFarm(IsolatedAsyncioTestCase):
             )
         ]))
         mock_crop_report_manager = MagicMock()
-        mock_crop_report_manager.fetch_all = AsyncMock(side_effect=[
-            MagicMock(items=[_crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica")]),
-            MagicMock(items=[_crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal")]),
-            MagicMock(items=[_crop_report_row(crop_id="gram", name_en="Gram", family="Legume")]),
-        ])
+        mock_crop_report_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[
+            _crop_report_row(crop_id="mustard", name_en="Mustard", family="Brassica"),
+            _crop_report_row(crop_id="wheat", name_en="Wheat", family="Cereal"),
+            _crop_report_row(crop_id="gram", name_en="Gram", family="Legume"),
+        ]))
         service = CropReportService(
             crop_report_manager=mock_crop_report_manager, user_crop_report_manager=mock_user_crop_report_manager,
         )

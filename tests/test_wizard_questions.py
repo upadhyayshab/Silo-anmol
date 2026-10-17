@@ -32,7 +32,9 @@ class TestWizardQuestions(IsolatedAsyncioTestCase):
         # GAP-01: SDUI branching metadata
         self.assertEqual(by_id["crop"].depends_on, {"field": "has_active_crop", "value": "Yes"})
         self.assertEqual(by_id["sowing_date"].depends_on, {"field": "has_active_crop", "value": "Yes"})
-        self.assertEqual(by_id["previous_crop"].depends_on, {"field": "has_active_crop", "value": "No"})
+        # Crop Guide flowchart asks "Which crop did you grow before?" on both
+        # branches, so previous_crop no longer depends on has_active_crop.
+        self.assertIsNone(by_id["previous_crop"].depends_on)
         # GAP-02: autocomplete endpoint
         self.assertEqual(by_id["crop"].search_endpoint, "/api/v6/crops")
         self.assertEqual(by_id["previous_crop"].search_endpoint, "/api/v6/crops")
@@ -125,3 +127,57 @@ class TestWizardQuestions(IsolatedAsyncioTestCase):
         self.assertIsNone(result.farm_context)
         question_ids = [q.id for q in result.questions]
         self.assertIn("location", question_ids)  # nothing suppressed — degrade gracefully
+
+    @patch("routers.v2.wizard.agro_internal_service")
+    async def test_selected_farm_without_crop_asks_only_season_budget_livestock(self, mock_agro_service):
+        # Crop Guide flowchart, Has Farm Path: the farm answers the crop
+        # questions even when it has no crop recorded (it used to show 7).
+        from routers.v2.wizard import get_wizard_questions
+
+        mock_agro_service.get_farm = AsyncMock(return_value={
+            "farm_id": "farm-3", "name": "North Field", "center": [77.7, 13.1],
+            "crop": None, "has_active_crop": False, "previous_crop": None, "irrigation_methods": ["Drip"],
+        })
+
+        result = await get_wizard_questions(farmId="farm-3", auth_payload={"upid": "usr_1"})
+
+        self.assertEqual([q.id for q in result.questions], ["season", "budget", "livestock"])
+
+    @patch("routers.v2.wizard.agro_internal_service")
+    async def test_selected_farm_missing_location_or_known_irrigation_still_asks_them(self, mock_agro_service):
+        # Scoring can't run without a location or a watering method, so a
+        # farm that lacks them (or only has a value the engine can't map)
+        # still asks.
+        from routers.v2.wizard import get_wizard_questions
+
+        mock_agro_service.get_farm = AsyncMock(return_value={
+            "farm_id": "farm-4", "name": "Pending Plot", "center": None,
+            "crop": "Tomato", "has_active_crop": True, "irrigation_methods": ["Borewell"],
+        })
+
+        result = await get_wizard_questions(farmId="farm-4", auth_payload={"upid": "usr_1"})
+
+        self.assertEqual([q.id for q in result.questions], ["location", "season", "irrigation", "budget", "livestock"])
+
+    async def test_hindi_labels_with_unchanged_values_and_budget(self):
+        from routers.v2.wizard import get_wizard_questions
+
+        result = await get_wizard_questions(farmId=None, lang="hi-IN", auth_payload={"upid": "usr_1"})
+
+        by_id = {q.id: q for q in result.questions}
+        self.assertEqual(by_id["location"].label, "आपका खेत कहाँ है?")
+        season = {o.value: o.label for o in by_id["season"].options}
+        self.assertEqual(season["Kharif"], "खरीफ (मानसून: जून - अक्टूबर)")
+        # Values stay English: the submit handler maps them.
+        self.assertEqual([o.value for o in by_id["irrigation"].options], ["Rainfed", "Flood", "Drip", "Sprinkler"])
+        # Budget options are unchanged in every language (decision D3).
+        budget = by_id["budget"].options
+        self.assertEqual([o.value for o in budget], ["<₹10k", "₹10–25k", "₹25–50k", ">₹50k"])
+        self.assertEqual([o.label for o in budget], ["<₹10k", "₹10–25k", "₹25–50k", ">₹50k"])
+
+    async def test_unsupported_language_falls_back_to_english(self):
+        from routers.v2.wizard import get_wizard_questions
+
+        result = await get_wizard_questions(farmId=None, lang="xx", auth_payload={"upid": "usr_1"})
+
+        self.assertEqual(result.questions[0].label, "Where is your farm?")

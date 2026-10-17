@@ -1,0 +1,25 @@
+{
+  "_comment": "Shared CropGuideCompleted v1 contract. An identical copy lives in kissan-agromonitoring/tests/fixtures/; crop-recommendation must produce this shape and kissan-agromonitoring must accept it. Change both copies together.",
+  "event_id": "evt-sample-0001",
+  "event_type": "CropGuideCompleted",
+  "version": "1.0",
+  "timestamp": "2026-10-17T08:15:00+00:00",
+  "user_id": "usr_42",
+  "farm_id": null,
+  "data": {
+    "farm_name": "East Plot",
+    "center": [73.8567, 18.5204],
+    "has_active_crop": true,
+    "crop": "Wheat",
+    "sowing_date": "2026-10-01",
+    "previous_crop": "Soybean",
+    "irrigation_methods": ["Drip", "Flood"],
+    "season": "RABI",
+    "budget": "B1",
+    "livestock": "Cattle farm - Cows & Buffaloes",
+    "wizard_session_id": "sess-91",
+    "pincode": "411041",
+    "recommendation_id": "rec-sample-0001",
+    "farm_uid": "farms_sample-0001"
+  }
+}

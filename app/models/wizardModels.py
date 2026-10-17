@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class WizardQuestionOption(BaseModel):
@@ -49,6 +49,33 @@ class WizardAnswersPayload(BaseModel):
     livestock: Optional[str] = None
     farm_name: Optional[str] = None
 
+    @field_validator("location")
+    @classmethod
+    def _check_location(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+        """Exactly [lng, lat]. A one-number pin used to crash the submit (500),
+        and a swapped [lat, lng] pair was accepted and forwarded to Agro as the
+        farm centre. Same inverted-pair rule as Agro's farm validator: any
+        swapped Indian pair puts "latitude" above 60."""
+        if v is None:
+            return None
+        if len(v) != 2:
+            raise ValueError("location must be [longitude, latitude]")
+        lon, lat = v
+        if not (-180.0 <= lon <= 180.0) or abs(lat) > 60.0:
+            raise ValueError(
+                f"location latitude {lat} is out of range (possible inverted [lat, lon]); "
+                "location must be [longitude, latitude]"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _check_active_crop(self):
+        """Same rule as Agro's POST /farms: a farm that is growing a crop must
+        say which crop and when it was sown."""
+        if (self.has_active_crop or "").strip().lower() == "yes" and (not self.crop or not self.sowing_date):
+            raise ValueError("has_active_crop=Yes requires crop and sowing_date")
+        return self
+
 
 class WizardSubmitRequest(BaseModel):
     farmId: Optional[str] = None
@@ -59,21 +86,35 @@ class WizardSubmitRequest(BaseModel):
 
 class WizardRecommendationItem(BaseModel):
     id: str
+    crop_id: Optional[str] = None  # crop_reports.crop_id: use it for /recommendations/{id}/reports/{crop_id}
     crop_name: str
     crop_name_vernacular: Optional[str] = None
     suitability_score: float
+    is_top_pick: bool = False
     roi_estimate: str
     duration_days: Optional[int] = None
+    years_to_first_harvest: Optional[float] = None  # perennials, which have no duration_days
     water_requirement: Optional[str] = None
     reason: str
+    match_reasons: List[str] = Field(default_factory=list)
+
+
+class WizardContext(BaseModel):
+    zone_filter_applied: bool = False
+    soil_texture_label: Optional[str] = None
+    notes: List[str] = Field(default_factory=list)
 
 
 class WizardSubmitResponse(BaseModel):
     recommendations: List[WizardRecommendationItem]
     recommendation_id: str
+    farm_id: Optional[str] = None  # the farm this run is for; for a new farmer, the farm Agro is creating
+    language: str = "en"
+    context: Optional[WizardContext] = None
 
 
 __all__ = [
     "WizardQuestionOption", "WizardQuestion", "FarmContext", "WizardQuestionsResponse",
-    "WizardAnswersPayload", "WizardSubmitRequest", "WizardRecommendationItem", "WizardSubmitResponse",
+    "WizardAnswersPayload", "WizardSubmitRequest", "WizardRecommendationItem", "WizardContext",
+    "WizardSubmitResponse",
 ]

@@ -7,6 +7,7 @@ Soil detection: lat/lon -> ISRIC S3 raster (SoilTextureLookup) -> USDA soil clas
 Both run automatically from coordinates; neither is a user-supplied parameter.
 """
 import asyncio
+import logging
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -20,7 +21,11 @@ from models.recommendationModels import (
 )
 from services.locationService import LocationService
 from utils.constants import RotationSituation, SOIL_TEXTURE_CLASSES
+from utils.languages import crop_name_column
 from utils.soilTexture import get_soil_texture_lookup
+
+logger = logging.getLogger("scoring_engine")
+SOIL_UNAVAILABLE_NOTE = "Soil data is unavailable right now. Soil factor skipped."
 
 ZONE_SKIPPED_NOTE = (
     "Zone hard-filter skipped: no coordinates provided."
@@ -97,10 +102,13 @@ class CropScoringEngine:
                 notes.append("Soil texture: no data at these coordinates (road/water/urban). Soil factor skipped.")
                 return 0
             else:
-                notes.append(f"Soil texture detection failed ({result.status}): {result.message}. Soil factor skipped.")
+                # Notes reach the farmer's screen: the detail goes to the log.
+                logger.warning(f"soil texture lookup {result.status} at lat={lat} lon={lon}: {result.message}")
+                notes.append(SOIL_UNAVAILABLE_NOTE)
                 return 0
         except Exception as exc:
-            notes.append(f"Soil texture engine error: {exc}. Soil factor skipped.")
+            logger.error(f"soil texture engine error at lat={lat} lon={lon}: {exc}")
+            notes.append(SOIL_UNAVAILABLE_NOTE)
             return 0
 
     async def recommend(
@@ -123,26 +131,26 @@ class CropScoringEngine:
         zone_resolved = False
         notes: list[str] = []
 
-        if request.lat is not None and request.lon is not None:
+        # Coordinates first; the farmer's (or farm's) PIN code is the fallback
+        # whenever the Google reverse lookup gives nothing (timeout, quota,
+        # missing key) -- it used to be ignored whenever coordinates were set.
+        pincode = None
+        has_coordinates = request.lat is not None and request.lon is not None
+        if has_coordinates:
             pincode = await self.location_service.get_pincode_from_coordinates(request.lat, request.lon)
-            if pincode:
-                mapping = await self.pincode_manager.fetch_all(limit=1, filters={"pincode": pincode})
-                if mapping.items:
-                    zone = mapping.items[0].zone
-                    zone_resolved = True
-                    notes.append(f"Agro-climatic zone resolved to Zone {zone} (from pincode {pincode}).")
-                else:
-                    notes.append(f"Zone mapping not found for pincode {pincode}. Skipping zone filtering.")
-            else:
-                notes.append("Pincode could not be resolved from coordinates. Skipping zone filtering.")
-        elif request.pincode:
-            mapping = await self.pincode_manager.fetch_all(limit=1, filters={"pincode": request.pincode})
+            if not pincode and request.pincode:
+                notes.append(f"Pincode could not be resolved from coordinates; using provided pincode {request.pincode}.")
+        pincode = pincode or request.pincode
+        if pincode:
+            mapping = await self.pincode_manager.fetch_all(limit=1, filters={"pincode": pincode})
             if mapping.items:
                 zone = mapping.items[0].zone
                 zone_resolved = True
-                notes.append(f"Agro-climatic zone resolved to Zone {zone} (from pincode {request.pincode}).")
+                notes.append(f"Agro-climatic zone resolved to Zone {zone} (from pincode {pincode}).")
             else:
-                notes.append(f"Zone mapping not found for pincode {request.pincode}. Skipping zone filtering.")
+                notes.append(f"Zone mapping not found for pincode {pincode}. Skipping zone filtering.")
+        elif has_coordinates:
+            notes.append("Pincode could not be resolved from coordinates. Skipping zone filtering.")
         else:
             notes.append(ZONE_SKIPPED_NOTE)
 
@@ -170,7 +178,15 @@ class CropScoringEngine:
         crops = (await self.crop_manager.fetch_all(limit=0)).items
 
         soil_applicable = bool(soil_class)
-        applicable_factors = ["SEASON", "WATER", "BUDGET", "ROTATION"]
+        # Same idea as unknown soil: a previous crop the catalog can't place
+        # in a family can't be scored for rotation, so it drops out of the
+        # denominator instead of failing the request.
+        rotation_applicable = not request.rotation_unknown
+        if not rotation_applicable:
+            notes.append("Previous crop not recognised; rotation factor skipped.")
+        applicable_factors = ["SEASON", "WATER", "BUDGET"]
+        if rotation_applicable:
+            applicable_factors.append("ROTATION")
         if soil_applicable:
             applicable_factors.append("SOIL")
         if zone_resolved:
@@ -215,17 +231,18 @@ class CropScoringEngine:
             factors.append(FactorScore(factor="BUDGET", points=budget_pts, weight=weights["BUDGET"],
                                        weighted=budget_pts * weights["BUDGET"]))
 
-            situation = self._rotation_situation(request, crop.family)
-            rotation_pts = rotation_rules.get(situation, 0)
-            factors.append(FactorScore(factor="ROTATION", points=rotation_pts, weight=weights["ROTATION"],
-                                       weighted=rotation_pts * weights["ROTATION"]))
+            if rotation_applicable:
+                situation = self._rotation_situation(request, crop.family)
+                rotation_pts = rotation_rules.get(situation, 0)
+                factors.append(FactorScore(factor="ROTATION", points=rotation_pts, weight=weights["ROTATION"],
+                                           weighted=rotation_pts * weights["ROTATION"]))
 
             total = sum(f.weighted for f in factors)
             suitability = round(total / max_total * 100, 1) if max_total else 0.0
 
             results.append(CropRecommendation(
                 crop=crop.name_en, family=crop.family, horizon=crop.horizon,
-                translated_name=(getattr(crop, f"name_{lang}", None) if lang != "en" else None),
+                translated_name=(getattr(crop, crop_name_column(lang), None) if lang != "en" else None),
                 total=total, max_total=max_total, suitability_pct=suitability, factors=factors,
             ))
 

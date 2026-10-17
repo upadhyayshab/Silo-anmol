@@ -6,7 +6,7 @@ from SharedBackend.managers import BaseSchema, GenericManager
 
 
 class EventOutboxSchema(BaseSchema):
-    """Transactional-outbox fallback for Channel 2 (spec §3.3 Scenario 6B):
+    """Transactional-outbox fallback for Channel 2 (spec Section 3.3 Scenario 6B):
     when the direct Kafka publish fails, the event is parked here instead
     of being dropped, and a standalone replayer (Task 2/3) retries it."""
     __tablename__ = "event_outbox"
@@ -67,12 +67,15 @@ class CropReportManager(GenericManager[CropReportSchema]):
 class UserCropReportSchema(BaseSchema):
     """One row per recommendation run (not per crop) — report_data holds the
     full hydrated dossier list for every ranked crop in that run, per TRD
-    §5.4 UnifiedCropReportResponse.crops / §2.1's 'user_crop_reports'."""
+    Section 5.4 UnifiedCropReportResponse.crops / Section 2.1's 'user_crop_reports'."""
     __tablename__ = "user_crop_reports"
 
     user_id = db.Column(db.String(64), nullable=False, index=True)
     farm_id = db.Column(db.String(64), nullable=True, index=True)
     recommendation_id = db.Column(db.String(64), nullable=False, index=True)
+    # Client-generated id of one wizard attempt: a resubmission with the same
+    # id replays this run instead of charging and creating a farm again.
+    wizard_session_id = db.Column(db.String(128), nullable=True, index=True)
     farm_name = db.Column(db.String(128), nullable=True)
     season = db.Column(db.String(32), nullable=False)
     language = db.Column(db.String(10), nullable=False, default="en")

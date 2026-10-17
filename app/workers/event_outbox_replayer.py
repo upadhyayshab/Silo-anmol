@@ -1,5 +1,5 @@
 """Replays event_outbox rows the Kafka producer couldn't reach at request
-time (spec §3.3 Scenario 6B). Runs as a continuous background task INSIDE
+time (spec Section 3.3 Scenario 6B). Runs as a continuous background task INSIDE
 this service's own process — started from app.py's lifespan as an
 asyncio.create_task, not a separate script/process (explicit instruction
 this session). Uses asyncio.sleep, never a blocking time.sleep, because

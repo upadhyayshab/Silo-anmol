@@ -18,12 +18,15 @@ class RecommendationRequest(BaseModel):
         None, description="Family of the crop grown before (e.g. 'Cereal'); required unless was_fallow=true"
     )
     was_fallow: bool = Field(False, description="True if the plot was empty/fallow before this season")
+    rotation_unknown: bool = Field(
+        False, description="Previous crop given but not in the crop catalog: ROTATION is left out of the score"
+    )
     top_n: int = Field(5, ge=1, le=20)
 
     @model_validator(mode="after")
     def _check_rotation_input(self):
-        if not self.was_fallow and not self.previous_crop_family:
-            raise ValueError("previous_crop_family is required unless was_fallow is true")
+        if not self.was_fallow and not self.rotation_unknown and not self.previous_crop_family:
+            raise ValueError("previous_crop_family is required unless was_fallow or rotation_unknown is true")
         return self
 
 

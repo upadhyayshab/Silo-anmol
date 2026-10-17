@@ -6,6 +6,7 @@ across requests, matching the reference engine's SoilTextureLookup design.
 """
 import os
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
@@ -21,6 +22,26 @@ DEFAULT_S3_RASTER = (
     "/vsis3/kissansampurna-crops/Geospatial_SF/soil-texture-isric/IN/ST_classes_IND_COG.tif"
 )
 S3_RASTER_PATH = os.getenv("SOIL_TEXTURE_RASTER", DEFAULT_S3_RASTER)
+
+
+# The ISRIC raster leaves many farm pixels empty (0); on dev, 11 of 54 farm
+# centres hit one, and 6 of those had soil data within ~500 m. An empty pixel
+# falls back to the most common class in the surrounding 5 x 5 pixels
+# (~200 m each), clipped to the raster.
+_NEARBY_RADIUS_PX = 2
+
+
+def _nearby_soil_class(ds, row: int, col: int, valid_classes) -> Optional[int]:
+    top, left = max(row - _NEARBY_RADIUS_PX, 0), max(col - _NEARBY_RADIUS_PX, 0)
+    bottom = min(row + _NEARBY_RADIUS_PX + 1, ds.height)
+    right = min(col + _NEARBY_RADIUS_PX + 1, ds.width)
+    block = ds.read(1, window=Window(left, top, right - left, bottom - top))
+    nodata = int(ds.nodata) if ds.nodata is not None else None
+    counts = Counter(
+        int(v) for v in block.ravel()
+        if int(v) != 0 and int(v) != nodata and int(v) in valid_classes
+    )
+    return counts.most_common(1)[0][0] if counts else None
 
 
 @dataclass
@@ -73,6 +94,12 @@ class SoilTextureLookup:
             if ds.nodata is not None and pixel_value == int(ds.nodata):
                 pixel_value = 0
 
+            nearby = False
+            if pixel_value == 0:
+                nearby_class = _nearby_soil_class(ds, row, col, SOIL_TEXTURE_CLASSES)
+                if nearby_class is not None:
+                    pixel_value, nearby = nearby_class, True
+
             texture_class = SOIL_TEXTURE_CLASSES.get(pixel_value, "Unknown")
             if pixel_value not in SOIL_TEXTURE_CLASSES:
                 logger.warning("Unexpected class value %s at lat=%s lon=%s", pixel_value, lat, lon)
@@ -87,7 +114,8 @@ class SoilTextureLookup:
             return SoilTextureResult(
                 latitude=lat, longitude=lon, soil_class=pixel_value,
                 texture_class=texture_class, status="ok",
-                message="Soil texture retrieved successfully.",
+                message="Soil texture from the nearest mapped soil (within ~500 m)." if nearby
+                else "Soil texture retrieved successfully.",
             )
         except Exception as exc:
             logger.exception("Failed query for lat=%s lon=%s", lat, lon)

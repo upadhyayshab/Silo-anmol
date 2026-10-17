@@ -17,6 +17,7 @@ async def list_crops():
     languages plus core attributes (code, family, horizon, water_need, cost_class).
     Public -- no auth required, same trust level as /options.
     """
-    crops = (await crop_manager.fetch_all(limit=0, sorts=["name_en"])).items
+    # A to Z: SharedBackend reads a bare or "+" sort as descending, "-" as ascending.
+    crops = (await crop_manager.fetch_all(limit=0, sorts=["-name_en"])).items
     items = [CropModel(**c.model_dump()) for c in crops]
     return ListResponse[CropModel](items=items, count=len(items))

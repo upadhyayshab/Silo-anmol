@@ -78,7 +78,8 @@ STATIC_QUESTIONS: list[QuestionOption] = [
 
 @router.get("", response_model=OptionsResponse)
 async def get_options():
-    crops = (await crop_manager.fetch_all(limit=0, sorts=["name_en"])).items
+    # A to Z: SharedBackend reads a bare or "+" sort as descending, "-" as ascending.
+    crops = (await crop_manager.fetch_all(limit=0, sorts=["-name_en"])).items
     crop_options = [AnswerOption(code=crop.name_en, label=crop.name_en) for crop in crops]
 
     questions = []

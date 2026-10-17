@@ -1,6 +1,6 @@
 """Wraps the MSK producer (services/kafka_client.py) with a broker_type
-switch (for local/CI runs with no live MSK — spec §Phase 1) and an
-event_outbox fallback (spec §3.3 Scenario 6B) so a Kafka outage never
+switch (for local/CI runs with no live MSK — spec Section Phase 1) and an
+event_outbox fallback (spec Section 3.3 Scenario 6B) so a Kafka outage never
 drops a CropGuideCompleted event."""
 import json
 import logging

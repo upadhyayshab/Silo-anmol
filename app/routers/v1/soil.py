@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Query
+import logging
+
+from fastapi import APIRouter, HTTPException, Query
 
 from models import SoilTextureResponse
 from utils.soilTexture import get_soil_texture_lookup
@@ -6,6 +8,7 @@ from utils.soilTexture import get_soil_texture_lookup
 router = APIRouter(prefix="/soil-texture")
 
 SUPPORTED_LANGS = {"en"}
+logger = logging.getLogger("soil_router")
 
 
 @router.get("", response_model=SoilTextureResponse)
@@ -15,7 +18,11 @@ async def get_soil_texture(
         lang: str = Query("en"),
 ):
     lang = lang if lang in SUPPORTED_LANGS else "en"
-    lookup = get_soil_texture_lookup()
+    try:
+        lookup = get_soil_texture_lookup()
+    except Exception as exc:  # raster unreachable (S3 credentials, network)
+        logger.error(f"soil texture raster unavailable: {exc}")
+        raise HTTPException(status_code=503, detail="Soil data is temporarily unavailable. Please try again.")
     result = lookup.get_texture(lat=lat, lon=lon)
     return SoilTextureResponse(
         latitude=result.latitude,

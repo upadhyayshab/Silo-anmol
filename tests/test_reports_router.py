@@ -28,7 +28,9 @@ class TestReportsRouter(IsolatedAsyncioTestCase):
         )
 
     @patch("routers.v2.reports.report_service")
-    async def test_get_master_crop_report_lowercases_crop_id(self, mock_service):
+    async def test_get_master_crop_report_passes_crop_id_to_catalog_lookup(self, mock_service):
+        # Case, spelling variants and local names are resolved by the crop
+        # catalog in the service (see test_crop_report_service), not here.
         from routers.v2.reports import get_master_crop_report
         from models.reportModels import SingleCropDossier, SoilEconomicBenefits
         mock_service.get_master_report = AsyncMock(return_value=SingleCropDossier(
@@ -41,7 +43,7 @@ class TestReportsRouter(IsolatedAsyncioTestCase):
 
         await get_master_crop_report(crop_id="MUSTARD", lang="en", auth_payload={"upid": "usr_1"})
 
-        mock_service.get_master_report.assert_awaited_once_with(crop_id="mustard", lang="en")
+        mock_service.get_master_report.assert_awaited_once_with(crop_id="MUSTARD", lang="en")
 
     @patch("routers.v2.reports.report_service")
     async def test_list_user_reports_rejects_mismatched_user_id(self, mock_service):

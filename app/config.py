@@ -6,6 +6,7 @@ from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 from pydantic.v1 import BaseSettings
+from sqlalchemy.pool import StaticPool
 from sqlalchemy.ext.asyncio import create_async_engine
 
 basedir = Path(__file__).parents[1]
@@ -60,6 +61,10 @@ def get_engine(schema: str):
         "pool_size": 20,
         "max_overflow": 10,
     } if not settings.engine_str.startswith("sqlite") else {}
+    if settings.engine_str.endswith(":memory:"):
+        # Tests: one shared connection, or every connection gets its own
+        # empty in-memory database.
+        engine_kwargs = {"poolclass": StaticPool}
 
     if settings.supports_schema:
         engine = create_async_engine(

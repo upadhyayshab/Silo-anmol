@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -9,17 +9,22 @@ from managers.cropReportManagers import CropReportManager, UserCropReportManager
 from models.wizardModels import (
     FarmContext, WizardQuestion, WizardQuestionOption, WizardQuestionsResponse,
 )
-from services.agroInternalService import AgroInternalService
-from utils.languages import SUPPORTED_LANGUAGES
+from services.agroInternalService import AgroInternalService, AgroUnavailableError
+from services.cropCatalog import CropCatalog, crop_slug
+from utils.languages import normalize_lang
+from utils.matchReasons import match_reasons
+from utils.wizardTranslations import OPTION_LABELS, QUESTION_LABELS
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 
 from fastapi import HTTPException
+from sqlalchemy import text
 
 from models.recommendationModels import RecommendationRequest
-from models.wizardModels import WizardRecommendationItem, WizardSubmitRequest, WizardSubmitResponse
+from models.wizardModels import WizardContext, WizardRecommendationItem, WizardSubmitRequest, WizardSubmitResponse
 from services.eventBrokerService import EventBrokerService
 from services.subscriptionService import SubscriptionService
 from utils.scoringEngine import CropScoringEngine
@@ -42,16 +47,17 @@ history_manager = RecommendationHistoryManager(engine)
 user_crop_report_manager = UserCropReportManager(engine)
 crop_report_manager = CropReportManager(engine)
 
+_catalog: Optional[CropCatalog] = None
 
-async def _find_master_crop_row(name_en: str):
-    """Mirrors CropReportService._find_master_row -- a small, local lookup
-    so the submit handler can enrich recommendations (GAP-07/GAP-11) without
-    depending on the reports router's service instance."""
-    result = await crop_report_manager.fetch_all(limit=1, filters={"name_en": name_en})
-    if result.items:
-        return result.items[0]
-    all_rows = await crop_report_manager.fetch_all(limit=0)
-    return next((r for r in all_rows.items if r.name_en.lower() == name_en.lower()), None)
+
+def _get_catalog() -> CropCatalog:
+    """One cached catalog per process, rebuilt only if the module's managers
+    are swapped (tests patch crop_manager / crop_report_manager)."""
+    global _catalog
+    if _catalog is None or _catalog.crop_manager is not crop_manager \
+            or _catalog.crop_report_manager is not crop_report_manager:
+        _catalog = CropCatalog(crop_report_manager, crop_manager)
+    return _catalog
 
 
 ALL_QUESTIONS: list[WizardQuestion] = [
@@ -62,7 +68,7 @@ ALL_QUESTIONS: list[WizardQuestion] = [
             WizardQuestionOption(label="Kharif (Monsoon: Jun - Oct)", value="Kharif"),
             WizardQuestionOption(label="Rabi (Winter: Oct - Mar)", value="Rabi"),
             WizardQuestionOption(label="Summer / Zaid (Mar - Jun)", value="Summer"),
-            WizardQuestionOption(label="Perennial / Annual", value="Annual"),
+            WizardQuestionOption(label="Long-term (Perennial / Annual)", value="Annual"),
         ],
     ),
     WizardQuestion(
@@ -78,20 +84,23 @@ ALL_QUESTIONS: list[WizardQuestion] = [
         id="sowing_date", type="date", label="When did you sow?", required=False,
         depends_on={"field": "has_active_crop", "value": "Yes"},
     ),
+    # Asked on both branches, as in the Crop Guide flowchart: a farmer growing
+    # a crop now is also asked what grew before it.
     WizardQuestion(
         id="previous_crop", type="search", label="What was grown here before?", required=False,
         search_endpoint="/api/v6/crops",
-        depends_on={"field": "has_active_crop", "value": "No"},
     ),
     WizardQuestion(
         id="irrigation", type="multi_select", label="How do you water this field?",
         options=[
             WizardQuestionOption(label="Rainfed", value="Rainfed"),
-            WizardQuestionOption(label="Surface (flood/canal/furrow)", value="Surface"),
+            WizardQuestionOption(label="Flood (canal / furrow)", value="Flood"),
             WizardQuestionOption(label="Drip", value="Drip"),
             WizardQuestionOption(label="Sprinkler", value="Sprinkler"),
         ],
     ),
+    # Labels stay as the scoring engine's questionnaire (v3) defines B1-B4
+    # (decision D3); the flowchart and specs are updated to match.
     WizardQuestion(
         id="budget", type="radio", label="How much can you spend per acre next season?",
         options=[
@@ -114,19 +123,34 @@ ALL_QUESTIONS: list[WizardQuestion] = [
     WizardQuestion(id="farm_name", type="text", label="Give your farm a name", required=False),
 ]
 
-# TRD §8.2 suppression logic, keyed by which farm field (on the Agro internal
-# response) implies the question is already answered.
-SUPPRESSION_RULES: list[tuple[str, list[str]]] = [
-    ("center", ["location"]),
-    ("name", ["farm_name"]),
-    ("crop", ["has_active_crop", "crop", "sowing_date"]),
-    ("previous_crop", ["previous_crop"]),
-    ("irrigation_methods", ["irrigation"]),
-]
+# Crop Guide flowchart, Has Farm Path: once a farm is selected, the farm
+# itself answers the crop questions and its name, so only season, budget and
+# livestock remain -- plus location or watering if the farm lacks them,
+# because scoring can't run without either.
+FARM_ANSWERED_QUESTIONS = {"farm_name", "has_active_crop", "crop", "sowing_date", "previous_crop"}
+
+
+def _localized(questions: list[WizardQuestion], lang: str) -> list[WizardQuestion]:
+    labels = QUESTION_LABELS.get(lang)
+    if not labels:
+        return questions
+    option_labels = OPTION_LABELS.get(lang, {})
+    localized = []
+    for question in questions:
+        options = question.options
+        if options:
+            per_question = option_labels.get(question.id, {})
+            options = [o.model_copy(update={"label": per_question.get(o.value, o.label)}) for o in options]
+        localized.append(question.model_copy(update={"label": labels.get(question.id, question.label), "options": options}))
+    return localized
 
 
 @router.get("/wizard/questions", response_model=WizardQuestionsResponse)
-async def get_wizard_questions(farmId: Optional[str] = Query(None), auth_payload: dict = Depends(require_jwt)):
+async def get_wizard_questions(
+    farmId: Optional[str] = Query(None),
+    lang: Annotated[str, Query(description="ISO 639-1 language code for labels; values stay English")] = "en",
+    auth_payload: dict = Depends(require_jwt),
+):
     upid = auth_payload["upid"]
     farm_context = None
     suppressed_ids: set[str] = set()
@@ -143,19 +167,21 @@ async def get_wizard_questions(farmId: Optional[str] = Query(None), auth_payload
                 irrigation=farm.get("irrigation") or farm.get("irrigation_methods"),
                 boundary_status=farm.get("boundary_status"),
             )
-            for farm_field, suppressed in SUPPRESSION_RULES:
-                if farm.get(farm_field):
-                    suppressed_ids.update(suppressed)
-            # DEF-04's active-crop baseline makes previous_crop moot even when
-            # the farm has no recorded previous_crop value of its own.
-            if farm.get("has_active_crop") or farm.get("crop"):
-                suppressed_ids.add("previous_crop")
+            suppressed_ids.update(FARM_ANSWERED_QUESTIONS)
+            if farm.get("location") or farm.get("center"):
+                suppressed_ids.add("location")
+            if _map_irrigation(farm.get("irrigation") or farm.get("irrigation_methods") or [], strict=False):
+                suppressed_ids.add("irrigation")
 
     questions = [q for q in ALL_QUESTIONS if q.id not in suppressed_ids]
-    return WizardQuestionsResponse(farm_context=farm_context, questions=questions)
+    return WizardQuestionsResponse(farm_context=farm_context, questions=_localized(questions, normalize_lang(lang)))
 
 
-_SEASON_MAP = {"kharif": "KHARIF", "rabi": "RABI", "summer": "ZAID", "annual": "LONGTERM"}
+_SEASON_MAP = {
+    "kharif": "KHARIF", "rabi": "RABI", "summer": "ZAID", "zaid": "ZAID",
+    "annual": "LONGTERM", "long-term": "LONGTERM", "longterm": "LONGTERM", "long term": "LONGTERM",
+    "perennial": "LONGTERM",
+}
 
 _BUDGET_MAP = {
     # Flowchart / TRD brackets (standard values and shorthands)
@@ -172,11 +198,23 @@ _BUDGET_MAP = {
     "low": "B1", "medium": "B3", "high": "B4",
 }
 
+# Every irrigation spelling the two services and their docs use -> engine
+# enum. "Flood" (spec, Agro) and "Surface" (engine) are the same method.
+# "canal" is Agro's old name for flood watering (Agro now stores it as Flood).
+_IRRIGATION_MAP = {
+    "rainfed": "RAINFED", "surface": "SURFACE", "flood": "SURFACE", "canal": "SURFACE",
+    "drip": "DRIP", "sprinkler": "SPRINKLER",
+}
+
+# Engine enum -> the canonical title-case name Agro stores and its
+# irrigation picker shows (GET /api/v6/irrigation-methods).
+_EVENT_IRRIGATION = {"RAINFED": "Rainfed", "SURFACE": "Flood", "DRIP": "Drip", "SPRINKLER": "Sprinkler"}
+
 
 def _map_season(season: str) -> str:
-    mapped = _SEASON_MAP.get(season.lower())
+    mapped = _SEASON_MAP.get(season.strip().lower())
     if mapped is None:
-        raise ValueError(f"Unrecognized season '{season}'. Expected one of: Kharif, Rabi, Summer, Annual")
+        raise ValueError(f"Unrecognized season '{season}'. Expected one of: Kharif, Rabi, Summer, Long-term")
     return mapped
 
 
@@ -189,8 +227,8 @@ def _map_budget(budget: str) -> str:
     mapped = _BUDGET_MAP.get(cleaned)
     if mapped is None:
         raise ValueError(
-            f"Unrecognized budget '{budget}'. Expected one of: 20K-40K, 40K-70K, 70K-1L, 1L-1.2L "
-            "(or B1-B4, <10k, 10-25k, etc.)"
+            f"Unrecognized budget '{budget}'. Expected one of: <₹10k, ₹10–25k, ₹25–50k, >₹50k "
+            "(or B1-B4, 20K-40K, etc.)"
         )
     return mapped
 
@@ -210,17 +248,34 @@ def _parse_sowing_date(raw: Optional[str]) -> Optional[date]:
         return None
 
 
-_VALID_WATER_METHODS = {"RAINFED", "SURFACE", "DRIP", "SPRINKLER"}
-
-
-def _map_irrigation(methods: list[str]) -> list[str]:
-    mapped = [m.upper() for m in methods]
-    unknown = [m for m in mapped if m not in _VALID_WATER_METHODS]
-    if unknown:
+def _map_irrigation(methods: list[str], strict: bool = True) -> list[str]:
+    """strict (the farmer's own answers): an unknown method is an error.
+    Not strict (values inherited from the farm record): unknown values are
+    dropped, so an old farm's odd value can't block a farmer who was never
+    asked the question."""
+    if isinstance(methods, str):
+        methods = [methods]
+    mapped: list[str] = []
+    unknown = []
+    for method in methods:
+        code = _IRRIGATION_MAP.get(str(method).strip().lower())
+        if code is None:
+            unknown.append(method)
+        elif code not in mapped:
+            mapped.append(code)
+    if unknown and strict:
         raise ValueError(
-            f"Unrecognized irrigation method(s) {unknown}. Expected one of: Rainfed, Surface, Drip, Sprinkler"
+            f"Unrecognized irrigation method(s) {unknown}. Expected one of: Rainfed, Flood, Drip, Sprinkler"
         )
     return mapped
+
+
+def _session_event_id(upid: str, wizard_session_id: Optional[str], recommendation_id: str) -> str:
+    """Same wizard session -> same event id, so Agro's processed_events dedupe
+    also catches a resubmission that slipped past the replay check."""
+    if not wizard_session_id:
+        return recommendation_id
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"crop_guide_completed:{upid}:{wizard_session_id}"))
 
 
 @router.post("/wizard/submit", response_model=WizardSubmitResponse)
@@ -229,78 +284,122 @@ async def submit_wizard(
     lang: str = Query("en", description="ISO 639-1 language code"),
     auth_payload: dict = Depends(require_jwt),
 ):
-    """TRD §8.6/§8.7: synchronous ML recommendation + async CropGuideCompleted
+    """TRD Section 8.6/Section 8.7: synchronous ML recommendation + async CropGuideCompleted
     emission. The Kafka publish never blocks or fails the HTTP response
     (Review Focus) — it's fired and its result is only logged."""
-    lang_code = lang.lower().strip()
-    if lang_code not in SUPPORTED_LANGUAGES:
-        lang_code = "en"
+    lang_code = normalize_lang(lang)
     upid = auth_payload["upid"]
+    if not payload.wizard_session_id:
+        return await _submit(payload, lang_code, upid)
+
+    # A retried or double-tapped submit (same wizard_session_id) gets the run
+    # it already paid for: no second charge, no second farm. The lock makes a
+    # tap that arrives while the first is still running wait for it and then
+    # replay its result, instead of also passing the check and paying again.
+    async with _session_lock(f"wizard_submit:{upid}:{payload.wizard_session_id}"):
+        previous = await user_crop_report_manager.fetch_all(
+            limit=1, filters={"user_id": upid, "wizard_session_id": payload.wizard_session_id},
+        )
+        if previous.items and (previous.items[0].report_data or {}).get("response"):
+            return WizardSubmitResponse(**previous.items[0].report_data["response"])
+        return await _submit(payload, lang_code, upid)
+
+
+@asynccontextmanager
+async def _session_lock(key: str):
+    """Postgres advisory lock for `key`, held until the block exits (the
+    transaction ends, releasing it, even if the block raises). Other
+    databases (tests) run the block unlocked."""
+    if engine.dialect.name != "postgresql":
+        yield
+        return
+    async with engine.begin() as conn:
+        await conn.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": key})
+        yield
+
+
+async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> WizardSubmitResponse:
     answers = payload.answers
+    catalog = _get_catalog()
+
     farm = None
     if payload.farmId:
-        farm = await agro_internal_service.get_farm(payload.farmId, user_id=upid)
+        try:
+            farm = await agro_internal_service.get_farm(payload.farmId, user_id=upid, raise_if_unavailable=True)
+        except AgroUnavailableError:
+            raise HTTPException(status_code=503, detail="Farm service is temporarily unavailable. Please try again.")
+        if farm is None:
+            raise HTTPException(status_code=404, detail=f"Farm '{payload.farmId}' not found")
 
     location = answers.location
     if location is None and farm:
         location = farm.get("location") or farm.get("center")
-    if location is None and not answers.pincode:
+    # The farmer's PIN code, else the farm's: the scoring engine falls back to
+    # it whenever the coordinates can't be reverse-geocoded.
+    pincode = answers.pincode or (farm.get("pincode") if farm else None)
+    if location is None and not pincode:
         raise HTTPException(status_code=400, detail="answers.location is required when farmId is not provided or the farm has no boundary yet")
 
     try:
         season = _map_season(answers.season)
         budget_bucket = _map_budget(answers.budget) if answers.budget else "B3"
-        irrigation = _map_irrigation(answers.irrigation) if answers.irrigation else (
-            _map_irrigation(farm.get("irrigation") or farm.get("irrigation_methods") or []) if farm else []
-        )
+        if answers.irrigation:
+            irrigation = _map_irrigation(answers.irrigation)
+        elif farm:
+            irrigation = _map_irrigation(farm.get("irrigation") or farm.get("irrigation_methods") or [], strict=False)
+        else:
+            irrigation = []
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     if not irrigation:
         raise HTTPException(status_code=400, detail="answers.irrigation is required (at least one method)")
 
-    # DEF-04: when the farm has an active standing crop, THAT crop is the real
-    # rotation predecessor for "what to plant next" — not the wizard's
-    # previous_crop answer (which describes what was grown before the
-    # standing crop, if anything). Never written back to the farm — this
-    # only feeds the scoring engine's rotation input.
+    # Rotation predecessor = what is in the soil now. DEF-04: a farm's active
+    # standing crop wins; on the no-farm path the crop the farmer says is
+    # growing now comes next; only then the crop grown before. Never written
+    # back to the farm — this only feeds the scoring engine's rotation input.
+    answered_active_crop = answers.crop if (answers.has_active_crop or "").strip().lower() == "yes" else None
     if farm and farm.get("has_active_crop") and farm.get("crop"):
         rotation_crop_name = farm["crop"]
+    elif answered_active_crop:
+        rotation_crop_name = answered_active_crop
     else:
         rotation_crop_name = answers.previous_crop or (farm.get("previous_crop") if farm else None)
     was_fallow = rotation_crop_name is None
 
+    # Agro's crop list is far larger than the 104 scored crops, so a name the
+    # catalog can't place drops the rotation factor instead of failing.
     previous_crop_family = None
+    rotation_unknown = False
     if not was_fallow:
-        # Same lookup-with-fallback as the existing /recommend handler
-        # (app/routers/v1/recommend.py) — exact match first, then a
-        # case-insensitive scan, then a clear 400 rather than letting
-        # RecommendationRequest's validator raise on a None family.
-        crops_res = await crop_manager.fetch_all(limit=1, filters={"name_en": rotation_crop_name})
-        if crops_res.items:
-            previous_crop_family = crops_res.items[0].family
+        scoring_row = await catalog.find_scoring(rotation_crop_name)
+        if scoring_row is not None:
+            previous_crop_family = scoring_row.family
         else:
-            all_crops = await crop_manager.fetch_all(limit=0)
-            matched = next((c for c in all_crops.items if c.name_en.lower() == rotation_crop_name.lower()), None)
-            if not matched:
-                raise HTTPException(status_code=400, detail=f"previous_crop '{rotation_crop_name}' not found in crop database")
-            previous_crop_family = matched.family
+            rotation_unknown = True
+            logger.info(f"rotation crop '{rotation_crop_name}' not in the crop catalog; rotation factor skipped")
 
     rec_request = RecommendationRequest(
         lat=location[1] if location else None,
         lon=location[0] if location else None,
-        pincode=answers.pincode if location is None else None,
+        pincode=pincode,
         season=season, water_methods=irrigation, budget_bucket=budget_bucket,
-        previous_crop_family=previous_crop_family, was_fallow=was_fallow, top_n=5,
+        previous_crop_family=previous_crop_family, was_fallow=was_fallow,
+        rotation_unknown=rotation_unknown, top_n=5,
     )
 
     recommendation_id = str(uuid.uuid4())
+    sowing_date = _parse_sowing_date(answers.sowing_date)
+    # A new farmer's farm doesn't exist yet: its Agro uid is chosen here and
+    # sent in the event, so this run is linked to the farm from the start.
+    new_farm_uid = None if payload.farmId else f"farms_{uuid.uuid4()}"
+    farm_id = payload.farmId or new_farm_uid
 
     # DEF-02: meter usage against the same subscription quota /api/v1/recommend
-    # already enforces — verify before the (paid) scoring pipeline runs.
-    verify_ok, _ = await subscription_service.verify(upid, payload.subscription_id)
-    if not verify_ok:
-        raise HTTPException(status_code=480, detail="limit exceeded, subscribe now")
+    # already enforces — checked before the (paid) scoring pipeline runs:
+    # the farmer's own, not-cancelled subscription with a credit left.
+    await subscription_service.check_quota(upid, payload.subscription_id)
 
     try:
         response = await scoring_engine.recommend(rec_request, lang=lang_code, auto_detect_soil=True)
@@ -333,7 +432,7 @@ async def submit_wizard(
             soil_texture_label=response.soil_texture_label,
             results=[r.model_dump() for r in response.results],
             notes=response.notes,
-            farm_id=payload.farmId,
+            farm_id=farm_id,
             farm_name=answers.farm_name or (farm.get("name") if farm else None),
             livestock=answers.livestock,
             # current_crop_code must describe what's actually standing on the
@@ -342,65 +441,97 @@ async def submit_wizard(
             # no farm record and the farmer just reported a fresh active crop.
             current_crop_code=(
                 farm.get("crop") if (farm and farm.get("has_active_crop"))
-                else (answers.crop if (answers.has_active_crop or "").lower() == "yes" else None)
+                else answered_active_crop
             ),
-            sowing_date=_parse_sowing_date(answers.sowing_date),
+            sowing_date=sowing_date,
         ))
     except Exception as exc:
         logger.error(f"failed to write wizard recommendation history for upid={upid}: {exc}")
+
+    recommendations = []
+    top_crop_id = None
+    for i, r in enumerate(response.results):
+        master = await catalog.find_report(r.crop)
+        crop_id = master.crop_id if master else crop_slug(r.crop)
+        top_crop_id = top_crop_id or crop_id
+        recommendations.append(WizardRecommendationItem(
+            id=f"rec_{i}", crop_id=crop_id, crop_name=r.crop,
+            crop_name_vernacular=(await catalog.local_name(master, lang_code) if master else None) or r.translated_name or r.crop,
+            suitability_score=round(r.suitability_pct),
+            is_top_pick=(i == 0),
+            roi_estimate="High" if r.suitability_pct >= 80 else "Medium" if r.suitability_pct >= 50 else "Low",
+            duration_days=master.duration_days if master else None,
+            years_to_first_harvest=float(master.years_to_first_harvest) if master and master.years_to_first_harvest else None,
+            water_requirement=master.water_requirement if master else None,
+            reason=f"Suitability {r.suitability_pct:.0f}% for {season.title()} season.",
+            match_reasons=match_reasons([f.model_dump() for f in r.factors], season, rotation_crop_name),
+        ))
+
+    result = WizardSubmitResponse(
+        recommendations=recommendations, recommendation_id=recommendation_id, farm_id=farm_id, language=lang_code,
+        context=WizardContext(
+            zone_filter_applied=response.zone_filter_applied,
+            soil_texture_label=response.soil_texture_label,
+            notes=response.notes,
+        ),
+    )
 
     try:
         if response.results:
             top = response.results[0]
             await user_crop_report_manager.create(UserCropReportSchema(
                 user_id=upid,
-                farm_id=payload.farmId,
+                farm_id=farm_id,
                 recommendation_id=recommendation_id,
+                wizard_session_id=payload.wizard_session_id,
                 farm_name=answers.farm_name or (farm.get("name") if farm else None),
                 season=season,
                 language=lang_code,
-                top_crop_id=top.crop.lower().replace(" ", "_"),
+                top_crop_id=top_crop_id,
                 top_crop_name=top.crop,
                 top_crop_score=round(top.suitability_pct),
                 total_recommendations=len(response.results),
-                report_data={"results": [r.model_dump() for r in response.results]},
+                report_data={
+                    "results": [r.model_dump() for r in response.results],
+                    "sowing_date": sowing_date.isoformat() if sowing_date else None,
+                    "previous_crop": rotation_crop_name,
+                    # Replayed verbatim for a resubmitted wizard_session_id.
+                    "response": result.model_dump(),
+                },
             ))
     except Exception as exc:
         logger.error(f"failed to pre-hydrate user_crop_reports for upid={upid}: {exc}")
-
-    recommendations = []
-    for i, r in enumerate(response.results):
-        master = await _find_master_crop_row(r.crop)
-        recommendations.append(WizardRecommendationItem(
-            id=f"rec_{i}", crop_name=r.crop,
-            crop_name_vernacular=r.translated_name or r.crop,
-            suitability_score=round(r.suitability_pct),
-            roi_estimate="High" if r.suitability_pct >= 80 else "Medium" if r.suitability_pct >= 50 else "Low",
-            duration_days=master.duration_days if master else None,
-            water_requirement=master.water_requirement if master else None,
-            reason=f"Suitability {r.suitability_pct:.0f}% for {season.title()} season.",
-        ))
 
     # Awaited, not fire-and-forget: EventBrokerService.publish already
     # guarantees a Kafka outage never raises into this response (Review
     # Focus) -- it falls back to the event_outbox internally; awaiting here
     # (instead of asyncio.create_task) keeps the call deterministic for
     # tests and avoids a task that can outlive the request's own lifecycle.
-    await _publish_crop_guide_completed(upid, payload, farm, season, budget_bucket, recommendation_id)
+    await _publish_crop_guide_completed(
+        upid, payload, season, budget_bucket, recommendation_id,
+        irrigation=irrigation, location=location, pincode=pincode, sowing_date=sowing_date,
+        new_farm_uid=new_farm_uid,
+    )
 
-    return WizardSubmitResponse(recommendations=recommendations, recommendation_id=recommendation_id)
+    return result
 
 
 async def _publish_crop_guide_completed(
-    upid: str, payload: WizardSubmitRequest, farm: dict | None, season: str, budget_bucket: str,
-    recommendation_id: str,
+    upid: str, payload: WizardSubmitRequest, season: str, budget_bucket: str,
+    recommendation_id: str, *, irrigation: list[str], location: Optional[list], pincode: Optional[str],
+    sowing_date: Optional[date], new_farm_uid: Optional[str],
 ) -> None:
     """Awaited by the caller; EventBrokerService.publish never raises (it
     falls back to the event_outbox on a Kafka outage), so a broker failure
-    never turns a working recommendation into a 500."""
+    never turns a working recommendation into a 500.
+
+    Sends checked values, not raw answers: irrigation in the title-case
+    names Agro's picker uses, the validated [lon, lat], and an active crop
+    only together with its name (Agro applies the same rules again)."""
     answers = payload.answers
+    has_active_crop = (answers.has_active_crop or "").strip().lower() == "yes" and bool(answers.crop)
     event = {
-        "event_id": recommendation_id,
+        "event_id": _session_event_id(upid, payload.wizard_session_id, recommendation_id),
         "event_type": "CropGuideCompleted",
         "version": "1.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -408,16 +539,19 @@ async def _publish_crop_guide_completed(
         "farm_id": payload.farmId,
         "data": {
             "farm_name": answers.farm_name,
-            "center": answers.location or (farm.get("center") if farm else None),
-            "has_active_crop": (answers.has_active_crop or "").lower() == "yes",
-            "crop": answers.crop,
-            "sowing_date": answers.sowing_date,
+            "center": location,
+            "has_active_crop": has_active_crop,
+            "crop": answers.crop if has_active_crop else None,
+            "sowing_date": sowing_date.isoformat() if (has_active_crop and sowing_date) else None,
             "previous_crop": answers.previous_crop,
-            "irrigation_methods": answers.irrigation,
+            "irrigation_methods": [_EVENT_IRRIGATION[m] for m in irrigation],
             "season": season,
             "budget": budget_bucket,
             "livestock": answers.livestock,
             "wizard_session_id": payload.wizard_session_id,
+            "pincode": pincode,
+            "recommendation_id": recommendation_id,
+            "farm_uid": new_farm_uid,
         },
     }
-    await event_broker.publish("crop_guide_completed", event, key=payload.farmId or event["event_id"])
+    await event_broker.publish("crop_guide_completed", event, key=payload.farmId or new_farm_uid or event["event_id"])
