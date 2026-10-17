@@ -115,10 +115,6 @@
                 {
                     "name": "INTERNAL_SERVICE_SECRET",
                     "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/INTERNAL_SERVICE_SECRET"
-                },
-                {
-                    "name": "MASTER_API_KEY",
-                    "valueFrom": "arn:aws:ssm:ap-south-1:400115659362:parameter/ECS-kissan-crop-dev/MASTER_API_KEY"
                 }
             ],
             "logConfiguration": {
