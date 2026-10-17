@@ -49,9 +49,11 @@ pipeline {
                             exit 1
                         fi
                         # Unit tests (mocks only; no database or network) on the same Python as the image.
-                        docker run --rm -v "$PWD":/src -w /src python:3.12-slim bash -c '
+                        docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/src -w /src python:3.12-slim bash -c '
                             set -e
-                            pip install -q -r requirements/prod.txt pytest
+                            # rasterio needs libexpat.so.1, missing from python:*-slim (the Dockerfiles install it too).
+                            apt-get update -qq && apt-get install -y -qq --no-install-recommends libexpat1 >/dev/null
+                            pip install -q --root-user-action=ignore -r requirements/prod.txt pytest
                             PYTHONPATH=app:SharedBackend/src python -m pytest -q -p no:cacheprovider tests
                         '
                     '''
