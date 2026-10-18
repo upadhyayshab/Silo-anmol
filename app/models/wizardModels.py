@@ -16,6 +16,9 @@ class WizardQuestion(BaseModel):
     options: Optional[List[WizardQuestionOption]] = None
     required: bool = True
     search_endpoint: Optional[str] = None
+    # Full crop list with names and images (Farm Monitoring's picker list,
+    # shared by both features); {userId} is the farmer's id.
+    options_endpoint: Optional[str] = None
     depends_on: Optional[dict] = None
 
 

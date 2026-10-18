@@ -16,7 +16,7 @@ ScoringFactorEnum = db.Enum("ZONE", "SEASON", "WATER", "SOIL", "BUDGET", "ROTATI
 
 
 class CropSchema(BaseSchema):
-    """Sheet 2 'Crop Attributes' -- one row per crop (104 total)."""
+    """Sheet 2 'Crop Attributes' -- one row per crop (139 since 2026-10-18)."""
     __tablename__ = "crops"
 
     code = db.Column(db.Integer, nullable=False, unique=True)

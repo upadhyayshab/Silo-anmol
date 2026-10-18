@@ -2,9 +2,10 @@
 translated: question ids and option values stay English, because the submit
 handler and the Agro event map those values.
 
-DRAFT translations (Hindi, Marathi) written for the 2026-10-17 gap fixes;
-they need a native-speaker review before release. Languages not listed here
-fall back to the English labels in routers/v2/wizard.py.
+DRAFT translations: Hindi and Marathi (2026-10-17), Kannada, Tamil, Telugu,
+Malayalam, Gujarati, Bengali, Odia, Assamese and Punjabi (2026-10-18). They
+need a native-speaker review before release. Languages not listed here fall
+back to the English labels in routers/v2/wizard.py.
 """
 
 QUESTION_LABELS: dict[str, dict[str, str]] = {
@@ -31,6 +32,114 @@ QUESTION_LABELS: dict[str, dict[str, str]] = {
         "budget": "पुढील हंगामात तुम्ही प्रति एकर किती खर्च करू शकता?",
         "livestock": "तुमच्याकडे कोणत्या प्रकारचे फार्म आहे?",
         "farm_name": "तुमच्या शेताला नाव द्या",
+    },
+    "kn": {
+        "location": "ನಿಮ್ಮ ಹೊಲ ಎಲ್ಲಿದೆ?",
+        "season": "ಯಾವ ಹಂಗಾಮಿನಲ್ಲಿ ಬಿತ್ತನೆ ಮಾಡಲು ಯೋಜಿಸುತ್ತಿದ್ದೀರಿ?",
+        "has_active_crop": "ಈಗ ನಿಮ್ಮ ಹೊಲದಲ್ಲಿ ಬೆಳೆ ಇದೆಯೇ?",
+        "crop": "ಯಾವ ಬೆಳೆ ಇದೆ?",
+        "sowing_date": "ನೀವು ಯಾವಾಗ ಬಿತ್ತನೆ ಮಾಡಿದಿರಿ?",
+        "previous_crop": "ಇಲ್ಲಿ ಹಿಂದೆ ಯಾವ ಬೆಳೆ ಬೆಳೆದಿದ್ದಿರಿ?",
+        "irrigation": "ಈ ಹೊಲಕ್ಕೆ ನೀರು ಹೇಗೆ ಕೊಡುತ್ತೀರಿ?",
+        "budget": "ಮುಂದಿನ ಹಂಗಾಮಿನಲ್ಲಿ ಎಕರೆಗೆ ಎಷ್ಟು ಖರ್ಚು ಮಾಡಬಹುದು?",
+        "livestock": "ನಿಮ್ಮದು ಯಾವ ರೀತಿಯ ಫಾರ್ಮ್?",
+        "farm_name": "ನಿಮ್ಮ ಹೊಲಕ್ಕೆ ಒಂದು ಹೆಸರು ಕೊಡಿ",
+    },
+    "ta": {
+        "location": "உங்கள் நிலம் எங்கே உள்ளது?",
+        "season": "எந்தப் பருவத்தில் விதைக்கத் திட்டமிடுகிறீர்கள்?",
+        "has_active_crop": "இப்போது உங்கள் நிலத்தில் பயிர் உள்ளதா?",
+        "crop": "எந்தப் பயிர் உள்ளது?",
+        "sowing_date": "எப்போது விதைத்தீர்கள்?",
+        "previous_crop": "இங்கு முன்பு என்ன பயிர் வளர்த்தீர்கள்?",
+        "irrigation": "இந்த நிலத்திற்கு எப்படி நீர் பாய்ச்சுகிறீர்கள்?",
+        "budget": "அடுத்த பருவத்தில் ஏக்கருக்கு எவ்வளவு செலவு செய்யலாம்?",
+        "livestock": "உங்களிடம் எந்த வகைப் பண்ணை உள்ளது?",
+        "farm_name": "உங்கள் நிலத்திற்கு ஒரு பெயர் கொடுங்கள்",
+    },
+    "te": {
+        "location": "మీ పొలం ఎక్కడ ఉంది?",
+        "season": "ఏ సీజన్‌లో విత్తాలని అనుకుంటున్నారు?",
+        "has_active_crop": "ప్రస్తుతం మీ పొలంలో పంట ఉందా?",
+        "crop": "ఏ పంట ఉంది?",
+        "sowing_date": "మీరు ఎప్పుడు విత్తారు?",
+        "previous_crop": "ఇక్కడ ఇంతకు ముందు ఏ పంట వేశారు?",
+        "irrigation": "ఈ పొలానికి నీరు ఎలా పెడతారు?",
+        "budget": "వచ్చే సీజన్‌లో ఎకరాకు ఎంత ఖర్చు చేయగలరు?",
+        "livestock": "మీది ఏ రకమైన ఫారం?",
+        "farm_name": "మీ పొలానికి ఒక పేరు పెట్టండి",
+    },
+    "ml": {
+        "location": "നിങ്ങളുടെ കൃഷിയിടം എവിടെയാണ്?",
+        "season": "ഏത് സീസണിൽ വിതയ്ക്കാനാണ് ഉദ്ദേശിക്കുന്നത്?",
+        "has_active_crop": "ഇപ്പോൾ നിങ്ങളുടെ കൃഷിയിടത്തിൽ വിളയുണ്ടോ?",
+        "crop": "ഏത് വിളയാണ് ഉള്ളത്?",
+        "sowing_date": "എപ്പോഴാണ് വിതച്ചത്?",
+        "previous_crop": "ഇവിടെ മുമ്പ് ഏത് വിളയാണ് കൃഷി ചെയ്തത്?",
+        "irrigation": "ഈ കൃഷിയിടം എങ്ങനെയാണ് നനയ്ക്കുന്നത്?",
+        "budget": "അടുത്ത സീസണിൽ ഏക്കറിന് എത്ര ചെലവാക്കാം?",
+        "livestock": "നിങ്ങളുടേത് ഏത് തരം ഫാമാണ്?",
+        "farm_name": "നിങ്ങളുടെ കൃഷിയിടത്തിന് ഒരു പേര് നൽകുക",
+    },
+    "gu": {
+        "location": "તમારું ખેતર ક્યાં છે?",
+        "season": "તમે કઈ ઋતુમાં વાવણીનું આયોજન કરો છો?",
+        "has_active_crop": "હાલમાં તમારા ખેતરમાં પાક ઊભો છે?",
+        "crop": "કયો પાક ઊભો છે?",
+        "sowing_date": "તમે વાવણી ક્યારે કરી?",
+        "previous_crop": "અહીં પહેલાં કયો પાક લીધો હતો?",
+        "irrigation": "તમે આ ખેતરને પાણી કેવી રીતે આપો છો?",
+        "budget": "આગામી ઋતુમાં તમે એકર દીઠ કેટલો ખર્ચ કરી શકો?",
+        "livestock": "તમારી પાસે કયા પ્રકારનું ફાર્મ છે?",
+        "farm_name": "તમારા ખેતરને નામ આપો",
+    },
+    "bn": {
+        "location": "আপনার জমি কোথায়?",
+        "season": "কোন মরসুমে বপনের পরিকল্পনা করছেন?",
+        "has_active_crop": "এখন কি আপনার জমিতে ফসল আছে?",
+        "crop": "কোন ফসল আছে?",
+        "sowing_date": "কবে বপন করেছেন?",
+        "previous_crop": "এখানে আগে কোন ফসল চাষ করেছিলেন?",
+        "irrigation": "এই জমিতে কীভাবে জল দেন?",
+        "budget": "আগামী মরসুমে একর প্রতি কত খরচ করতে পারবেন?",
+        "livestock": "আপনার কী ধরনের খামার আছে?",
+        "farm_name": "আপনার জমির একটি নাম দিন",
+    },
+    "or": {
+        "location": "ଆପଣଙ୍କ ଜମି କେଉଁଠି?",
+        "season": "କେଉଁ ଋତୁରେ ବୁଣିବାକୁ ଯୋଜନା କରୁଛନ୍ତି?",
+        "has_active_crop": "ବର୍ତ୍ତମାନ ଆପଣଙ୍କ ଜମିରେ ଫସଲ ଅଛି କି?",
+        "crop": "କେଉଁ ଫସଲ ଅଛି?",
+        "sowing_date": "ଆପଣ କେବେ ବୁଣିଥିଲେ?",
+        "previous_crop": "ଏଠାରେ ପୂର୍ବରୁ କେଉଁ ଫସଲ ଚାଷ କରିଥିଲେ?",
+        "irrigation": "ଏହି ଜମିକୁ କିପରି ପାଣି ଦିଅନ୍ତି?",
+        "budget": "ଆଗାମୀ ଋତୁରେ ଏକର ପିଛା କେତେ ଖର୍ଚ୍ଚ କରିପାରିବେ?",
+        "livestock": "ଆପଣଙ୍କର କେଉଁ ପ୍ରକାର ଫାର୍ମ ଅଛି?",
+        "farm_name": "ଆପଣଙ୍କ ଜମିର ଏକ ନାମ ଦିଅନ୍ତୁ",
+    },
+    "as": {
+        "location": "আপোনাৰ পথাৰ ক'ত?",
+        "season": "কোন ঋতুত সিঁচাৰ পৰিকল্পনা কৰিছে?",
+        "has_active_crop": "এতিয়া আপোনাৰ পথাৰত শস্য আছে নেকি?",
+        "crop": "কি শস্য আছে?",
+        "sowing_date": "আপুনি কেতিয়া সিঁচিছিল?",
+        "previous_crop": "ইয়াত আগতে কি শস্য খেতি কৰিছিল?",
+        "irrigation": "এই পথাৰত কেনেকৈ পানী দিয়ে?",
+        "budget": "অহা ঋতুত একৰ প্ৰতি কিমান খৰচ কৰিব পাৰিব?",
+        "livestock": "আপোনাৰ কেনে ধৰণৰ ফাৰ্ম আছে?",
+        "farm_name": "আপোনাৰ পথাৰৰ এটা নাম দিয়ক",
+    },
+    "pa": {
+        "location": "ਤੁਹਾਡਾ ਖੇਤ ਕਿੱਥੇ ਹੈ?",
+        "season": "ਤੁਸੀਂ ਕਿਹੜੇ ਮੌਸਮ ਵਿੱਚ ਬਿਜਾਈ ਦੀ ਯੋਜਨਾ ਬਣਾ ਰਹੇ ਹੋ?",
+        "has_active_crop": "ਕੀ ਇਸ ਵੇਲੇ ਤੁਹਾਡੇ ਖੇਤ ਵਿੱਚ ਫ਼ਸਲ ਖੜ੍ਹੀ ਹੈ?",
+        "crop": "ਕਿਹੜੀ ਫ਼ਸਲ ਖੜ੍ਹੀ ਹੈ?",
+        "sowing_date": "ਤੁਸੀਂ ਬਿਜਾਈ ਕਦੋਂ ਕੀਤੀ?",
+        "previous_crop": "ਇੱਥੇ ਪਹਿਲਾਂ ਕਿਹੜੀ ਫ਼ਸਲ ਉਗਾਈ ਸੀ?",
+        "irrigation": "ਤੁਸੀਂ ਇਸ ਖੇਤ ਨੂੰ ਪਾਣੀ ਕਿਵੇਂ ਦਿੰਦੇ ਹੋ?",
+        "budget": "ਅਗਲੇ ਮੌਸਮ ਵਿੱਚ ਤੁਸੀਂ ਪ੍ਰਤੀ ਏਕੜ ਕਿੰਨਾ ਖ਼ਰਚ ਕਰ ਸਕਦੇ ਹੋ?",
+        "livestock": "ਤੁਹਾਡੇ ਕੋਲ ਕਿਸ ਕਿਸਮ ਦਾ ਫਾਰਮ ਹੈ?",
+        "farm_name": "ਆਪਣੇ ਖੇਤ ਨੂੰ ਇੱਕ ਨਾਮ ਦਿਓ",
     },
 }
 
@@ -79,6 +188,231 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Poultry farm": "कुक्कुटपालन फार्म",
             "Fisheries": "मत्स्यपालन",
             "I don't have any live stock": "माझ्याकडे पशुधन नाही",
+        },
+    },
+    "kn": {
+        "season": {
+            "Kharif": "ಮುಂಗಾರು (ಜೂನ್ - ಅಕ್ಟೋಬರ್)",
+            "Rabi": "ಹಿಂಗಾರು (ಚಳಿಗಾಲ: ಅಕ್ಟೋಬರ್ - ಮಾರ್ಚ್)",
+            "Summer": "ಬೇಸಿಗೆ (ಮಾರ್ಚ್ - ಜೂನ್)",
+            "Annual": "ದೀರ್ಘಾವಧಿ (ಬಹುವಾರ್ಷಿಕ / ವಾರ್ಷಿಕ)",
+        },
+        "has_active_crop": {
+            "Yes": "ಹೌದು",
+            "No": "ಇಲ್ಲ",
+        },
+        "irrigation": {
+            "Rainfed": "ಮಳೆಯಾಶ್ರಿತ",
+            "Flood": "ಹರಿ ನೀರಾವರಿ (ಕಾಲುವೆ / ಸಾಲು)",
+            "Drip": "ಹನಿ ನೀರಾವರಿ",
+            "Sprinkler": "ತುಂತುರು ನೀರಾವರಿ",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "ಜಾನುವಾರು ಫಾರ್ಮ್ - ಹಸು ಮತ್ತು ಎಮ್ಮೆ",
+            "Cattle farm - Goat, Sheep, & Pig": "ಜಾನುವಾರು ಫಾರ್ಮ್ - ಮೇಕೆ, ಕುರಿ ಮತ್ತು ಹಂದಿ",
+            "Poultry farm": "ಕೋಳಿ ಸಾಕಣೆ ಫಾರ್ಮ್",
+            "Fisheries": "ಮೀನುಗಾರಿಕೆ",
+            "I don't have any live stock": "ನನ್ನ ಬಳಿ ಜಾನುವಾರು ಇಲ್ಲ",
+        },
+    },
+    "ta": {
+        "season": {
+            "Kharif": "காரிஃப் (பருவமழை: ஜூன் - அக்டோபர்)",
+            "Rabi": "ரபி (குளிர்காலம்: அக்டோபர் - மார்ச்)",
+            "Summer": "கோடை (மார்ச் - ஜூன்)",
+            "Annual": "நீண்டகாலம் (பல்லாண்டு / ஆண்டு)",
+        },
+        "has_active_crop": {
+            "Yes": "ஆம்",
+            "No": "இல்லை",
+        },
+        "irrigation": {
+            "Rainfed": "மானாவாரி",
+            "Flood": "வெள்ளப் பாசனம் (கால்வாய் / சால்)",
+            "Drip": "சொட்டு நீர்",
+            "Sprinkler": "தெளிப்பு நீர்",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "கால்நடைப் பண்ணை - பசு மற்றும் எருமை",
+            "Cattle farm - Goat, Sheep, & Pig": "கால்நடைப் பண்ணை - ஆடு, செம்மறி மற்றும் பன்றி",
+            "Poultry farm": "கோழிப் பண்ணை",
+            "Fisheries": "மீன்வளம்",
+            "I don't have any live stock": "என்னிடம் கால்நடைகள் இல்லை",
+        },
+    },
+    "te": {
+        "season": {
+            "Kharif": "ఖరీఫ్ (వర్షాకాలం: జూన్ - అక్టోబర్)",
+            "Rabi": "రబీ (శీతాకాలం: అక్టోబర్ - మార్చి)",
+            "Summer": "వేసవి (మార్చి - జూన్)",
+            "Annual": "దీర్ఘకాలిక (బహువార్షిక / వార్షిక)",
+        },
+        "has_active_crop": {
+            "Yes": "అవును",
+            "No": "కాదు",
+        },
+        "irrigation": {
+            "Rainfed": "వర్షాధారం",
+            "Flood": "వరద పారుదల (కాలువ / బోదెలు)",
+            "Drip": "బిందు సేద్యం",
+            "Sprinkler": "తుంపర సేద్యం",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "పశువుల ఫారం - ఆవులు & గేదెలు",
+            "Cattle farm - Goat, Sheep, & Pig": "పశువుల ఫారం - మేకలు, గొర్రెలు & పందులు",
+            "Poultry farm": "కోళ్ల ఫారం",
+            "Fisheries": "మత్స్య పరిశ్రమ",
+            "I don't have any live stock": "నా దగ్గర పశువులు లేవు",
+        },
+    },
+    "ml": {
+        "season": {
+            "Kharif": "ഖരീഫ് (മൺസൂൺ: ജൂൺ - ഒക്ടോബർ)",
+            "Rabi": "റാബി (ശൈത്യം: ഒക്ടോബർ - മാർച്ച്)",
+            "Summer": "വേനൽ (മാർച്ച് - ജൂൺ)",
+            "Annual": "ദീർഘകാല (ബഹുവർഷ / വാർഷിക)",
+        },
+        "has_active_crop": {
+            "Yes": "അതെ",
+            "No": "ഇല്ല",
+        },
+        "irrigation": {
+            "Rainfed": "മഴയെ ആശ്രയിച്ച്",
+            "Flood": "തുറന്ന നന (കനാൽ / ചാൽ)",
+            "Drip": "തുള്ളിനന",
+            "Sprinkler": "സ്പ്രിങ്ക്ളർ",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "കന്നുകാലി ഫാം - പശുവും എരുമയും",
+            "Cattle farm - Goat, Sheep, & Pig": "കന്നുകാലി ഫാം - ആട്, ചെമ്മരിയാട്, പന്നി",
+            "Poultry farm": "കോഴി ഫാം",
+            "Fisheries": "മത്സ്യകൃഷി",
+            "I don't have any live stock": "എനിക്ക് കന്നുകാലികളില്ല",
+        },
+    },
+    "gu": {
+        "season": {
+            "Kharif": "ખરીફ (ચોમાસું: જૂન - ઓક્ટોબર)",
+            "Rabi": "રવી (શિયાળો: ઓક્ટોબર - માર્ચ)",
+            "Summer": "ઉનાળુ (માર્ચ - જૂન)",
+            "Annual": "લાંબા ગાળાનું (બહુવર્ષાયુ / વાર્ષિક)",
+        },
+        "has_active_crop": {
+            "Yes": "હા",
+            "No": "ના",
+        },
+        "irrigation": {
+            "Rainfed": "વરસાદ આધારિત",
+            "Flood": "રેલાવીને (નહેર / ચાસ)",
+            "Drip": "ટપક",
+            "Sprinkler": "ફુવારા",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "પશુ ફાર્મ - ગાય અને ભેંસ",
+            "Cattle farm - Goat, Sheep, & Pig": "પશુ ફાર્મ - બકરી, ઘેટાં અને ભૂંડ",
+            "Poultry farm": "મરઘાં ફાર્મ",
+            "Fisheries": "મત્સ્યઉદ્યોગ",
+            "I don't have any live stock": "મારી પાસે પશુધન નથી",
+        },
+    },
+    "bn": {
+        "season": {
+            "Kharif": "খরিফ (বর্ষা: জুন - অক্টোবর)",
+            "Rabi": "রবি (শীত: অক্টোবর - মার্চ)",
+            "Summer": "গ্রীষ্ম (মার্চ - জুন)",
+            "Annual": "দীর্ঘমেয়াদি (বহুবর্ষজীবী / বার্ষিক)",
+        },
+        "has_active_crop": {
+            "Yes": "হ্যাঁ",
+            "No": "না",
+        },
+        "irrigation": {
+            "Rainfed": "বৃষ্টিনির্ভর",
+            "Flood": "প্লাবন সেচ (খাল / নালা)",
+            "Drip": "ড্রিপ সেচ",
+            "Sprinkler": "স্প্রিংকলার সেচ",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "গবাদি খামার - গরু ও মহিষ",
+            "Cattle farm - Goat, Sheep, & Pig": "গবাদি খামার - ছাগল, ভেড়া ও শূকর",
+            "Poultry farm": "হাঁস-মুরগির খামার",
+            "Fisheries": "মৎস্য চাষ",
+            "I don't have any live stock": "আমার কোনো গবাদি পশু নেই",
+        },
+    },
+    "or": {
+        "season": {
+            "Kharif": "ଖରିଫ (ବର୍ଷା: ଜୁନ - ଅକ୍ଟୋବର)",
+            "Rabi": "ରବି (ଶୀତ: ଅକ୍ଟୋବର - ମାର୍ଚ୍ଚ)",
+            "Summer": "ଗ୍ରୀଷ୍ମ (ମାର୍ଚ୍ଚ - ଜୁନ)",
+            "Annual": "ଦୀର୍ଘକାଳୀନ (ବହୁବର୍ଷୀୟ / ବାର୍ଷିକ)",
+        },
+        "has_active_crop": {
+            "Yes": "ହଁ",
+            "No": "ନା",
+        },
+        "irrigation": {
+            "Rainfed": "ବର୍ଷା ଆଧାରିତ",
+            "Flood": "ବନ୍ୟା ଜଳସେଚନ (କେନାଲ / ନାଳ)",
+            "Drip": "ଟୋପା ଜଳସେଚନ",
+            "Sprinkler": "ଛିଞ୍ଚା ଜଳସେଚନ",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "ଗୋପାଳନ ଫାର୍ମ - ଗାଈ ଓ ମଇଁଷି",
+            "Cattle farm - Goat, Sheep, & Pig": "ପଶୁ ଫାର୍ମ - ଛେଳି, ମେଣ୍ଢା ଓ ଘୁଷୁରି",
+            "Poultry farm": "କୁକୁଡ଼ା ଫାର୍ମ",
+            "Fisheries": "ମତ୍ସ୍ୟ ଚାଷ",
+            "I don't have any live stock": "ମୋର କୌଣସି ପଶୁଧନ ନାହିଁ",
+        },
+    },
+    "as": {
+        "season": {
+            "Kharif": "খাৰিফ (বাৰিষা: জুন - অক্টোবৰ)",
+            "Rabi": "ৰবি (শীত: অক্টোবৰ - মাৰ্চ)",
+            "Summer": "গ্ৰীষ্ম (মাৰ্চ - জুন)",
+            "Annual": "দীৰ্ঘম্যাদী (বহুবৰ্ষজীৱী / বাৰ্ষিক)",
+        },
+        "has_active_crop": {
+            "Yes": "হয়",
+            "No": "নহয়",
+        },
+        "irrigation": {
+            "Rainfed": "বৰষুণ নিৰ্ভৰ",
+            "Flood": "পানী বোৱাই (নলা / খাল)",
+            "Drip": "টোপাল জলসিঞ্চন",
+            "Sprinkler": "ফোঁৱাৰা জলসিঞ্চন",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "গো-পালন ফাৰ্ম - গাই আৰু ম'হ",
+            "Cattle farm - Goat, Sheep, & Pig": "পশু ফাৰ্ম - ছাগলী, ভেড়া আৰু গাহৰি",
+            "Poultry farm": "কুকুৰা ফাৰ্ম",
+            "Fisheries": "মৎস্য পালন",
+            "I don't have any live stock": "মোৰ কোনো পশুধন নাই",
+        },
+    },
+    "pa": {
+        "season": {
+            "Kharif": "ਸਾਉਣੀ (ਮਾਨਸੂਨ: ਜੂਨ - ਅਕਤੂਬਰ)",
+            "Rabi": "ਹਾੜ੍ਹੀ (ਸਰਦੀ: ਅਕਤੂਬਰ - ਮਾਰਚ)",
+            "Summer": "ਗਰਮੀ / ਜ਼ਾਇਦ (ਮਾਰਚ - ਜੂਨ)",
+            "Annual": "ਲੰਮੀ ਮਿਆਦ (ਬਹੁ-ਸਾਲੀ / ਸਾਲਾਨਾ)",
+        },
+        "has_active_crop": {
+            "Yes": "ਹਾਂ",
+            "No": "ਨਹੀਂ",
+        },
+        "irrigation": {
+            "Rainfed": "ਮੀਂਹ ਆਧਾਰਿਤ",
+            "Flood": "ਖੁੱਲ੍ਹਾ ਪਾਣੀ (ਨਹਿਰ / ਖਾਲ)",
+            "Drip": "ਤੁਪਕਾ ਸਿੰਚਾਈ",
+            "Sprinkler": "ਫੁਹਾਰਾ ਸਿੰਚਾਈ",
+        },
+        "livestock": {
+            "Cattle farm - Cows & Buffaloes": "ਪਸ਼ੂ ਫਾਰਮ - ਗਾਂ ਅਤੇ ਮੱਝ",
+            "Cattle farm - Goat, Sheep, & Pig": "ਪਸ਼ੂ ਫਾਰਮ - ਬੱਕਰੀ, ਭੇਡ ਅਤੇ ਸੂਰ",
+            "Poultry farm": "ਮੁਰਗੀ ਫਾਰਮ",
+            "Fisheries": "ਮੱਛੀ ਪਾਲਣ",
+            "I don't have any live stock": "ਮੇਰੇ ਕੋਲ ਕੋਈ ਪਸ਼ੂ ਨਹੀਂ",
         },
     },
 }

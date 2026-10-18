@@ -15311,5 +15311,4855 @@
     "is_active": true,
     "data_source": "Draft from ICAR-IIWBR Karnal wheat package of practices. Needs agronomist review.",
     "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "oats",
+    "name_en": "Oats",
+    "name_local": {
+      "hi": "जई",
+      "mr": "ओट्स"
+    },
+    "family": "Fodder",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 120,
+    "suitable_soil_types": [
+      "alluvial",
+      "black",
+      "red"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.5,
+    "soil_ph_max": 7.5,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 10000,
+    "expected_yield_per_acre": 180,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "10-15",
+        "end": "11-30"
+      }
+    ],
+    "profit_note": "Green fodder for 2 to 3 cuts; saves on bought feed for dairy animals.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 22,
+        "tolerable_min": 8,
+        "tolerable_max": 28,
+        "description": "Oats seeds sprout best when the temperature stays between 15°C and 22°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Oats seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 80,
+        "description": "Oats seeds sprout best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Leaf Blotch",
+        "local_name": "Patti Dhabba",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Brown spots spread on leaves in damp weather. Use clean seed treated with thiram and cut the crop on time."
+      },
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Small green insects suck sap from leaves. Spray neem oil early; cut the fodder before spraying chemicals."
+      },
+      {
+        "name": "Crown Rust",
+        "local_name": "Ratua",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Orange powder appears on leaves late in the season. Grow resistant varieties like Kent and take the last cut early."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Sow 40 kg seed per acre",
+        "description": "Keep rows 25 cm apart for a thick fodder stand.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Take the first cut at 55 days",
+        "description": "Cut 8 to 10 cm above ground so the crop regrows.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "scissors"
+      },
+      {
+        "title": "Water after each cut",
+        "description": "One irrigation after every cut keeps regrowth fast.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Add urea after the first cut",
+        "description": "A top dose of nitrogen boosts the next cut.",
+        "priority": "medium",
+        "category": "fertilizer",
+        "icon": "fertilizer"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Covers the soil through winter",
+        "Fits after kharif rice or maize"
+      ],
+      "economic": [
+        "Low cost fodder",
+        "Cuts the dairy feed bill"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from AAU and ICAR oat fodder packages of practices. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "rye",
+    "name_en": "Rye",
+    "name_local": {
+      "hi": "रई अनाज",
+      "mr": "रई धान्य"
+    },
+    "family": "Cereal",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 130,
+    "suitable_soil_types": [
+      "alluvial",
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.0,
+    "soil_ph_max": 7.5,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 12000,
+    "expected_yield_per_acre": 8,
+    "yield_unit": "quintal",
+    "profit_potential": "low",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "10-25",
+        "end": "11-30"
+      }
+    ],
+    "profit_note": "Little local demand; grow only with a confirmed buyer or as cover and fodder.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 12,
+        "ideal_max": 20,
+        "tolerable_min": 4,
+        "tolerable_max": 26,
+        "description": "Rye seeds sprout best when the temperature stays between 12°C and 20°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Rye seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 45,
+        "ideal_max": 65,
+        "tolerable_min": 35,
+        "tolerable_max": 75,
+        "description": "Rye seeds sprout best when air humidity is 45% to 65%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Ergot",
+        "local_name": "Ergot",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Black horn-like bodies replace grains and are poisonous. Use clean seed and remove ergot bodies before use."
+      },
+      {
+        "name": "Stem Rust",
+        "local_name": "Kala Ratua",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Dark brown pustules on stems. Sow early and remove volunteer plants and weeds nearby."
+      },
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Insects cluster on leaves and ears. Spray neem oil at first sight."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Sow 40 kg seed per acre",
+        "description": "Rows 22 cm apart; it grows tall, so avoid extra nitrogen.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Confirm a buyer first",
+        "description": "Rye has a thin market in India.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Two light irrigations are enough",
+        "description": "Water at tillering and heading.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Grows on poor, acidic soils",
+        "Deep roots hold the soil"
+      ],
+      "economic": [
+        "Low input cost",
+        "Straw is useful"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from general rye agronomy and ICAR hill rabi advisories. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "broad_bean",
+    "name_en": "Broad bean",
+    "name_local": {
+      "hi": "बाकला",
+      "mr": "ब्रॉड बीन"
+    },
+    "family": "Pulse",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 130,
+    "suitable_soil_types": [
+      "alluvial",
+      "black"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.0,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 14000,
+    "expected_yield_per_acre": 10,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "10-15",
+        "end": "11-15"
+      }
+    ],
+    "profit_note": "Green pods sell as a vegetable; dry beans keep well.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 22,
+        "tolerable_min": 8,
+        "tolerable_max": 27,
+        "description": "Broad bean seeds sprout best when the temperature stays between 15°C and 22°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Broad bean seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 80,
+        "description": "Broad bean seeds sprout best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "high",
+        "icon": "bug",
+        "solution": "Black insects cluster on shoot tips. Pinch infested tips and spray neem oil."
+      },
+      {
+        "name": "Chocolate Spot",
+        "local_name": "Bhura Dhabba",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Small brown spots join into patches in humid weather. Avoid dense sowing and spray mancozeb at first spots."
+      },
+      {
+        "name": "Rust",
+        "local_name": "Ratua",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Brown pustules on leaves late in the season. Sow on time and use resistant varieties."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Sow 40 kg seed per acre",
+        "description": "Plant at 30 x 30 cm; treat seed with Rhizobium.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Water before flowering and at podding",
+        "description": "These two irrigations matter most.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Pick green pods every week",
+        "description": "Regular picking keeps pods tender.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fixes nitrogen for the next crop",
+        "Fits after kharif rice"
+      ],
+      "economic": [
+        "Low input cost",
+        "Sells as vegetable and pulse"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-RCER Patna faba bean work. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "sugar_beet",
+    "name_en": "Sugar beet",
+    "name_local": {
+      "hi": "चुकंदर (शुगर बीट)",
+      "mr": "साखर बीट"
+    },
+    "family": "Commercial",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 170,
+    "suitable_soil_types": [
+      "alluvial",
+      "saline_alkaline"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.5,
+    "soil_ph_max": 8.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 30000,
+    "expected_yield_per_acre": 250,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "10-01",
+        "end": "10-31"
+      }
+    ],
+    "profit_note": "Profitable only with a sugar mill or distillery buying contract nearby.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 25,
+        "tolerable_min": 8,
+        "tolerable_max": 32,
+        "description": "Sugar beet seeds sprout best when the temperature stays between 15°C and 25°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Sugar beet seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 80,
+        "description": "Sugar beet seeds sprout best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Cercospora Leaf Spot",
+        "local_name": "Patti Dhabba",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Small grey spots with red borders cover leaves. Rotate crops and spray carbendazim at first spots."
+      },
+      {
+        "name": "Root Rot",
+        "local_name": "Jad Galan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Roots turn soft and dark in wet patches. Avoid waterlogging and do not plant beet after beet."
+      },
+      {
+        "name": "Leaf-eating Caterpillar",
+        "local_name": "Sundi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Caterpillars eat leaves in patches. Hand-pick egg masses and spray Bt or neem."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Sign a buyer contract first",
+        "description": "Roots must reach a mill within days of digging.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Sow on ridges 50 cm apart",
+        "description": "Use 2 to 3 kg seed per acre and thin to one plant every 20 cm.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "ruler"
+      },
+      {
+        "title": "Water every 2 to 3 weeks",
+        "description": "Stop irrigation 3 weeks before digging for higher sugar.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Dig in March to April",
+        "description": "Harvest before the heat to keep sugar high.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "tractor"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Tolerates salty and alkaline soils",
+        "Deep roots open the soil"
+      ],
+      "economic": [
+        "High tonnage per acre",
+        "Shorter than sugarcane"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from NISCAIR and PAU sugar beet material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "chicory",
+    "name_en": "Chicory",
+    "name_local": {
+      "hi": "कासनी",
+      "mr": "चिकोरी"
+    },
+    "family": "Commercial",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 140,
+    "suitable_soil_types": [
+      "alluvial"
+    ],
+    "soil_texture": [
+      "sandy_loam",
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 25000,
+    "expected_yield_per_acre": 100,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "10-15",
+        "end": "11-30"
+      }
+    ],
+    "profit_note": "Sold on contract to coffee processors; price is fixed before sowing.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 25,
+        "tolerable_min": 8,
+        "tolerable_max": 30,
+        "description": "Chicory seeds sprout best when the temperature stays between 15°C and 25°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Chicory seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 80,
+        "description": "Chicory seeds sprout best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Root Rot",
+        "local_name": "Jad Galan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Roots rot in waterlogged patches. Grow on ridges and keep drainage open."
+      },
+      {
+        "name": "Cutworm",
+        "local_name": "Katua Keet",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Young plants are cut at soil level. Plough deep in summer and use light traps."
+      },
+      {
+        "name": "Weeds",
+        "local_name": "Kharpatwar",
+        "type": "weed",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Slow early growth lets weeds take over. Weed twice in the first 45 days."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Agree the contract before sowing",
+        "description": "Processors supply seed and buy back roots.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Sow on ridges",
+        "description": "Two rows per bed give the best root yield.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "ruler"
+      },
+      {
+        "title": "Light frequent watering",
+        "description": "Keep the soil moist but never waterlogged.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Deep roots loosen the soil",
+        "Fits after kharif crops"
+      ],
+      "economic": [
+        "Assured contract price",
+        "Good returns in Gujarat and UP"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from PAU and industry chicory practices. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "mint",
+    "name_en": "Mint",
+    "name_local": {
+      "hi": "पुदीना",
+      "mr": "पुदिना"
+    },
+    "family": "Commercial",
+    "crop_type": "annual",
+    "seasons": [
+      "zaid"
+    ],
+    "duration_days": 110,
+    "suitable_soil_types": [
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.0,
+    "water_requirement": "high",
+    "cost_per_acre_inr": 30000,
+    "expected_yield_per_acre": 0.6,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "zaid",
+        "start": "01-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Yield is oil (about 60 kg per acre); price swings with the menthol market.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 20,
+        "ideal_max": 30,
+        "tolerable_min": 15,
+        "tolerable_max": 38,
+        "description": "Mint seeds sprout best when the temperature stays between 20°C and 30°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 15,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Mint seeds sprout best with up to 15 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Mint seeds sprout best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Termite",
+        "local_name": "Deemak",
+        "type": "insect_pest",
+        "severity": "high",
+        "icon": "bug",
+        "solution": "Plants wilt as roots are eaten. Irrigate regularly and use well-rotted manure only."
+      },
+      {
+        "name": "Leaf Spot",
+        "local_name": "Patti Dhabba",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Brown spots reduce oil. Avoid overhead watering and remove affected leaves."
+      },
+      {
+        "name": "Hairy Caterpillar",
+        "local_name": "Bal Wali Sundi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Caterpillars strip leaves in April-May. Collect egg masses and spray neem."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant suckers in January-February",
+        "description": "Use 2 to 3 quintals of suckers per acre in rows 45 cm apart.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Irrigate every 7 to 10 days",
+        "description": "Mint is shallow rooted and needs steady moisture.",
+        "priority": "high",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Cut at early flowering",
+        "description": "Wilt the cut crop for a day before distilling.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "scissors"
+      },
+      {
+        "title": "Raised beds save water",
+        "description": "Beds give more oil per irrigation than flat fields.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "ruler"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits between rabi and kharif crops",
+        "Short duration"
+      ],
+      "economic": [
+        "India supplies most of the world's mint oil",
+        "Quick cash crop"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR and CIMAP mentha material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "indigo",
+    "name_en": "Indigo",
+    "name_local": {
+      "hi": "नील",
+      "mr": "इंडिगो"
+    },
+    "family": "Commercial",
+    "crop_type": "annual",
+    "seasons": [
+      "kharif"
+    ],
+    "duration_days": 120,
+    "suitable_soil_types": [
+      "red",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "sandy_loam",
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.0,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 12000,
+    "expected_yield_per_acre": 40,
+    "yield_unit": "quintal",
+    "profit_potential": "low",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "07-15",
+        "end": "09-15"
+      }
+    ],
+    "profit_note": "Yield is green leaf; sell to natural-dye makers on contract.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 22,
+        "ideal_max": 32,
+        "tolerable_min": 18,
+        "tolerable_max": 38,
+        "description": "Indigo seeds sprout best when the temperature stays between 22°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 10,
+        "ideal_max": 30,
+        "tolerable_min": 0,
+        "tolerable_max": 60,
+        "description": "Indigo seeds sprout best with 10 to 30 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Indigo seeds sprout best when air humidity is 50% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Leaf-eating Caterpillar",
+        "local_name": "Sundi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Caterpillars eat young leaves. Hand-pick and spray neem."
+      },
+      {
+        "name": "Root Rot",
+        "local_name": "Jad Galan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Plants wilt in waterlogged soil. Choose well-drained fields."
+      },
+      {
+        "name": "Weeds",
+        "local_name": "Kharpatwar",
+        "type": "weed",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Weeds compete early. Weed twice before the canopy closes."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Find a dye buyer first",
+        "description": "Natural indigo is sold to specific dye units.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Sow in full sun",
+        "description": "Sunlight raises dye content in the leaves.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "sun"
+      },
+      {
+        "title": "Cut leaves at flowering",
+        "description": "Take 2 to 3 cuts; process leaves the same day.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "scissors"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fixes nitrogen",
+        "Grows on poor dry soils"
+      ],
+      "economic": [
+        "Low input cost",
+        "Premium for organic natural dye"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from indigo reviews and ICAR neel trials. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "broccoli",
+    "name_en": "Broccoli",
+    "name_local": {
+      "hi": "ब्रोकोली",
+      "mr": "ब्रोकोली"
+    },
+    "family": "Vegetable",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 100,
+    "suitable_soil_types": [
+      "alluvial",
+      "red"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 45000,
+    "expected_yield_per_acre": 40,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "09-15",
+        "end": "11-10"
+      }
+    ],
+    "profit_note": "Sells well in cities, hotels and supermarkets; grow close to a market.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 22,
+        "tolerable_min": 8,
+        "tolerable_max": 28,
+        "description": "Broccoli seeds sprout best when the temperature stays between 15°C and 22°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Broccoli seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 45,
+        "tolerable_max": 85,
+        "description": "Broccoli seeds sprout best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Diamondback Moth",
+        "local_name": "Heera Keet",
+        "type": "insect_pest",
+        "severity": "high",
+        "icon": "bug",
+        "solution": "Small green caterpillars make holes in leaves and heads. Use pheromone traps and spray Bt."
+      },
+      {
+        "name": "Downy Mildew",
+        "local_name": "Mriduromil Asita",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Yellow patches with grey growth below leaves. Avoid overhead watering and spray mancozeb."
+      },
+      {
+        "name": "Black Rot",
+        "local_name": "Kala Sadan",
+        "type": "bacterial_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "V-shaped yellow patches at leaf edges. Use hot-water treated seed and rotate crops."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Transplant 4 to 6 week seedlings",
+        "description": "Plant at 45 x 45 cm.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Harvest heads while buds are tight",
+        "description": "Cut with 10 cm stalk; side shoots give a second picking.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "scissors"
+      },
+      {
+        "title": "Water every 7 to 10 days",
+        "description": "Steady moisture keeps heads firm.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits in rabi vegetable rotation",
+        "Short crop"
+      ],
+      "economic": [
+        "High price per kg",
+        "Growing city demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from KIRAN and ICAR broccoli material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "lettuce",
+    "name_en": "Lettuce",
+    "name_local": {
+      "hi": "सलाद",
+      "mr": "लेट्यूस"
+    },
+    "family": "Vegetable",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 60,
+    "suitable_soil_types": [
+      "alluvial",
+      "red"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 35000,
+    "expected_yield_per_acre": 50,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "09-15",
+        "end": "11-30"
+      }
+    ],
+    "profit_note": "Best sold fresh to hotels and supermarkets the same day.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 12,
+        "ideal_max": 20,
+        "tolerable_min": 7,
+        "tolerable_max": 26,
+        "description": "Lettuce seeds sprout best when the temperature stays between 12°C and 20°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Lettuce seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 45,
+        "tolerable_max": 85,
+        "description": "Lettuce seeds sprout best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Insects gather under leaves. Spray neem oil and use yellow sticky traps."
+      },
+      {
+        "name": "Downy Mildew",
+        "local_name": "Mriduromil Asita",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Yellow patches with white growth below leaves. Keep spacing wide and water at the base."
+      },
+      {
+        "name": "Bolting",
+        "local_name": "Jaldi Phool",
+        "type": "weather",
+        "severity": "medium",
+        "icon": "droplet",
+        "solution": "Plants shoot up and turn bitter in heat. Sow on time and harvest before it gets warm."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Transplant at 30 x 30 cm",
+        "description": "Use 4 week old seedlings.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "ruler"
+      },
+      {
+        "title": "Water lightly and often",
+        "description": "Shallow roots need steady moisture.",
+        "priority": "high",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Harvest in the morning",
+        "description": "Cool leaves stay crisp longer.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Very short crop",
+        "Fits between other vegetables"
+      ],
+      "economic": [
+        "Quick returns",
+        "Hotel and salad demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from IARI and IIHR vegetable guides. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "celery",
+    "name_en": "Celery",
+    "name_local": {
+      "hi": "अजमोदा",
+      "mr": "सेलेरी"
+    },
+    "family": "Spice",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 180,
+    "suitable_soil_types": [
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 20000,
+    "expected_yield_per_acre": 5,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "09-15",
+        "end": "10-31"
+      }
+    ],
+    "profit_note": "Seed is sold to spice traders and exporters; prices swing year to year.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 25,
+        "tolerable_min": 8,
+        "tolerable_max": 32,
+        "description": "Celery seeds sprout best when the temperature stays between 15°C and 25°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Celery seeds sprout best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 40,
+        "ideal_max": 60,
+        "tolerable_min": 30,
+        "tolerable_max": 75,
+        "description": "Celery seeds sprout best when air humidity is 40% to 60%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Leaf Blight",
+        "local_name": "Jhulsa",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Brown spots spread over leaves in damp weather. Spray mancozeb and avoid dense planting."
+      },
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Insects cluster on flower heads. Spray neem oil at first sight."
+      },
+      {
+        "name": "Waterlogging",
+        "local_name": "Jal Bharav",
+        "type": "weather",
+        "severity": "medium",
+        "icon": "droplet",
+        "solution": "Plants wilt in standing water. Keep drainage open."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Raise nursery and transplant",
+        "description": "Transplant 6 to 8 week seedlings at 45 x 30 cm.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Light irrigation every 15 days",
+        "description": "Stop watering as seeds ripen.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Harvest when umbels turn brown",
+        "description": "Dry in shade and thresh gently.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits in rabi rotation",
+        "Suits loam soils"
+      ],
+      "economic": [
+        "Export spice",
+        "Punjab has an established market"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from NHB celery project report. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "asparagus",
+    "name_en": "Asparagus",
+    "name_local": {
+      "hi": "शतावरी",
+      "mr": "शतावरी"
+    },
+    "family": "Vegetable",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 2,
+    "suitable_soil_types": [
+      "red",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "sandy_loam",
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.5,
+    "soil_ph_max": 7.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 150000,
+    "expected_yield_per_acre": 15,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "07-01",
+        "end": "09-30"
+      }
+    ],
+    "profit_note": "Spears sell at high prices to hotels and exporters; a bed bears for 10 years or more.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 18,
+        "ideal_max": 28,
+        "tolerable_min": 10,
+        "tolerable_max": 35,
+        "description": "Asparagus plants settle best when the temperature stays between 18°C and 28°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Asparagus plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Asparagus plants settle best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Fusarium Crown Rot",
+        "local_name": "Jad Sadan",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Spears turn brown and plants decline. Use healthy crowns and well-drained beds."
+      },
+      {
+        "name": "Rust",
+        "local_name": "Ratua",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Orange then black pustules on fern. Remove old fern and spray at first signs."
+      },
+      {
+        "name": "Asparagus Beetle",
+        "local_name": "Bhaunra",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Beetles chew spears and fern. Hand-pick and spray neem."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant one-year crowns in trenches",
+        "description": "Set crowns 30 cm apart in trenches 20 cm deep.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Do not harvest in the first year",
+        "description": "Let the fern build the crown.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "calendar"
+      },
+      {
+        "title": "Use drip irrigation",
+        "description": "Even moisture and dry crowns prevent rot.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Long-lived bed",
+        "Needs deep sandy loam"
+      ],
+      "economic": [
+        "Premium price",
+        "Harvest for 10+ years"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from asparagus grower guides. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "artichoke",
+    "name_en": "Artichoke",
+    "name_local": {
+      "hi": "हाथी चक",
+      "mr": "आर्टिचोक"
+    },
+    "family": "Vegetable",
+    "crop_type": "annual",
+    "seasons": [
+      "rabi"
+    ],
+    "duration_days": 180,
+    "suitable_soil_types": [
+      "alluvial",
+      "red",
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.5,
+    "soil_ph_max": 8.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 80000,
+    "expected_yield_per_acre": 30,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "10-01",
+        "end": "12-15"
+      }
+    ],
+    "profit_note": "Very small market in India; grow only with a hotel or retail buyer.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 13,
+        "ideal_max": 24,
+        "tolerable_min": 5,
+        "tolerable_max": 30,
+        "description": "Artichoke seeds sprout best when the temperature stays between 13°C and 24°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 15,
+        "tolerable_min": 0,
+        "tolerable_max": 35,
+        "description": "Artichoke seeds sprout best with up to 15 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 45,
+        "tolerable_max": 85,
+        "description": "Artichoke seeds sprout best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Insects gather on buds and leaves. Spray neem oil."
+      },
+      {
+        "name": "Botrytis Grey Mould",
+        "local_name": "Dhusar Phaphund",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Grey mould on buds in damp weather. Space plants widely and remove rotting buds."
+      },
+      {
+        "name": "Slugs",
+        "local_name": "Ghongha",
+        "type": "insect_pest",
+        "severity": "low",
+        "icon": "bug",
+        "solution": "Slugs eat young leaves at night. Keep the field clean and use traps."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Confirm a buyer first",
+        "description": "Artichoke is unfamiliar in most markets.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Space plants 1 m apart",
+        "description": "Plants grow large and need room.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "ruler"
+      },
+      {
+        "title": "Cut buds before scales open",
+        "description": "Open buds turn tough.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "scissors"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Deep roots",
+        "Suits well-drained loam"
+      ],
+      "economic": [
+        "High price per bud",
+        "Niche demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from artichoke grower material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "yam",
+    "name_en": "Yam",
+    "name_local": {
+      "hi": "याम",
+      "mr": "याम"
+    },
+    "family": "Vegetable",
+    "crop_type": "annual",
+    "seasons": [
+      "kharif"
+    ],
+    "duration_days": 280,
+    "suitable_soil_types": [
+      "laterite",
+      "red",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.5,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 45000,
+    "expected_yield_per_acre": 100,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "03-15",
+        "end": "05-31"
+      }
+    ],
+    "profit_note": "Stores for months after harvest, so it can be sold when prices are good.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 25,
+        "ideal_max": 32,
+        "tolerable_min": 20,
+        "tolerable_max": 38,
+        "description": "Yam seeds sprout best when the temperature stays between 25°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 20,
+        "ideal_max": 40,
+        "tolerable_min": 5,
+        "tolerable_max": 70,
+        "description": "Yam seeds sprout best with 20 to 40 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 65,
+        "ideal_max": 85,
+        "tolerable_min": 50,
+        "tolerable_max": 95,
+        "description": "Yam seeds sprout best when air humidity is 65% to 85%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Anthracnose",
+        "local_name": "Patti Jhulsa",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Dark spots and dieback on vines. Use healthy setts and spray carbendazim at first spots."
+      },
+      {
+        "name": "Yam Scale",
+        "local_name": "Shalk Keet",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Scales on stored tubers. Dip setts in insecticide before planting and store in shade."
+      },
+      {
+        "name": "Nematode",
+        "local_name": "Sutrakrimi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Tubers crack and rot. Rotate with cereals and use clean planting material."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant 250 g setts in mounds",
+        "description": "Space mounds 90 x 90 cm and mulch after planting.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Stake the vines",
+        "description": "Vines on stakes give much higher yield.",
+        "priority": "high",
+        "category": "protection",
+        "icon": "ruler"
+      },
+      {
+        "title": "Harvest when vines dry",
+        "description": "Cure tubers in shade before storing.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits in coconut gardens",
+        "Mulch improves the soil"
+      ],
+      "economic": [
+        "Stores well",
+        "Steady local demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CTCRI yam material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "apple",
+    "name_en": "Apple",
+    "name_local": {
+      "hi": "सेब",
+      "mr": "सफरचंद"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "hill",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.5,
+    "soil_ph_max": 6.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 150000,
+    "expected_yield_per_acre": 40,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "High-density orchards on dwarf rootstocks bear in 3 years and yield far more.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 24,
+        "tolerable_min": 5,
+        "tolerable_max": 30,
+        "description": "Apple plants settle best when the temperature stays between 15°C and 24°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 10,
+        "ideal_max": 25,
+        "tolerable_min": 0,
+        "tolerable_max": 50,
+        "description": "Apple plants settle best with 10 to 25 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Apple plants settle best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Apple Scab",
+        "local_name": "Kharsa",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Olive-black spots on leaves and fruit. Clear fallen leaves and spray as per the state spray schedule."
+      },
+      {
+        "name": "Woolly Aphid",
+        "local_name": "Ooni Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "White cottony colonies on stems and roots. Use resistant rootstocks and release Aphelinus wasps."
+      },
+      {
+        "name": "Premature Leaf Fall",
+        "local_name": "Patti Jharna",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Leaves drop early in wet summers. Spray protective fungicide after rain spells."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant in winter dormancy",
+        "description": "Plant grafted plants from December to February.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Grow pollinizer varieties",
+        "description": "Plant one pollinizer for every 3 to 4 trees and keep bee boxes at bloom.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Prune and train every winter",
+        "description": "Open canopy gives better colour and less disease.",
+        "priority": "medium",
+        "category": "protection",
+        "icon": "scissors"
+      },
+      {
+        "title": "Pick at proper colour and firmness",
+        "description": "Grade and pack in boxes the same day.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Orchards protect hill slopes",
+        "Grass cover holds soil"
+      ],
+      "economic": [
+        "High value fruit",
+        "Strong national demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CITH and FAO temperate fruit material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "pear",
+    "name_en": "Pear",
+    "name_local": {
+      "hi": "नाशपाती",
+      "mr": "नाशपाती"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 5,
+    "suitable_soil_types": [
+      "alluvial",
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 70000,
+    "expected_yield_per_acre": 60,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-15"
+      }
+    ],
+    "profit_note": "Patharnakh is hardy and keeps well; soft pears fetch more but need quick sale.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 18,
+        "ideal_max": 30,
+        "tolerable_min": 5,
+        "tolerable_max": 38,
+        "description": "Pear plants settle best when the temperature stays between 18°C and 30°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 10,
+        "ideal_max": 25,
+        "tolerable_min": 0,
+        "tolerable_max": 50,
+        "description": "Pear plants settle best with 10 to 25 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Pear plants settle best when air humidity is 50% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Fruit Fly",
+        "local_name": "Phal Makkhi",
+        "type": "insect_pest",
+        "severity": "high",
+        "icon": "bug",
+        "solution": "Maggots rot ripening fruit. Hang methyl eugenol traps and bury fallen fruit."
+      },
+      {
+        "name": "Pear Scab",
+        "local_name": "Kharsa",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Dark spots on leaves and fruit. Clear fallen leaves and spray at bud break."
+      },
+      {
+        "name": "Stem Borer",
+        "local_name": "Tana Chhedak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Holes with sawdust on trunk. Clean holes and plug with insecticide-soaked cotton."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant grafts in winter",
+        "description": "Space trees 6 to 8 m apart.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Choose the right variety for your area",
+        "description": "Low-chill types in plains, European types in hills.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Water every 10 days in summer",
+        "description": "Stop irrigation in winter dormancy.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Deep roots",
+        "Long-lived orchard"
+      ],
+      "economic": [
+        "Hardy and long-lived",
+        "Good market in north India"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR low-chill fruit and CITH material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "peach",
+    "name_en": "Peach",
+    "name_local": {
+      "hi": "आड़ू",
+      "mr": "पीच"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 3,
+    "suitable_soil_types": [
+      "alluvial",
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 70000,
+    "expected_yield_per_acre": 50,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-15"
+      }
+    ],
+    "profit_note": "Early varieties reach the market in April-May when few fruits are available.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 18,
+        "ideal_max": 30,
+        "tolerable_min": 5,
+        "tolerable_max": 38,
+        "description": "Peach plants settle best when the temperature stays between 18°C and 30°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 45,
+        "description": "Peach plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Peach plants settle best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Leaf Curl",
+        "local_name": "Patti Murodan",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Leaves pucker and turn red in spring. Spray copper fungicide before buds swell."
+      },
+      {
+        "name": "Fruit Fly",
+        "local_name": "Phal Makkhi",
+        "type": "insect_pest",
+        "severity": "high",
+        "icon": "bug",
+        "solution": "Maggots rot fruit. Use methyl eugenol traps and destroy fallen fruit."
+      },
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Insects curl young leaves. Spray neem oil at bud burst."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Pick low-chill varieties for the plains",
+        "description": "Shan-i-Punjab, Partap and Florda Prince suit Punjab.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Prune hard every winter",
+        "description": "Peach fruits on one-year shoots.",
+        "priority": "high",
+        "category": "protection",
+        "icon": "scissors"
+      },
+      {
+        "title": "Thin fruits to 15 cm apart",
+        "description": "Bigger fruits fetch better prices.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fast-bearing orchard",
+        "Mulch keeps moisture"
+      ],
+      "economic": [
+        "Early fruit, good prices",
+        "Bears in 3 years"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR and PAU low-chill peach material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "plum",
+    "name_en": "Plum",
+    "name_local": {
+      "hi": "आलूबुखारा",
+      "mr": "मनुका"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "alluvial",
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.5,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 65000,
+    "expected_yield_per_acre": 40,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-15"
+      }
+    ],
+    "profit_note": "Sold fresh in May-June; also used for jam and dried fruit.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 16,
+        "ideal_max": 28,
+        "tolerable_min": 5,
+        "tolerable_max": 36,
+        "description": "Plum plants settle best when the temperature stays between 16°C and 28°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 45,
+        "description": "Plum plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Plum plants settle best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Aphid",
+        "local_name": "Maahu",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Leaves curl in spring. Spray neem oil at bud burst."
+      },
+      {
+        "name": "Gummosis",
+        "local_name": "Gond Rog",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Gum oozes from the trunk. Scrape and paint with Bordeaux paste; avoid wounds."
+      },
+      {
+        "name": "Bacterial Canker",
+        "local_name": "Jeevanu Kankar",
+        "type": "bacterial_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Sunken cankers on branches. Prune in dry weather and spray copper after pruning."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant two varieties together",
+        "description": "Most plums need a pollinizer.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Space trees 6 m apart",
+        "description": "Train to an open centre.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "ruler"
+      },
+      {
+        "title": "Pick firm-ripe for distant markets",
+        "description": "Fully ripe fruit bruises easily.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Long-lived orchard",
+        "Suits hill slopes"
+      ],
+      "economic": [
+        "Steady summer demand",
+        "Processing uses"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR and FAO temperate fruit material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "apricot",
+    "name_en": "Apricot",
+    "name_local": {
+      "hi": "खुबानी",
+      "mr": "जर्दाळू"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.0,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 50000,
+    "expected_yield_per_acre": 25,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Dried apricots and kernel oil add value and keep for months.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 28,
+        "tolerable_min": 3,
+        "tolerable_max": 34,
+        "description": "Apricot plants settle best when the temperature stays between 15°C and 28°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Apricot plants settle best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 35,
+        "ideal_max": 60,
+        "tolerable_min": 25,
+        "tolerable_max": 75,
+        "description": "Apricot plants settle best when air humidity is 35% to 60%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Shot Hole",
+        "local_name": "Chhed Rog",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Small holes appear in leaves. Spray copper fungicide after leaf fall and at bud swell."
+      },
+      {
+        "name": "Spring Frost",
+        "local_name": "Paala",
+        "type": "weather",
+        "severity": "high",
+        "icon": "droplet",
+        "solution": "Late frost kills flowers. Choose late-flowering varieties and avoid frost pockets."
+      },
+      {
+        "name": "Stem Borer",
+        "local_name": "Tana Chhedak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Holes with sawdust in the trunk. Plug holes with insecticide-soaked cotton."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant grafts in late winter",
+        "description": "Space trees 6 m apart on slopes.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Sun-dry fruit on clean trays",
+        "description": "Clean drying gives better prices.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "sun"
+      },
+      {
+        "title": "Light irrigation in fruit growth",
+        "description": "Water in May-June if rain fails.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Grows on dry hill soils",
+        "Holds slopes"
+      ],
+      "economic": [
+        "Dried fruit keeps",
+        "Kernels add income"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CITH temperate fruit material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "cherry",
+    "name_en": "Cherry",
+    "name_local": {
+      "hi": "चेरी",
+      "mr": "चेरी"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 5,
+    "suitable_soil_types": [
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 150000,
+    "expected_yield_per_acre": 20,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Very high price in May-June, but fruit must reach market within days.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 25,
+        "tolerable_min": 3,
+        "tolerable_max": 30,
+        "description": "Cherry plants settle best when the temperature stays between 15°C and 25°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Cherry plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 70,
+        "tolerable_min": 40,
+        "tolerable_max": 80,
+        "description": "Cherry plants settle best when air humidity is 50% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Fruit Cracking",
+        "local_name": "Phal Phatna",
+        "type": "weather",
+        "severity": "high",
+        "icon": "droplet",
+        "solution": "Rain at ripening splits fruit. Use rain covers where possible and pick promptly."
+      },
+      {
+        "name": "Bacterial Canker",
+        "local_name": "Jeevanu Kankar",
+        "type": "bacterial_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Gummy cankers on branches. Prune in dry weather and spray copper."
+      },
+      {
+        "name": "Birds",
+        "local_name": "Pakshi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Birds eat ripe fruit. Use nets in the last weeks before harvest."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant pollinizer varieties",
+        "description": "Most sweet cherries need a partner variety.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Pick with stalks",
+        "description": "Stalk-on cherries keep longer.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      },
+      {
+        "title": "Keep cool after picking",
+        "description": "Move fruit to a cool place within hours.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "calendar"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Long-lived orchard",
+        "Suits deep loam"
+      ],
+      "economic": [
+        "Premium fruit",
+        "Short season, high price"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CITH temperate fruit material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "almond",
+    "name_en": "Almond",
+    "name_local": {
+      "hi": "बादाम",
+      "mr": "बदाम"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "hill",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.5,
+    "soil_ph_max": 8.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 80000,
+    "expected_yield_per_acre": 4,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Nuts keep for a year; improved varieties yield far more than old seedling trees.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 30,
+        "tolerable_min": 3,
+        "tolerable_max": 35,
+        "description": "Almond plants settle best when the temperature stays between 15°C and 30°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Almond plants settle best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 35,
+        "ideal_max": 55,
+        "tolerable_min": 25,
+        "tolerable_max": 70,
+        "description": "Almond plants settle best when air humidity is 35% to 55%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Spring Frost",
+        "local_name": "Paala",
+        "type": "weather",
+        "severity": "high",
+        "icon": "droplet",
+        "solution": "Early flowers are killed by frost. Choose late-blooming varieties."
+      },
+      {
+        "name": "Shot Hole",
+        "local_name": "Chhed Rog",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Holes in leaves and spots on hulls. Spray copper after leaf fall."
+      },
+      {
+        "name": "Mites",
+        "local_name": "Mite",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Leaves turn bronze in dry weather. Spray wettable sulphur."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant two varieties together",
+        "description": "Almonds need cross-pollination; keep bee boxes at bloom.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Harvest when hulls split",
+        "description": "Dry nuts in the sun before storing.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "sun"
+      },
+      {
+        "title": "Water in fruit growth",
+        "description": "Irrigate in April-June on dry slopes.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Deep roots hold dry slopes",
+        "Long-lived"
+      ],
+      "economic": [
+        "Nuts store well",
+        "Strong demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CITH temperate nut material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "walnut",
+    "name_en": "Walnut",
+    "name_local": {
+      "hi": "अखरोट",
+      "mr": "अक्रोड"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 6,
+    "suitable_soil_types": [
+      "hill",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.5,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 60000,
+    "expected_yield_per_acre": 8,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Grafted varieties bear earlier and give lighter, paper-shell nuts that sell better.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 28,
+        "tolerable_min": 3,
+        "tolerable_max": 34,
+        "description": "Walnut plants settle best when the temperature stays between 15°C and 28°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 45,
+        "description": "Walnut plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 45,
+        "ideal_max": 70,
+        "tolerable_min": 35,
+        "tolerable_max": 80,
+        "description": "Walnut plants settle best when air humidity is 45% to 70%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Walnut Blight",
+        "local_name": "Jhulsa",
+        "type": "bacterial_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Black spots on nuts and shoots in wet springs. Spray copper at bud break and after rain."
+      },
+      {
+        "name": "Anthracnose",
+        "local_name": "Patti Dhabba",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Brown spots and early leaf fall. Clear fallen leaves and spray mancozeb."
+      },
+      {
+        "name": "Codling Moth",
+        "local_name": "Phal Chhedak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Larvae bore into nuts. Use pheromone traps and remove fallen nuts."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant grafted trees",
+        "description": "Grafts bear in 5 to 6 years, seedlings take much longer.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Space trees 10 to 12 m apart",
+        "description": "Walnut trees grow very large.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "ruler"
+      },
+      {
+        "title": "Hull and dry nuts quickly",
+        "description": "Quick drying keeps kernels light coloured.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "sun"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Large trees protect slopes",
+        "Very long-lived"
+      ],
+      "economic": [
+        "Nuts store well",
+        "Kashmir walnut has a strong market"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CITH temperate nut material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "hazelnut",
+    "name_en": "Hazelnut",
+    "name_local": {
+      "hi": "हेज़लनट",
+      "mr": "हेझलनट"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 5,
+    "suitable_soil_types": [
+      "hill"
+    ],
+    "soil_texture": [
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 80000,
+    "expected_yield_per_acre": 5,
+    "yield_unit": "quintal",
+    "profit_potential": "low",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "No organised market in India yet; treat as a trial crop.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 25,
+        "tolerable_min": 3,
+        "tolerable_max": 30,
+        "description": "Hazelnut plants settle best when the temperature stays between 15°C and 25°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Hazelnut plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Hazelnut plants settle best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Big Bud Mite",
+        "local_name": "Kali Mite",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Buds swell and fail to open. Remove swollen buds in winter."
+      },
+      {
+        "name": "Bacterial Blight",
+        "local_name": "Jhulsa",
+        "type": "bacterial_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Shoot tips die back. Prune affected shoots and spray copper."
+      },
+      {
+        "name": "Squirrels and Birds",
+        "local_name": "Gilahri",
+        "type": "insect_pest",
+        "severity": "low",
+        "icon": "bug",
+        "solution": "Animals take nuts before harvest. Pick promptly."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Treat as a trial first",
+        "description": "Plant a few trees before a full orchard.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Plant two varieties",
+        "description": "Hazels need cross-pollination.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Collect nuts as they fall",
+        "description": "Dry before storing.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Bushy cover holds slopes",
+        "Long-lived"
+      ],
+      "economic": [
+        "Imported nut with high price",
+        "No local market yet"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from general hazelnut agronomy. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "chestnut",
+    "name_en": "Chestnut",
+    "name_local": {
+      "hi": "शाहबलूत",
+      "mr": "चेस्टनट"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 6,
+    "suitable_soil_types": [
+      "hill"
+    ],
+    "soil_texture": [
+      "sandy_loam",
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.0,
+    "soil_ph_max": 6.5,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 50000,
+    "expected_yield_per_acre": 8,
+    "yield_unit": "quintal",
+    "profit_potential": "low",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Small local market; sells as a roasted winter snack in hill towns.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 26,
+        "tolerable_min": 3,
+        "tolerable_max": 32,
+        "description": "Chestnut plants settle best when the temperature stays between 15°C and 26°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 25,
+        "tolerable_min": 0,
+        "tolerable_max": 50,
+        "description": "Chestnut plants settle best with 5 to 25 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Chestnut plants settle best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Chestnut Blight",
+        "local_name": "Kankar Rog",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Orange cankers girdle branches. Cut out cankers and burn them."
+      },
+      {
+        "name": "Ink Disease",
+        "local_name": "Jad Sadan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Roots rot in wet soil. Plant only on well-drained slopes."
+      },
+      {
+        "name": "Nut Weevil",
+        "local_name": "Ghun",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Grubs inside nuts. Collect fallen nuts quickly and destroy infested ones."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant on acidic, well-drained slopes",
+        "description": "Chestnuts fail in heavy or limy soil.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Plant two varieties",
+        "description": "Cross-pollination raises nut set.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Gather nuts every few days",
+        "description": "Fresh nuts sell better.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Large trees protect slopes",
+        "Suits acidic soils"
+      ],
+      "economic": [
+        "Low upkeep",
+        "Winter snack market"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from general chestnut agronomy. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "blackberry",
+    "name_en": "Blackberry",
+    "name_local": {
+      "hi": "ब्लैकबेरी",
+      "mr": "ब्लॅकबेरी"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "rabi"
+    ],
+    "years_to_first_harvest": 2,
+    "suitable_soil_types": [
+      "hill",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.5,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 120000,
+    "expected_yield_per_acre": 20,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "rabi",
+        "start": "12-15",
+        "end": "02-28"
+      }
+    ],
+    "profit_note": "Fresh berries need quick sale; jam and juice makers buy the rest.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 27,
+        "tolerable_min": 5,
+        "tolerable_max": 32,
+        "description": "Blackberry plants settle best when the temperature stays between 15°C and 27°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Blackberry plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Blackberry plants settle best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Grey Mould",
+        "local_name": "Dhusar Phaphund",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Berries rot with grey fuzz in wet weather. Pick often and remove rotten fruit."
+      },
+      {
+        "name": "Cane Borer",
+        "local_name": "Tana Chhedak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Cane tips wilt. Cut below the wilted part and burn."
+      },
+      {
+        "name": "Rust",
+        "local_name": "Ratua",
+        "type": "fungal_disease",
+        "severity": "low",
+        "icon": "leaf",
+        "solution": "Orange spots on leaves. Remove old canes after fruiting."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Train canes on wires",
+        "description": "A trellis makes picking easy.",
+        "priority": "high",
+        "category": "protection",
+        "icon": "ruler"
+      },
+      {
+        "title": "Remove fruited canes",
+        "description": "New canes fruit next year.",
+        "priority": "medium",
+        "category": "protection",
+        "icon": "scissors"
+      },
+      {
+        "title": "Pick every 2 to 3 days",
+        "description": "Ripe berries spoil fast.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Mulch keeps soil cool",
+        "Perennial cover"
+      ],
+      "economic": [
+        "Bears from year 2",
+        "Processing demand"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from general blackberry agronomy. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "blueberry",
+    "name_en": "Blueberry",
+    "name_local": {
+      "hi": "ब्लूबेरी",
+      "mr": "ब्लूबेरी"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 2,
+    "suitable_soil_types": [
+      "red",
+      "hill"
+    ],
+    "soil_texture": [
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 4.5,
+    "soil_ph_max": 5.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 800000,
+    "expected_yield_per_acre": 20,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "07-01",
+        "end": "09-30"
+      }
+    ],
+    "profit_note": "Very high price, but set-up cost is high; usually grown in pots or tunnels.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 27,
+        "tolerable_min": 5,
+        "tolerable_max": 33,
+        "description": "Blueberry plants settle best when the temperature stays between 15°C and 27°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 5,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Blueberry plants settle best with 5 to 20 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 55,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Blueberry plants settle best when air humidity is 55% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "High Soil pH",
+        "local_name": "Kharapan",
+        "type": "nutrient_deficiency",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Leaves turn yellow when soil is not acidic. Grow in acidic media and test pH often."
+      },
+      {
+        "name": "Root Rot",
+        "local_name": "Jad Sadan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Plants wilt in wet media. Use well-drained beds or pots."
+      },
+      {
+        "name": "Birds",
+        "local_name": "Pakshi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Birds eat ripe berries. Use nets at fruiting."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Start with expert advice",
+        "description": "Blueberry needs acidic media, fertigation and tunnels.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "calendar"
+      },
+      {
+        "title": "Use drip fertigation",
+        "description": "Small daily doses suit shallow roots.",
+        "priority": "high",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Pick fully blue berries",
+        "description": "They do not ripen after picking.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Grown in pots or beds",
+        "Mulch keeps roots cool"
+      ],
+      "economic": [
+        "Premium fruit",
+        "Import substitute"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from Indian blueberry trade reports. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "fig",
+    "name_en": "Fig",
+    "name_local": {
+      "hi": "अंजीर",
+      "mr": "अंजीर"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 2,
+    "suitable_soil_types": [
+      "black",
+      "red"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 8.0,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 70000,
+    "expected_yield_per_acre": 50,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "06-15",
+        "end": "08-31"
+      }
+    ],
+    "profit_note": "Purandar fig has a GI tag; fresh figs sell at high prices in cities.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 20,
+        "ideal_max": 32,
+        "tolerable_min": 10,
+        "tolerable_max": 40,
+        "description": "Fig plants settle best when the temperature stays between 20°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 15,
+        "tolerable_min": 0,
+        "tolerable_max": 40,
+        "description": "Fig plants settle best with up to 15 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 40,
+        "ideal_max": 60,
+        "tolerable_min": 30,
+        "tolerable_max": 75,
+        "description": "Fig plants settle best when air humidity is 40% to 60%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Fig Rust",
+        "local_name": "Ratua",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Brown spots and early leaf fall in humid weather. Spray mancozeb after rains."
+      },
+      {
+        "name": "Stem Borer",
+        "local_name": "Tana Chhedak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Holes with sawdust on stems. Plug holes with insecticide-soaked cotton."
+      },
+      {
+        "name": "Fruit Splitting",
+        "local_name": "Phal Phatna",
+        "type": "weather",
+        "severity": "medium",
+        "icon": "droplet",
+        "solution": "Fruit splits after rain at ripening. Time pruning so harvest misses the rains."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant rooted cuttings 4.5 m apart",
+        "description": "Poona fig (Brown Turkey type) is the main variety.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Prune to set the crop season",
+        "description": "Pruning timing decides when fruit comes.",
+        "priority": "high",
+        "category": "protection",
+        "icon": "scissors"
+      },
+      {
+        "title": "Water lightly in fruit growth",
+        "description": "Too much water lowers sweetness.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Grows on shallow dry soils",
+        "Low water need"
+      ],
+      "economic": [
+        "Bears in 2 years",
+        "Good city prices"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from fig packages of practices (Maharashtra, Karnataka). Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "date_palm",
+    "name_en": "Date palm",
+    "name_local": {
+      "hi": "खजूर",
+      "mr": "तारखा"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "desert_sandy",
+      "saline_alkaline"
+    ],
+    "soil_texture": [
+      "sand",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 7.0,
+    "soil_ph_max": 8.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 200000,
+    "expected_yield_per_acre": 40,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "07-01",
+        "end": "09-30"
+      }
+    ],
+    "profit_note": "Fresh Barhee dates (khalal stage) sell at a premium in June-July.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 25,
+        "ideal_max": 40,
+        "tolerable_min": 15,
+        "tolerable_max": 48,
+        "description": "Date palm plants settle best when the temperature stays between 25°C and 40°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 5,
+        "tolerable_min": 0,
+        "tolerable_max": 20,
+        "description": "Date palm plants settle best with up to 5 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 20,
+        "ideal_max": 45,
+        "tolerable_min": 10,
+        "tolerable_max": 60,
+        "description": "Date palm plants settle best when air humidity is 20% to 45%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Red Palm Weevil",
+        "local_name": "Lal Ghun",
+        "type": "insect_pest",
+        "severity": "high",
+        "icon": "bug",
+        "solution": "Grubs tunnel inside the trunk. Use pheromone traps and treat holes promptly."
+      },
+      {
+        "name": "Rain at Ripening",
+        "local_name": "Varsha Nuksan",
+        "type": "weather",
+        "severity": "high",
+        "icon": "droplet",
+        "solution": "Rain rots ripening fruit. Harvest at khalal stage before the monsoon."
+      },
+      {
+        "name": "Graphiola Leaf Spot",
+        "local_name": "Patti Dhabba",
+        "type": "fungal_disease",
+        "severity": "low",
+        "icon": "leaf",
+        "solution": "Small black spots on leaflets. Remove old fronds and spray copper."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant tissue-culture palms",
+        "description": "Use female palms of a known variety and 1 male per 50 females.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Hand-pollinate each bunch",
+        "description": "Dust male pollen on female flowers in spring.",
+        "priority": "high",
+        "category": "protection",
+        "icon": "leaf"
+      },
+      {
+        "title": "Use drip irrigation",
+        "description": "Dates need water but not waterlogging.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Tolerates salty soils",
+        "Shade for intercrops"
+      ],
+      "economic": [
+        "High value fruit",
+        "Long productive life"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR date palm material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "olive",
+    "name_en": "Olive",
+    "name_local": {
+      "hi": "जैतून",
+      "mr": "ऑलिव्ह"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "desert_sandy",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "sandy_loam",
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 7.0,
+    "soil_ph_max": 8.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 150000,
+    "expected_yield_per_acre": 10,
+    "yield_unit": "quintal",
+    "profit_potential": "low",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "07-01",
+        "end": "09-30"
+      }
+    ],
+    "profit_note": "Yields in India are still low; grow only with a processing tie-up.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 15,
+        "ideal_max": 32,
+        "tolerable_min": 5,
+        "tolerable_max": 42,
+        "description": "Olive plants settle best when the temperature stays between 15°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 30,
+        "description": "Olive plants settle best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 30,
+        "ideal_max": 55,
+        "tolerable_min": 20,
+        "tolerable_max": 70,
+        "description": "Olive plants settle best when air humidity is 30% to 55%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Poor Fruit Set",
+        "local_name": "Kam Phal",
+        "type": "weather",
+        "severity": "high",
+        "icon": "droplet",
+        "solution": "Warm winters cut flowering. Choose varieties proven in Rajasthan."
+      },
+      {
+        "name": "Olive Fruit Fly",
+        "local_name": "Phal Makkhi",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Maggots damage fruit. Use traps and early harvest."
+      },
+      {
+        "name": "Root Rot",
+        "local_name": "Jad Sadan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Trees decline in waterlogged soil. Plant on well-drained land with drip."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Use varieties tested locally",
+        "description": "Only some of the imported varieties fruit well in Rajasthan.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "seed"
+      },
+      {
+        "title": "Drip irrigate",
+        "description": "Steady water at flowering and fruit set.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Tie up with an oil unit",
+        "description": "Fruit must be processed within a day or two.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "calendar"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Grows on dry sandy soils",
+        "Long-lived tree"
+      ],
+      "economic": [
+        "Olive oil is imported",
+        "Government support in Rajasthan"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from Rajasthan olive programme reports. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "avocado",
+    "name_en": "Avocado",
+    "name_local": {
+      "hi": "एवोकैडो",
+      "mr": "एवोकॅडो"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "red",
+      "laterite",
+      "hill"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.0,
+    "soil_ph_max": 7.0,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 120000,
+    "expected_yield_per_acre": 30,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "06-01",
+        "end": "08-31"
+      }
+    ],
+    "profit_note": "Strong city demand and high prices; grafted plants of known varieties are essential.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 18,
+        "ideal_max": 28,
+        "tolerable_min": 12,
+        "tolerable_max": 33,
+        "description": "Avocado plants settle best when the temperature stays between 18°C and 28°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 20,
+        "ideal_max": 40,
+        "tolerable_min": 5,
+        "tolerable_max": 70,
+        "description": "Avocado plants settle best with 20 to 40 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 60,
+        "ideal_max": 80,
+        "tolerable_min": 45,
+        "tolerable_max": 90,
+        "description": "Avocado plants settle best when air humidity is 60% to 80%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Root Rot",
+        "local_name": "Jad Sadan",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Trees wilt and die in wet soil. Plant on mounds on well-drained slopes."
+      },
+      {
+        "name": "Anthracnose",
+        "local_name": "Phal Dhabba",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Dark spots on ripening fruit. Spray copper before harvest and handle fruit gently."
+      },
+      {
+        "name": "Hot Dry Wind",
+        "local_name": "Garam Hawa",
+        "type": "weather",
+        "severity": "medium",
+        "icon": "droplet",
+        "solution": "Flowers and young fruit drop in dry heat. Plant windbreaks and mulch."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant grafted trees on mounds",
+        "description": "Use varieties like Arka Supreme or Arka Coorg Ravi.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Feed in two splits",
+        "description": "Apply fertiliser in May-June and September-October.",
+        "priority": "medium",
+        "category": "fertilizer",
+        "icon": "fertilizer"
+      },
+      {
+        "title": "Pick mature, hard fruit",
+        "description": "Avocados ripen off the tree in 5 to 7 days.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits in coffee and spice gardens",
+        "Long-lived"
+      ],
+      "economic": [
+        "Premium fruit",
+        "Import substitute"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR avocado material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "grapefruit",
+    "name_en": "Grapefruit",
+    "name_local": {
+      "hi": "चकोतरा",
+      "mr": "ग्रेपफ्रूट"
+    },
+    "family": "Fruit",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 4,
+    "suitable_soil_types": [
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "sandy_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.0,
+    "soil_ph_max": 7.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 60000,
+    "expected_yield_per_acre": 60,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "07-01",
+        "end": "09-15"
+      }
+    ],
+    "profit_note": "Small but growing demand from juice makers and city markets.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 20,
+        "ideal_max": 32,
+        "tolerable_min": 10,
+        "tolerable_max": 40,
+        "description": "Grapefruit plants settle best when the temperature stays between 20°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 10,
+        "ideal_max": 30,
+        "tolerable_min": 0,
+        "tolerable_max": 60,
+        "description": "Grapefruit plants settle best with 10 to 30 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 50,
+        "ideal_max": 75,
+        "tolerable_min": 40,
+        "tolerable_max": 85,
+        "description": "Grapefruit plants settle best when air humidity is 50% to 75%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Citrus Canker",
+        "local_name": "Kankar",
+        "type": "bacterial_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Raised corky spots on leaves and fruit. Prune affected twigs and spray copper."
+      },
+      {
+        "name": "Citrus Psylla",
+        "local_name": "Silla",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Insects on new flush spread greening. Spray at each new flush."
+      },
+      {
+        "name": "Gummosis",
+        "local_name": "Gond Rog",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Gum oozes from the trunk base. Keep water away from the trunk."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant budded plants 6 m apart",
+        "description": "Use disease-free certified nursery plants.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Ring basin irrigation",
+        "description": "Keep water off the trunk.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Harvest at full colour",
+        "description": "Citrus does not ripen after picking.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "basket"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Long-lived orchard",
+        "Suits deep loam"
+      ],
+      "economic": [
+        "Juice demand",
+        "Stores longer than oranges"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR citrus material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "cacao",
+    "name_en": "Cacao",
+    "name_local": {
+      "hi": "कोको (Cacao)",
+      "mr": "कोको (कोको)"
+    },
+    "family": "Plantation",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 3,
+    "suitable_soil_types": [
+      "laterite",
+      "red",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.5,
+    "soil_ph_max": 7.0,
+    "water_requirement": "high",
+    "cost_per_acre_inr": 50000,
+    "expected_yield_per_acre": 3,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "06-01",
+        "end": "08-31"
+      }
+    ],
+    "profit_note": "Extra income from the same coconut or arecanut garden; chocolate makers buy dry beans.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 22,
+        "ideal_max": 32,
+        "tolerable_min": 15,
+        "tolerable_max": 36,
+        "description": "Cacao plants settle best when the temperature stays between 22°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 25,
+        "ideal_max": 50,
+        "tolerable_min": 10,
+        "tolerable_max": 80,
+        "description": "Cacao plants settle best with 25 to 50 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 70,
+        "ideal_max": 90,
+        "tolerable_min": 55,
+        "tolerable_max": 95,
+        "description": "Cacao plants settle best when air humidity is 70% to 90%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Black Pod Rot",
+        "local_name": "Kali Phali Sadan",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Pods turn black and rot in the monsoon. Remove rotten pods and spray Bordeaux mixture."
+      },
+      {
+        "name": "Tea Mosquito Bug",
+        "local_name": "Chai Machhar",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Black lesions on pods and shoots. Spray at first damage."
+      },
+      {
+        "name": "Squirrels and Rats",
+        "local_name": "Gilahri",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Animals chew pods. Use rat guards and harvest ripe pods quickly."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant under coconut or arecanut",
+        "description": "Cacao needs 50% shade; plant one row between palm rows.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Water in the dry months",
+        "description": "Irrigate every 7 to 10 days from December to May.",
+        "priority": "high",
+        "category": "irrigation",
+        "icon": "droplet"
+      },
+      {
+        "title": "Ferment and dry beans properly",
+        "description": "Good fermentation raises the price.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "sun"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Leaf litter builds soil",
+        "Uses shade under palms"
+      ],
+      "economic": [
+        "Extra income from the same land",
+        "Assured buyers"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-CPCRI cocoa guide. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "clove",
+    "name_en": "Clove",
+    "name_local": {
+      "hi": "लौंग",
+      "mr": "लवंग"
+    },
+    "family": "Spice",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 6,
+    "suitable_soil_types": [
+      "laterite",
+      "red"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.0,
+    "soil_ph_max": 6.5,
+    "water_requirement": "high",
+    "cost_per_acre_inr": 80000,
+    "expected_yield_per_acre": 2,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "06-01",
+        "end": "07-31"
+      }
+    ],
+    "profit_note": "Dried buds fetch high prices; trees bear for decades.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 20,
+        "ideal_max": 30,
+        "tolerable_min": 15,
+        "tolerable_max": 35,
+        "description": "Clove plants settle best when the temperature stays between 20°C and 30°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 30,
+        "ideal_max": 60,
+        "tolerable_min": 10,
+        "tolerable_max": 90,
+        "description": "Clove plants settle best with 30 to 60 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 70,
+        "ideal_max": 90,
+        "tolerable_min": 55,
+        "tolerable_max": 95,
+        "description": "Clove plants settle best when air humidity is 70% to 90%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Leaf Rot",
+        "local_name": "Patti Sadan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Leaves rot in heavy monsoon. Spray Bordeaux mixture before the rains."
+      },
+      {
+        "name": "Stem Borer",
+        "local_name": "Tana Chhedak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Holes on the trunk. Clean and plug holes with insecticide paste."
+      },
+      {
+        "name": "Dry Spell",
+        "local_name": "Sookha",
+        "type": "weather",
+        "severity": "medium",
+        "icon": "droplet",
+        "solution": "Young plants die in dry months. Shade and water young plants."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant under partial shade",
+        "description": "Young clove plants need shade for 3 to 4 years.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Pick buds before they open",
+        "description": "Harvest when buds turn pink and dry in the sun.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "sun"
+      },
+      {
+        "title": "Mulch the basin",
+        "description": "Mulch keeps the shallow roots moist.",
+        "priority": "medium",
+        "category": "irrigation",
+        "icon": "leaf"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits in mixed spice gardens",
+        "Long-lived tree"
+      ],
+      "economic": [
+        "High value spice",
+        "Decades of yield"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-IISR clove material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "nutmeg",
+    "name_en": "Nutmeg",
+    "name_local": {
+      "hi": "जायफल",
+      "mr": "जायफळ"
+    },
+    "family": "Spice",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 6,
+    "suitable_soil_types": [
+      "laterite",
+      "alluvial"
+    ],
+    "soil_texture": [
+      "loam",
+      "clay_loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.0,
+    "soil_ph_max": 6.5,
+    "water_requirement": "high",
+    "cost_per_acre_inr": 80000,
+    "expected_yield_per_acre": 2,
+    "yield_unit": "quintal",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "06-01",
+        "end": "07-31"
+      }
+    ],
+    "profit_note": "Both the nut and the red mace sell; grafted female trees avoid barren male plants.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 22,
+        "ideal_max": 32,
+        "tolerable_min": 18,
+        "tolerable_max": 36,
+        "description": "Nutmeg plants settle best when the temperature stays between 22°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 30,
+        "ideal_max": 60,
+        "tolerable_min": 10,
+        "tolerable_max": 90,
+        "description": "Nutmeg plants settle best with 30 to 60 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 70,
+        "ideal_max": 90,
+        "tolerable_min": 55,
+        "tolerable_max": 95,
+        "description": "Nutmeg plants settle best when air humidity is 70% to 90%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Fruit Rot",
+        "local_name": "Phal Sadan",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Fruits split early and rot in the monsoon. Spray Bordeaux mixture before rains."
+      },
+      {
+        "name": "Dieback",
+        "local_name": "Shakha Sookhna",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Branches dry from the tip. Prune dry parts and paint cuts with Bordeaux paste."
+      },
+      {
+        "name": "Scale Insects",
+        "local_name": "Shalk Keet",
+        "type": "insect_pest",
+        "severity": "low",
+        "icon": "bug",
+        "solution": "Scales on leaves and twigs. Spray neem oil."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant grafted female trees",
+        "description": "Seedlings are half male and give no nuts.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Grow under partial shade",
+        "description": "Coconut or arecanut gardens suit nutmeg.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "leaf"
+      },
+      {
+        "title": "Separate mace on the day of picking",
+        "description": "Dry nut and mace separately.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "sun"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Fits in coconut gardens",
+        "Long-lived tree"
+      ],
+      "economic": [
+        "Two products: nut and mace",
+        "High value spice"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-IISR nutmeg material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "cinnamon",
+    "name_en": "Cinnamon",
+    "name_local": {
+      "hi": "दालचीनी",
+      "mr": "दालचिनी"
+    },
+    "family": "Spice",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 3,
+    "suitable_soil_types": [
+      "laterite",
+      "red"
+    ],
+    "soil_texture": [
+      "sandy_loam",
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 5.0,
+    "soil_ph_max": 6.5,
+    "water_requirement": "medium",
+    "cost_per_acre_inr": 40000,
+    "expected_yield_per_acre": 1.5,
+    "yield_unit": "quintal",
+    "profit_potential": "moderate",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "06-01",
+        "end": "07-31"
+      }
+    ],
+    "profit_note": "Quills sell to spice traders; leaf oil adds income.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 22,
+        "ideal_max": 32,
+        "tolerable_min": 15,
+        "tolerable_max": 36,
+        "description": "Cinnamon plants settle best when the temperature stays between 22°C and 32°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 20,
+        "ideal_max": 50,
+        "tolerable_min": 5,
+        "tolerable_max": 80,
+        "description": "Cinnamon plants settle best with 20 to 50 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 65,
+        "ideal_max": 85,
+        "tolerable_min": 50,
+        "tolerable_max": 95,
+        "description": "Cinnamon plants settle best when air humidity is 65% to 85%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Leaf Spot",
+        "local_name": "Patti Dhabba",
+        "type": "fungal_disease",
+        "severity": "medium",
+        "icon": "leaf",
+        "solution": "Brown spots on leaves. Spray Bordeaux mixture in the monsoon."
+      },
+      {
+        "name": "Leaf Miner",
+        "local_name": "Patti Surangak",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Blisters on young leaves. Spray neem at new flush."
+      },
+      {
+        "name": "Seedling Blight",
+        "local_name": "Paudh Jhulsa",
+        "type": "fungal_disease",
+        "severity": "low",
+        "icon": "leaf",
+        "solution": "Nursery seedlings die. Use sterilised nursery soil."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Coppice at 2 to 3 years",
+        "description": "Cut stems at ground level; new shoots give the bark.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "scissors"
+      },
+      {
+        "title": "Peel bark in the monsoon",
+        "description": "Bark peels easily when sap flows.",
+        "priority": "medium",
+        "category": "harvest",
+        "icon": "calendar"
+      },
+      {
+        "title": "Plant rooted cuttings",
+        "description": "Space 3 x 3 m.",
+        "priority": "medium",
+        "category": "sowing",
+        "icon": "sprout"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Suits poor laterite soils",
+        "Perennial cover"
+      ],
+      "economic": [
+        "Low upkeep",
+        "Regular harvest every year"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from ICAR-IISR cinnamon material. Needs agronomist review.",
+    "review_status": "ai_draft"
+  },
+  {
+    "crop_id": "saffron",
+    "name_en": "Saffron",
+    "name_local": {
+      "hi": "केसर",
+      "mr": "केशर"
+    },
+    "family": "Spice",
+    "crop_type": "perennial",
+    "seasons": [
+      "kharif"
+    ],
+    "years_to_first_harvest": 1,
+    "suitable_soil_types": [
+      "hill"
+    ],
+    "soil_texture": [
+      "loam"
+    ],
+    "soil_drainage": "well_drained",
+    "soil_ph_min": 6.5,
+    "soil_ph_max": 8.0,
+    "water_requirement": "low",
+    "cost_per_acre_inr": 250000,
+    "expected_yield_per_acre": 1.5,
+    "yield_unit": "kg",
+    "profit_potential": "high",
+    "sowing_windows": [
+      {
+        "season": "kharif",
+        "start": "08-01",
+        "end": "09-15"
+      }
+    ],
+    "profit_note": "Very high price per gram; corms multiply and serve for 4 to 5 years.",
+    "weather": [
+      {
+        "param": "temperature",
+        "title": "Temperature",
+        "icon": "thermometer",
+        "unit": "°C",
+        "ideal_min": 10,
+        "ideal_max": 20,
+        "tolerable_min": 0,
+        "tolerable_max": 25,
+        "description": "Saffron plants settle best when the temperature stays between 10°C and 20°C."
+      },
+      {
+        "param": "rainfall",
+        "title": "Rainfall Forecast",
+        "icon": "rain",
+        "unit": "mm/week",
+        "ideal_min": 0,
+        "ideal_max": 10,
+        "tolerable_min": 0,
+        "tolerable_max": 25,
+        "description": "Saffron plants settle best with up to 10 mm of rain in a week."
+      },
+      {
+        "param": "humidity",
+        "title": "Relative Humidity",
+        "icon": "humidity",
+        "unit": "%",
+        "ideal_min": 40,
+        "ideal_max": 60,
+        "tolerable_min": 30,
+        "tolerable_max": 70,
+        "description": "Saffron plants settle best when air humidity is 40% to 60%."
+      }
+    ],
+    "risks": [
+      {
+        "name": "Corm Rot",
+        "local_name": "Kand Sadan",
+        "type": "fungal_disease",
+        "severity": "high",
+        "icon": "leaf",
+        "solution": "Corms rot in wet soil. Use healthy corms dipped in fungicide and keep drainage open."
+      },
+      {
+        "name": "Rodents",
+        "local_name": "Choohe",
+        "type": "insect_pest",
+        "severity": "medium",
+        "icon": "bug",
+        "solution": "Rats and porcupines eat corms. Use traps and fencing."
+      },
+      {
+        "name": "Dry September",
+        "local_name": "Sookha",
+        "type": "weather",
+        "severity": "medium",
+        "icon": "droplet",
+        "solution": "Without September rain, flowering drops. Give one or two light irrigations."
+      }
+    ],
+    "tips": [
+      {
+        "title": "Plant large corms (over 30 g)",
+        "description": "Plant in August-September at high density.",
+        "priority": "high",
+        "category": "sowing",
+        "icon": "sprout"
+      },
+      {
+        "title": "Pick flowers every morning",
+        "description": "Separate red stigmas the same day and dry in shade.",
+        "priority": "high",
+        "category": "harvest",
+        "icon": "basket"
+      },
+      {
+        "title": "Lift and replant corms every 4 to 5 years",
+        "description": "This keeps the field productive.",
+        "priority": "medium",
+        "category": "protection",
+        "icon": "calendar"
+      }
+    ],
+    "soil_economic_benefits": {
+      "title": "Soil & Economic Benefits",
+      "soil": [
+        "Needs well-drained karewa soils",
+        "Low water need"
+      ],
+      "economic": [
+        "Highest value spice",
+        "GI-tagged Kashmir saffron"
+      ]
+    },
+    "hero_image_url": null,
+    "icon_url": null,
+    "is_active": true,
+    "data_source": "Draft from SKUAST saffron package of practices. Needs agronomist review.",
+    "review_status": "ai_draft"
   }
 ]

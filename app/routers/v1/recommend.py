@@ -13,7 +13,7 @@ from models import (
 )
 from services import SubscriptionService
 from services.cropCatalog import CropCatalog
-from utils.languages import SUPPORTED_LANGUAGES, canonical_lang
+from utils.languages import normalize_lang
 from utils.scoringEngine import CropScoringEngine
 
 logger = logging.getLogger("recommend_router")
@@ -44,17 +44,15 @@ async def post_recommend(
       scoring and confirmed after a report is successfully generated (rolled back if generation fails).
     - **Location**: `lat` & `lon` automatically resolve Agro-Climatic Zone and USDA Soil Texture.
     - **Language**: Translates crop names to requested language if available (`lang=hi`, `kn`, `ta`, etc.;
-      the legacy Hindi code `hn` and locale forms like `hi-IN` are also accepted).
+      the legacy Hindi code `hn` and locale forms like `hi-IN` are also accepted; any other code,
+      including the former `ur`/`ne`, gets English).
     - **Previous Crop**: Provide `previous_crop_code` (e.g. 'Wheat') or set `was_fallow=true` if land was barren.
     """
     upid = auth_payload["upid"]
 
-    lang_code = canonical_lang(lang)
-    if lang_code is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported language code '{lang}'. Supported codes: {list(SUPPORTED_LANGUAGES.keys())}",
-        )
+    # English for codes outside the 12 product languages, like every other
+    # endpoint: old apps may still send ur/ne, which this used to accept.
+    lang_code = normalize_lang(lang)
 
     previous_crop_family: Optional[str] = None
     if not payload.was_fallow:
@@ -65,13 +63,12 @@ async def post_recommend(
             )
         # Any spelling, Hindi/Marathi name or common alias of a catalog crop;
         # v1's contract still rejects a crop it can't place.
-        matched = await crop_catalog.find_scoring(payload.previous_crop_code)
-        if not matched:
+        previous_crop_family = await crop_catalog.find_family(payload.previous_crop_code)
+        if not previous_crop_family:
             raise HTTPException(
                 status_code=400,
                 detail=f"Previous crop '{payload.previous_crop_code}' not found in database. Use /api/v1/options to get valid crop names.",
             )
-        previous_crop_family = matched.family
 
     # Construct internal recommendation request
     internal_request = RecommendationRequest(

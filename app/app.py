@@ -41,7 +41,7 @@ def _warn_if_memory_broker() -> None:
 
 
 async def _seed_crop_reports() -> None:
-    """crop_reports holds the 104 crop info pages read by the wizard report
+    """crop_reports holds the 139 crop info pages read by the wizard report
     and /crops/{id}/report. Nothing in the deploy ran the seed script, so dev
     had none and every info page was missing. The seed upserts by crop_id, so
     running it on every start also picks up crops.json changes; the advisory

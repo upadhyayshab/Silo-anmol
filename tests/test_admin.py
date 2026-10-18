@@ -34,11 +34,8 @@ class TestAdminEndpoints(unittest.TestCase):
         self.assertIn("scopes", response.json())
         return response.json()
 
-    # Known bug: the pinned SharedBackend (843ac1d) raises IndexError from
-    # fetch_one when the key has no entity link, so revoke returns 500. Fix by
-    # moving SharedBackend to a commit whose fetch_one raises its 404 (as
-    # Agro's 1e6bd7f does); then remove this marker.
-    @unittest.expectedFailure
+    # Returned 500 on SharedBackend 843ac1d (fetch_one IndexError); fixed by
+    # pinning 1e6bd7f, the commit Agro uses.
     def test_revoke_api_key(self):
         r1 = self.test_generate_api_key()
         response = client.delete(f"/admin/revoke-api-key/{r1['uid']}",

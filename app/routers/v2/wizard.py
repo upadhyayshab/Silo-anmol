@@ -12,6 +12,7 @@ from models.wizardModels import (
 from services.agroInternalService import AgroInternalService, AgroUnavailableError
 from services.cropCatalog import CropCatalog, crop_slug
 from utils.languages import normalize_lang
+from utils.farmerText import suitability_reason
 from utils.matchReasons import match_reasons
 from utils.wizardTranslations import OPTION_LABELS, QUESTION_LABELS
 
@@ -60,6 +61,10 @@ def _get_catalog() -> CropCatalog:
     return _catalog
 
 
+# Farm Monitoring's crop list (names in the farmer's language and images):
+# the same picker in both features. Every crop on it is understood here.
+CROP_LIST_ENDPOINT = "/api/v2/{userId}/crops"
+
 ALL_QUESTIONS: list[WizardQuestion] = [
     WizardQuestion(id="location", type="map_pin", label="Where is your farm?", required=True),
     WizardQuestion(
@@ -77,7 +82,7 @@ ALL_QUESTIONS: list[WizardQuestion] = [
     ),
     WizardQuestion(
         id="crop", type="search", label="Which crop is growing?", required=False,
-        search_endpoint="/api/v6/crops",
+        search_endpoint="/api/v6/crops", options_endpoint=CROP_LIST_ENDPOINT,
         depends_on={"field": "has_active_crop", "value": "Yes"},
     ),
     WizardQuestion(
@@ -88,7 +93,7 @@ ALL_QUESTIONS: list[WizardQuestion] = [
     # a crop now is also asked what grew before it.
     WizardQuestion(
         id="previous_crop", type="search", label="What was grown here before?", required=False,
-        search_endpoint="/api/v6/crops",
+        search_endpoint="/api/v6/crops", options_endpoint=CROP_LIST_ENDPOINT,
     ),
     WizardQuestion(
         id="irrigation", type="multi_select", label="How do you water this field?",
@@ -368,15 +373,13 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
         rotation_crop_name = answers.previous_crop or (farm.get("previous_crop") if farm else None)
     was_fallow = rotation_crop_name is None
 
-    # Agro's crop list is far larger than the 104 scored crops, so a name the
-    # catalog can't place drops the rotation factor instead of failing.
+    # Every crop on Agro's list has a family except Mushrooms (grown indoors);
+    # a name the catalog can't place drops the rotation factor instead of failing.
     previous_crop_family = None
     rotation_unknown = False
     if not was_fallow:
-        scoring_row = await catalog.find_scoring(rotation_crop_name)
-        if scoring_row is not None:
-            previous_crop_family = scoring_row.family
-        else:
+        previous_crop_family = await catalog.find_family(rotation_crop_name)
+        if previous_crop_family is None:
             rotation_unknown = True
             logger.info(f"rotation crop '{rotation_crop_name}' not in the crop catalog; rotation factor skipped")
 
@@ -450,6 +453,10 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
 
     recommendations = []
     top_crop_id = None
+    previous_label = rotation_crop_name
+    if rotation_crop_name and lang_code != "en":
+        previous_master = await catalog.find_report(rotation_crop_name)
+        previous_label = (await catalog.local_name(previous_master, lang_code) if previous_master else None) or rotation_crop_name
     for i, r in enumerate(response.results):
         master = await catalog.find_report(r.crop)
         crop_id = master.crop_id if master else crop_slug(r.crop)
@@ -463,8 +470,8 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
             duration_days=master.duration_days if master else None,
             years_to_first_harvest=float(master.years_to_first_harvest) if master and master.years_to_first_harvest else None,
             water_requirement=master.water_requirement if master else None,
-            reason=f"Suitability {r.suitability_pct:.0f}% for {season.title()} season.",
-            match_reasons=match_reasons([f.model_dump() for f in r.factors], season, rotation_crop_name),
+            reason=suitability_reason(r.suitability_pct, season, lang_code),
+            match_reasons=match_reasons([f.model_dump() for f in r.factors], season, previous_label, lang=lang_code),
         ))
 
     result = WizardSubmitResponse(

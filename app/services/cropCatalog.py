@@ -1,6 +1,6 @@
-"""In-memory lookup over the two 104-crop catalogs: `crop_reports` (dossiers,
-`name_local` translations for hi/mr) and `crops` (scoring rows, `family`, and
-names in all 13 supported languages).
+"""In-memory lookup over the two crop catalogs (139 crops since 2026-10-18):
+`crop_reports` (dossiers, `name_local` translations for hi/mr) and `crops`
+(scoring rows, `family`, and names in all 13 supported languages).
 
 The two catalogs spell 7 crops differently ('Lime/lemon' vs 'Lime / Lemon',
 'Rajma' vs 'Rajma (Kidney Bean)', ...), and callers pass names from three
@@ -32,7 +32,22 @@ _ALIASES = {
     "lemon": "lime_lemon", "chili_fresh": "chilli", "chili_dry": "chilli", "cashew_nuts": "cashew",
     "areca": "arecanut", "cassava": "tapioca", "castor_bean": "castor", "alfalfa": "lucerne",
     "pea_dry": "field_pea", "beans_dry": "rajma",
+    # Agro names that cover two of our crops: the common one is meant
+    # (product decision 2026-10-18).
+    "fenugreek": "fenugreek_leaf", "orange": "sweet_orange",
+    # Agro names for crops we have under another name: cantaloupe is
+    # muskmelon (खरबूजा); Agro shows "anise seeds" as सौंफ (fennel) and
+    # "gooseberry" as amla (ನೆಲ್ಲಿಕಾಯಿ) in most languages.
+    "cantaloupe": "muskmelon", "anise_seeds": "fennel", "gooseberry": "amla",
+    "beet_sugar": "sugar_beet", "blackberries": "blackberry", "dates": "date_palm", "cocoa": "cacao",
 }
+
+# Crops Agro lists that we deliberately don't recommend, keyed by slug ->
+# family, so a farmer who grew one still gets the rotation factor. Hemp needs
+# a cannabis licence (NDPS Act); abaca has no market in India (product
+# decision 2026-10-18). Mushrooms aren't listed: they're grown indoors, so
+# field rotation doesn't apply and the factor is skipped.
+_INPUT_ONLY_FAMILIES = {"hemp": "Fibre", "abaca": "Fibre"}
 
 # crops-table column -> language code ("name_hn" holds Hindi, ISO "hi").
 _NAME_COLUMNS = {
@@ -189,6 +204,14 @@ class CropCatalog:
         if report is None:
             return None
         return self._lookup(self._scoring_index, [report.crop_id.lower(), *_query_keys(report.name_en)])
+
+    async def find_family(self, name: Optional[str]) -> Optional[str]:
+        """Crop family for the rotation factor: from the crop's scoring row,
+        else from the crops we list but don't recommend; None when unknown."""
+        row = await self.find_scoring(name)
+        if row is not None:
+            return row.family
+        return next((_INPUT_ONLY_FAMILIES[k] for k in _query_keys(name or "") if k in _INPUT_ONLY_FAMILIES), None)
 
     async def local_names(self, report_row: Any) -> dict[str, str]:
         """The crop's name in every language we have: crops.json's curated

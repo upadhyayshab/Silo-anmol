@@ -20,16 +20,15 @@ from models.recommendationModels import (
     RecommendationRequest, RecommendationResponse, CropRecommendation, FactorScore,
 )
 from services.locationService import LocationService
-from utils.constants import RotationSituation, SOIL_TEXTURE_CLASSES
+from utils.constants import RotationSituation
+from utils.farmerText import note, soil_name
 from utils.languages import crop_name_column
 from utils.soilTexture import get_soil_texture_lookup
 
 logger = logging.getLogger("scoring_engine")
-SOIL_UNAVAILABLE_NOTE = "Soil data is unavailable right now. Soil factor skipped."
+SOIL_UNAVAILABLE_NOTE = note("soil_unavailable")
 
-ZONE_SKIPPED_NOTE = (
-    "Zone hard-filter skipped: no coordinates provided."
-)
+ZONE_SKIPPED_NOTE = note("zone_skipped")
 
 
 class CropScoringEngine:
@@ -86,29 +85,27 @@ class CropScoringEngine:
         rows = await self.zone_manager.fetch_all(limit=0, filters={"zone": zone})
         return {row.crop_uid: row.score for row in rows.items}
 
-    async def _detect_soil_class(self, lat: float, lon: float, notes: list[str]) -> int:
+    async def _detect_soil_class(self, lat: float, lon: float, notes: list[str], lang: str = "en") -> int:
         """Run ISRIC raster lookup in a thread (rasterio is synchronous).
         Returns the detected USDA soil class (0 = no data / skip)."""
         try:
             lookup = get_soil_texture_lookup()
             result = await asyncio.to_thread(lookup.get_texture, lat, lon)
             if result.status == "ok" and result.soil_class:
-                label = SOIL_TEXTURE_CLASSES.get(result.soil_class, "Unknown")
-                notes.append(
-                    f"Soil texture auto-detected: {label} (Class {result.soil_class}) from coordinates."
-                )
+                label = soil_name(result.soil_class, lang)
+                notes.append(note("soil_detected", lang, label=label, cls=result.soil_class))
                 return result.soil_class
             elif result.status == "nodata":
-                notes.append("Soil texture: no data at these coordinates (road/water/urban). Soil factor skipped.")
+                notes.append(note("soil_nodata", lang))
                 return 0
             else:
                 # Notes reach the farmer's screen: the detail goes to the log.
                 logger.warning(f"soil texture lookup {result.status} at lat={lat} lon={lon}: {result.message}")
-                notes.append(SOIL_UNAVAILABLE_NOTE)
+                notes.append(note("soil_unavailable", lang))
                 return 0
         except Exception as exc:
             logger.error(f"soil texture engine error at lat={lat} lon={lon}: {exc}")
-            notes.append(SOIL_UNAVAILABLE_NOTE)
+            notes.append(note("soil_unavailable", lang))
             return 0
 
     async def recommend(
@@ -121,7 +118,7 @@ class CropScoringEngine:
 
         Args:
             request: Scoring inputs (soil_class may be 0 if auto_detect_soil=True).
-            lang: ISO 639-1 language code for crop name translation.
+            lang: ISO 639-1 language code for crop names, notes and the soil label.
             auto_detect_soil: If True, detect soil_class from request.lat/lon via ISRIC raster.
         """
         weights = await self._load_weights()
@@ -139,20 +136,20 @@ class CropScoringEngine:
         if has_coordinates:
             pincode = await self.location_service.get_pincode_from_coordinates(request.lat, request.lon)
             if not pincode and request.pincode:
-                notes.append(f"Pincode could not be resolved from coordinates; using provided pincode {request.pincode}.")
+                notes.append(note("pincode_fallback", lang, pincode=request.pincode))
         pincode = pincode or request.pincode
         if pincode:
             mapping = await self.pincode_manager.fetch_all(limit=1, filters={"pincode": pincode})
             if mapping.items:
                 zone = mapping.items[0].zone
                 zone_resolved = True
-                notes.append(f"Agro-climatic zone resolved to Zone {zone} (from pincode {pincode}).")
+                notes.append(note("zone_resolved", lang, zone=zone, pincode=pincode))
             else:
-                notes.append(f"Zone mapping not found for pincode {pincode}. Skipping zone filtering.")
+                notes.append(note("zone_not_found", lang, pincode=pincode))
         elif has_coordinates:
-            notes.append("Pincode could not be resolved from coordinates. Skipping zone filtering.")
+            notes.append(note("pincode_unresolved", lang))
         else:
-            notes.append(ZONE_SKIPPED_NOTE)
+            notes.append(note("zone_skipped", lang))
 
         # ── Soil auto-detection ───────────────────────────────────────────────
         soil_class = request.soil_class
@@ -160,9 +157,9 @@ class CropScoringEngine:
         soil_texture_label: Optional[str] = None
 
         if auto_detect_soil and request.lat is not None and request.lon is not None:
-            soil_class = await self._detect_soil_class(request.lat, request.lon, notes)
+            soil_class = await self._detect_soil_class(request.lat, request.lon, notes, lang)
             soil_class_detected = soil_class
-            soil_texture_label = SOIL_TEXTURE_CLASSES.get(soil_class, "Unknown")
+            soil_texture_label = soil_name(soil_class, lang)
 
         # ── Load scoring tables ───────────────────────────────────────────────
         season_scores = await self._load_season_scores(request.season)
@@ -183,7 +180,7 @@ class CropScoringEngine:
         # denominator instead of failing the request.
         rotation_applicable = not request.rotation_unknown
         if not rotation_applicable:
-            notes.append("Previous crop not recognised; rotation factor skipped.")
+            notes.append(note("rotation_unknown", lang))
         applicable_factors = ["SEASON", "WATER", "BUDGET"]
         if rotation_applicable:
             applicable_factors.append("ROTATION")

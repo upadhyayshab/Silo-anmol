@@ -12,6 +12,7 @@ from models.reportModels import (
     RecommendedCropSummaryItem, WeatherMetric,
 )
 from services.cropCatalog import CropCatalog, crop_slug
+from utils.farmerText import suitability_reason
 from utils.languages import normalize_lang
 from utils.matchReasons import match_reasons
 
@@ -64,9 +65,8 @@ class CropReportService:
 
     async def get_or_create_unified_report(
         self, recommendation_id: str, user_id: str, farm_id: str | None = None,
-        lang: str = "en", focus_crop_id: str | None = None,
+        lang: str | None = None, focus_crop_id: str | None = None,
     ) -> UnifiedCropReportResponse:
-        lang = normalize_lang(lang)
         runs = await self.user_crop_report_manager.fetch_all(
             limit=1, filters={"recommendation_id": recommendation_id, "user_id": user_id},
         )
@@ -74,6 +74,9 @@ class CropReportService:
             raise ValueError(f"No recommendation run '{recommendation_id}' for user '{user_id}'")
         run = runs.items[0]
         report_data = run.report_data or {}
+        # No ?lang: the language the farmer ran the wizard in.
+        lang = normalize_lang(lang or getattr(run, "language", None))
+        previous_crop = await self._local_crop_name(report_data.get("previous_crop"), lang)
 
         ranked = report_data.get("results", [])
         dossiers: list[SingleCropDossier] = []
@@ -82,8 +85,8 @@ class CropReportService:
             if master_row is None:
                 logger.warning(f"No crop_reports row for scored crop '{crop_result['crop']}' — skipping dossier")
                 continue
-            reasons = match_reasons(crop_result.get("factors"), run.season, report_data.get("previous_crop")) or [
-                f"Suitability {crop_result['suitability_pct']:.0f}% for {run.season.title()} season."
+            reasons = match_reasons(crop_result.get("factors"), run.season, previous_crop, lang=lang) or [
+                suitability_reason(crop_result["suitability_pct"], run.season, lang)
             ]
             # is_top_pick is based on position within the *surviving* dossiers list, not the
             # original ranked index — if the true top-ranked crop has no crop_reports row,
@@ -144,9 +147,8 @@ class CropReportService:
 
     async def list_user_reports(
         self, user_id: str, farm_id: str | None = None,
-        recommendation_id: str | None = None, lang: str = "en",
+        recommendation_id: str | None = None, lang: str | None = None,
     ) -> UserReportsListResponse:
-        lang = normalize_lang(lang)
         filters = {"user_id": user_id}
         if farm_id:
             filters["farm_id"] = farm_id
@@ -157,10 +159,11 @@ class CropReportService:
 
         cards = []
         for run in runs.items:
+            run_lang = normalize_lang(lang or getattr(run, "language", None))
             summaries = []
             for i, r in enumerate(run.report_data.get("results", [])):
                 master_row = await self._find_master_row(r["crop"])
-                local_name = (await self.catalog.local_name(master_row, lang) if master_row else None) or r["crop"]
+                local_name = (await self.catalog.local_name(master_row, run_lang) if master_row else None) or r["crop"]
                 summaries.append(RecommendedCropSummaryItem(
                     crop_id=await self._resolve_crop_id(r["crop"]), crop_name=r["crop"],
                     crop_name_vernacular=local_name, match_score=round(r["suitability_pct"]),
@@ -168,7 +171,7 @@ class CropReportService:
                 ))
 
             top_master = await self._find_master_row(run.top_crop_name)
-            top_local_name = (await self.catalog.local_name(top_master, lang) if top_master else None) or run.top_crop_name
+            top_local_name = (await self.catalog.local_name(top_master, run_lang) if top_master else None) or run.top_crop_name
             thumbnail_url = (top_master.icon_url or top_master.hero_image_url) if top_master else None
 
             cards.append(UserReportSummaryCard(
@@ -180,6 +183,13 @@ class CropReportService:
                 created_at=run.created_at.isoformat() if run.created_at else "",
             ))
         return UserReportsListResponse(user_id=user_id, total=len(cards), reports=cards)
+
+    async def _local_crop_name(self, crop_name: str | None, lang: str) -> str | None:
+        """A crop's name in `lang` (for reason text), else as given."""
+        if not crop_name or lang == "en":
+            return crop_name
+        master_row = await self._find_master_row(crop_name)
+        return (await self.catalog.local_name(master_row, lang) if master_row else None) or crop_name
 
     async def _resolve_crop_id(self, crop_name: str) -> str:
         """The real crop_reports.crop_id doesn't always follow the naive

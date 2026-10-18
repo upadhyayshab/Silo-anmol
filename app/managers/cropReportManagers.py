@@ -25,7 +25,7 @@ class EventOutboxManager(GenericManager[EventOutboxSchema]):
 
 class CropReportSchema(BaseSchema):
     """Master agronomic dossier catalog — one row per crop, seeded from the
-    spec's crops.json (104 crops). `crop_id` is the natural-key slug from
+    crops.json (139 crops). `crop_id` is the natural-key slug from
     that file (e.g. 'amla'); `uid` (from BaseSchema) stays the real PK."""
     __tablename__ = "crop_reports"
 

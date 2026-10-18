@@ -81,7 +81,8 @@ class TestCropCatalog(IsolatedAsyncioTestCase):
         self.assertEqual((await catalog.find_report("सरसों")).crop_id, "mustard")
         self.assertEqual((await catalog.find_report("सरसों / राय")).crop_id, "mustard")
         self.assertEqual((await catalog.find_report("Paddy")).crop_id, "rice")  # common alias
-        self.assertIsNone(await catalog.find_report("Fenugreek"))  # ambiguous: leaf or seed
+        # Leaf or seed: the common one, by product decision (2026-10-18).
+        self.assertEqual((await catalog.find_report("Fenugreek")).crop_id, "fenugreek_leaf")
         self.assertIsNone(await catalog.find_report("Stevia"))
         self.assertEqual((await catalog.find_scoring("Lime / Lemon")).family, "Fruit")
         self.assertEqual((await catalog.find_scoring("गेहूं")).family, "Cereal")
@@ -194,7 +195,8 @@ class TestSubmitLanguageAndResponse(_SubmitHarness):
         self.assertEqual(top.crop_id, "mustard")
         self.assertTrue(top.is_top_pick)
         self.assertFalse(result.recommendations[1].is_top_pick)
-        self.assertEqual(top.match_reasons, ["Ideal for Rabi", "Fits your budget"])
+        # Reasons follow the farmer's language (2026-10-18).
+        self.assertEqual(top.match_reasons, ["रबी के लिए आदर्श", "आपके बजट में"])
         self.assertEqual(result.language, "hi")
         self.assertEqual(result.context.soil_texture_label, "Loam")
 
@@ -401,7 +403,7 @@ class TestReportService(IsolatedAsyncioTestCase):
         self.assertEqual(report.created_at, "2026-10-17T09:30:00+00:00")
         self.assertEqual(report.sowing_date, "2026-10-01")
         self.assertEqual(report.language, "hi")
-        self.assertEqual(report.crops[0].match_reasons, ["Ideal for Rabi"])
+        self.assertEqual(report.crops[0].match_reasons, ["रबी के लिए आदर्श"])
 
     async def test_reports_list_reads_hindi_for_hn_and_uppercase(self):
         for code in ("hn", "HI"):
@@ -455,18 +457,25 @@ class TestReportRoutes(IsolatedAsyncioTestCase):
 
 
 class TestLegacyRecommendLanguage(IsolatedAsyncioTestCase):
-    """F10 on v1: hi accepted, truly unknown codes still 400."""
+    """F10 on v1: hi accepted; other codes (incl. the dropped ur/ne) get English (2026-10-18)."""
 
-    async def test_unknown_code_still_400(self):
-        from models import PublicRecommendationRequest
+    @patch("routers.v1.recommend.history_manager")
+    @patch("routers.v1.recommend.subscription_service")
+    @patch("routers.v1.recommend.scoring_engine")
+    async def test_unknown_or_dropped_code_falls_back_to_english(self, mock_engine, mock_subscription, mock_history):
+        from models import PublicRecommendationRequest, RecommendationResponse
         from routers.v1.recommend import post_recommend
 
+        mock_subscription.check_quota = AsyncMock()
+        mock_subscription.confirm = AsyncMock(return_value=(True, {}))
+        mock_history.create = AsyncMock()
+        mock_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
         payload = PublicRecommendationRequest(
             subscription_id="s", season="RABI", water_methods=["DRIP"], budget_bucket="B1", was_fallow=True,
         )
-        with self.assertRaises(HTTPException) as ctx:
-            await post_recommend(payload, lat=18.5, lon=73.8, lang="xx", auth_payload={"upid": "u"})
-        self.assertEqual(ctx.exception.status_code, 400)
+        for code in ("xx", "ur", "ne"):
+            await post_recommend(payload, lat=18.5, lon=73.8, lang=code, auth_payload={"upid": "u"})
+            self.assertEqual(mock_engine.recommend.call_args.kwargs["lang"], "en", code)
 
     @patch("routers.v1.recommend.history_manager")
     @patch("routers.v1.recommend.subscription_service")

@@ -34,7 +34,7 @@ async def list_user_reports(
     farm_id: Optional[str] = Query(None),
     farmId: Annotated[Optional[str], Query(include_in_schema=False)] = None,  # spelling the integration spec uses
     recommendation_id: Optional[str] = Query(None),
-    lang: str = Query("en"),
+    lang: Optional[str] = Query(None, description="Defaults to the language the wizard was run in"),
     auth_payload: dict = Depends(require_jwt),
 ):
     if user_id != auth_payload.get("upid"):
@@ -51,7 +51,7 @@ async def list_user_reports(
 )
 async def get_recommendation_report(
     recommendation_id: str = Path(...),
-    lang: str = Query("en"),
+    lang: Optional[str] = Query(None, description="Defaults to the language the wizard was run in"),
     crop_id: Optional[str] = Query(None),
     farm_id: Optional[str] = Query(None),
     auth_payload: dict = Depends(require_jwt),
@@ -69,7 +69,7 @@ async def get_recommendation_report(
 async def get_recommendation_crop_report(
     recommendation_id: str = Path(...),
     crop_id: str = Path(..., description="crop_id from the submit response (names are also accepted)"),
-    lang: str = Query("en"),
+    lang: Optional[str] = Query(None, description="Defaults to the language the wizard was run in"),
     farm_id: Optional[str] = Query(None),
     auth_payload: dict = Depends(require_jwt),
 ):
