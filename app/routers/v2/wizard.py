@@ -12,7 +12,7 @@ from models.wizardModels import (
 from services.agroInternalService import AgroInternalService, AgroUnavailableError
 from services.cropCatalog import CropCatalog, crop_slug
 from utils.languages import normalize_lang
-from utils.farmerText import suitability_reason
+from utils.farmerText import note, season_name, suitability_reason
 from utils.matchReasons import match_reasons
 from utils.wizardTranslations import OPTION_LABELS, QUESTION_LABELS
 
@@ -25,9 +25,11 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from models.recommendationModels import RecommendationRequest
-from models.wizardModels import WizardContext, WizardRecommendationItem, WizardSubmitRequest, WizardSubmitResponse
+from models.wizardModels import (
+    SeasonSuggestion, WizardContext, WizardRecommendationItem, WizardSubmitRequest, WizardSubmitResponse,
+)
 from services.eventBrokerService import EventBrokerService
-from services.subscriptionService import SubscriptionService
+from services.subscriptionService import SubscriptionService, paywall_if_refused
 from utils.scoringEngine import CropScoringEngine
 
 router = APIRouter(tags=["Wizard v2"])
@@ -404,18 +406,21 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
     # the farmer's own, not-cancelled subscription with a credit left.
     await subscription_service.check_quota(upid, payload.subscription_id)
 
-    try:
-        response = await scoring_engine.recommend(rec_request, lang=lang_code, auto_detect_soil=True)
-    except Exception:
-        await subscription_service.rollback(upid, payload.subscription_id)
-        raise
+    # check_quota only reads the counter (the subscription service's verify
+    # reserves nothing); the credit is counted by confirm below, after a
+    # successful run. So a failed or empty run has nothing to undo: calling
+    # rollback here would subtract a credit the farmer never spent.
+    response = await scoring_engine.recommend(rec_request, lang=lang_code, auto_detect_soil=True)
 
-    # Usage consumed successfully -- confirm and log history. Both are
-    # best-effort: a subscription-service hiccup or a history-write failure
-    # shouldn't turn an already-generated recommendation into an error.
-    confirm_ok, _ = await subscription_service.confirm(upid, payload.subscription_id)
-    if not confirm_ok:
-        logger.error(f"subscription confirm failed for upid={upid} subscription_id={payload.subscription_id}")
+    if not response.results:
+        return await _no_crop_fits(payload, response, recommendation_id, season, irrigation, lang_code, upid)
+
+    # Count the credit before anything is saved or sent. If the service
+    # refuses (the last credit went to another phone meanwhile), this raises
+    # 480 and the farmer gets the paywall, not an unpaid result. A service
+    # outage is logged and the result still delivered.
+    confirmed, confirm_data = await subscription_service.confirm(upid, payload.subscription_id)
+    paywall_if_refused(confirmed, confirm_data, upid, payload.subscription_id)
 
     try:
         await history_manager.create(RecommendationHistorySchema(
@@ -521,6 +526,48 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
     )
 
     return result
+
+
+_SEASON_ANSWER = {"KHARIF": "Kharif", "RABI": "Rabi", "ZAID": "Summer", "LONGTERM": "Annual"}
+
+
+async def _no_crop_fits(
+    payload: WizardSubmitRequest, response, recommendation_id: str, season: str, irrigation: list[str],
+    lang_code: str, upid: str,
+) -> WizardSubmitResponse:
+    """No crop passed the zone, season and water filters (e.g. Summer in the
+    hills or Kerala). The farmer must not pay for an empty answer: the credit
+    isn't used and the response says why and which seasons do have crops
+    here. Nothing is saved and no event goes to Agro, so a retry with another
+    season (even with the same wizard_session_id) runs fresh and creates the
+    farm then. The credit is simply never confirmed (see _submit)."""
+    logger.info(f"no crop fits upid={upid} zone={response.zone} season={season} water={irrigation}; credit not used")
+
+    counts = await scoring_engine.crops_per_season(response.zone, irrigation)
+    labels = OPTION_LABELS.get(lang_code, {}).get("season", {})
+    english = {o.value: o.label for q in ALL_QUESTIONS if q.id == "season" for o in q.options}
+    suggestions = [
+        SeasonSuggestion(value=_SEASON_ANSWER[s], label=labels.get(_SEASON_ANSWER[s], english[_SEASON_ANSWER[s]]),
+                         crops_available=n)
+        for s, n in sorted(counts.items(), key=lambda item: -item[1])
+        if s != season and n > 0
+    ]
+    if suggestions:
+        reason = note("no_crop_fits", lang_code, season=season_name(season, lang_code))
+    else:
+        # No season works either: a gap in the crop data for this zone and
+        # watering, not something the farmer can change. Flag it for the data team.
+        logger.warning(f"crop data gap: no crop in any season for zone={response.zone} water={irrigation}")
+        reason = note("no_crop_in_area", lang_code)
+    return WizardSubmitResponse(
+        recommendations=[], recommendation_id=recommendation_id, farm_id=payload.farmId, language=lang_code,
+        credit_used=False, season_suggestions=suggestions,
+        context=WizardContext(
+            zone_filter_applied=response.zone_filter_applied,
+            soil_texture_label=response.soil_texture_label,
+            notes=[*response.notes, reason],
+        ),
+    )
 
 
 async def _publish_crop_guide_completed(

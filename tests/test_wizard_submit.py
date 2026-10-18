@@ -13,6 +13,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 from models.wizardModels import WizardAnswersPayload, WizardSubmitRequest
 
 
+def _one_crop():
+    """A scored crop: these tests exercise the normal (charged) path; an
+    empty result now refunds the credit instead (see TestNoCropFits)."""
+    from models.recommendationModels import CropRecommendation
+    return [CropRecommendation(crop="Wheat", family="Cereal", horizon="SEASONAL", total=10, max_total=20,
+                               suitability_pct=50, factors=[])]
+
+
 # Every submit now reads the crop catalog (crop_manager + crop_report_manager)
 # and checks user_crop_report_manager for a replayed wizard_session_id. Tests
 # that don't care get empty stand-ins instead of the real (table-less) DB;
@@ -165,7 +173,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         })
         # Active standing crop ("Rice") is now the rotation predecessor (DEF-04).
         mock_crop_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[MagicMock(family="Cereal", name_en="Rice")]))
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId="farm-1", subscription_id="sub_1",
@@ -209,7 +217,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         mock_sub_service.check_quota = AsyncMock()
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
         mock_event_broker.publish = AsyncMock(side_effect=RuntimeError("MSK unreachable"))
 
         req = WizardSubmitRequest(
@@ -238,7 +246,7 @@ class TestWizardSubmit(IsolatedAsyncioTestCase):
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",
@@ -271,7 +279,7 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
         mock_sub_service.check_quota = AsyncMock()
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_42",
@@ -309,9 +317,11 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
     @patch("routers.v2.wizard.subscription_service")
     @patch("routers.v2.wizard.event_broker")
     @patch("routers.v2.wizard.scoring_engine")
-    async def test_scoring_failure_rolls_back_quota_and_reraises(
+    async def test_scoring_failure_uses_no_credit_and_reraises(
         self, mock_scoring_engine, mock_event_broker, mock_sub_service, mock_history_manager
     ):
+        """verify reserves nothing, so nothing is confirmed or rolled back:
+        a rollback would subtract a credit the farmer never spent."""
         from routers.v2.wizard import submit_wizard
 
         mock_sub_service.check_quota = AsyncMock()
@@ -325,7 +335,7 @@ class TestWizardSubmitQuotaMetering(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
 
-        mock_sub_service.rollback.assert_awaited_once_with("usr_1", "sub_42")
+        mock_sub_service.rollback.assert_not_called()
         mock_sub_service.confirm.assert_not_called()
 
 
@@ -392,14 +402,14 @@ class TestWizardSubmitAuditTrail(IsolatedAsyncioTestCase):
         mock_sub_service.check_quota = AsyncMock()
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock(side_effect=RuntimeError("DB down"))
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_42",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         result = await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})  # must NOT raise
-        self.assertEqual(result.recommendations, [])
+        self.assertEqual([r.crop_name for r in result.recommendations], ["Wheat"])
 
 
 class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
@@ -433,7 +443,7 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
         tomato_crop = MagicMock(family="Solanaceae", name_en="Tomato")
         mock_crops_result = MagicMock(items=[tomato_crop])
         mock_crop_manager.fetch_all = AsyncMock(return_value=mock_crops_result)
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId="farm-441", subscription_id="sub_1",
@@ -471,7 +481,7 @@ class TestWizardSubmitRotationBaseline(IsolatedAsyncioTestCase):
         wheat_crop = MagicMock(family="Cereal", name_en="Wheat")
         mock_crops_result = MagicMock(items=[wheat_crop])
         mock_crop_manager.fetch_all = AsyncMock(return_value=mock_crops_result)
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId="farm-2", subscription_id="sub_1",
@@ -499,7 +509,7 @@ class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",
@@ -526,7 +536,7 @@ class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1", wizard_session_id="wiz-sess-abc",
@@ -553,7 +563,7 @@ class TestWizardSubmitPincodeAndSessionId(IsolatedAsyncioTestCase):
         mock_sub_service.confirm = AsyncMock(return_value=(True, {}))
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",
@@ -628,14 +638,14 @@ class TestWizardSubmitReportPreHydration(IsolatedAsyncioTestCase):
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
         mock_ucr_manager.create = AsyncMock(side_effect=RuntimeError("DB down"))
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",
             answers=WizardAnswersPayload(location=[73.0, 18.0], season="Rabi", irrigation=["Drip"]),
         )
         result = await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})  # must NOT raise
-        self.assertEqual(result.recommendations, [])
+        self.assertEqual([r.crop_name for r in result.recommendations], ["Wheat"])
 
 
 class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
@@ -661,7 +671,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
         mock_event_broker.publish = AsyncMock()
         mock_ucr_manager.create = AsyncMock()
         mock_agro_service.get_farm = AsyncMock(return_value={"farm_id": "farm-9", "center": [73.0, 18.0]})
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId="farm-9", subscription_id="sub_1",
@@ -701,7 +711,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
         mock_history_manager.create = AsyncMock()
         mock_event_broker.publish = AsyncMock()
         mock_ucr_manager.create = AsyncMock()
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",
@@ -739,7 +749,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
         mock_ucr_manager.create = AsyncMock()
         tomato_crop = MagicMock(family="Vegetable", name_en="Tomato")
         mock_crop_manager.fetch_all = AsyncMock(return_value=MagicMock(items=[tomato_crop]))
-        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_scoring_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
 
         req = WizardSubmitRequest(
             farmId=None, subscription_id="sub_1",

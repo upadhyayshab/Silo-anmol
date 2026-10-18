@@ -34,7 +34,9 @@ class EventBrokerService:
             raise NotImplementedError("SQS broker_type is not implemented")
 
         try:
-            await publish_event(topic, json.dumps(payload), key=key)
+            # Bounded wait: during a Kafka outage the farmer's submit is held
+            # only this long before the event goes to the outbox.
+            await publish_event(topic, json.dumps(payload), key=key, timeout=settings.kafka_publish_timeout_seconds)
         except Exception as exc:
             logger.error(f"Direct publish to {topic} failed, falling back to outbox: {exc}")
             await self.outbox_manager.create(EventOutboxSchema(

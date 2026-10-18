@@ -1,8 +1,11 @@
 """
-Crop-advisory subscription usage metering, per the 3-step flow:
-verify (before generating a report, blocks on failure) -> confirm (after a
-report is successfully generated, decrements quota) -> rollback (fallback if
-verify succeeded but generation then failed).
+Crop-advisory subscription usage metering. How the subscription service
+counts (its routers/v1/usage.py, checked 2026-10-18):
+- verify: read-only, "used + 1 <= limit?"; reserves nothing.
+- confirm: the only step that counts: used + 1, atomically, never past the limit.
+- rollback: used - 1, i.e. undoes a confirm.
+So: check_quota (verify) before scoring, confirm after crops are returned,
+and nothing on a failed or empty run. rollback is only for undoing a confirm.
 
 Endpoints: POST {SUBSCRIPTION_BASE_URL}/api/v1/subscriptions/active
            POST {SUBSCRIPTION_BASE_URL}/api/v1/usage/consume/{verify,confirm,rollback}
@@ -25,6 +28,19 @@ from config import get_settings
 logger = logging.getLogger("subscription_service")
 
 _UNAVAILABLE = "Subscription service is temporarily unavailable. Please try again."
+
+
+def paywall_if_refused(confirmed: bool, data: dict, upid: str, subscription_id: str) -> None:
+    """After confirm, for a result about to be delivered: raise 480 when the
+    service refused to count it (e.g. the last credit was used on another
+    phone between check_quota and confirm), so no unpaid result goes out.
+    An unreachable service is logged, not held against the farmer."""
+    if confirmed:
+        return
+    status = (data or {}).get("status")
+    if status is not None and 400 <= status < 500:
+        raise HTTPException(status_code=480, detail="limit exceeded, subscribe now")
+    logger.error(f"subscription confirm failed for upid={upid} subscription_id={subscription_id}: {data}")
 
 
 class SubscriptionService:
@@ -55,7 +71,7 @@ class SubscriptionService:
 
         body = {"action": "crop_advice", "subscription_id": subscription_id, "quantity": quantity}
         status, data = await self._post(f"/api/v1/usage/consume/{verb}", upid, json=body)
-        return status is not None and 200 <= status < 300, data
+        return status is not None and 200 <= status < 300, {"status": status, **data}
 
     async def check_quota(self, upid: str, subscription_id: str, quantity: int = 1) -> None:
         """Raises unless `subscription_id` is one of the farmer's own active
@@ -93,8 +109,9 @@ class SubscriptionService:
     async def confirm(self, upid: str, subscription_id: str, quantity: int = 1) -> tuple[bool, dict]:
         return await self._call("confirm", upid, subscription_id, quantity)
 
+
     async def rollback(self, upid: str, subscription_id: str, quantity: int = 1) -> tuple[bool, dict]:
         return await self._call("rollback", upid, subscription_id, quantity)
 
 
-__all__ = ["SubscriptionService"]
+__all__ = ["SubscriptionService", "paywall_if_refused"]

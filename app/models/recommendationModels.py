@@ -73,6 +73,7 @@ class CropRecommendation(BaseModel):
 
 class RecommendationResponse(BaseModel):
     zone_filter_applied: bool = False
+    zone: Optional[int] = Field(None, description="Agro-climatic zone (1-15) the zone filter used")
     soil_class_detected: Optional[int] = Field(None, description="USDA soil class auto-detected from coordinates")
     soil_texture_label: Optional[str] = Field(None, description="Human-readable soil texture label")
     notes: list[str] = Field(default_factory=list)

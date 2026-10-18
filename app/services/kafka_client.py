@@ -50,7 +50,10 @@ async def publish_event(topic: str, payload: str | bytes, key: str | None = None
     """One-shot publish: spins up a producer, sends, flushes, verifies delivery.
     Runs in a worker thread so the FastAPI event loop stays unblocked."""
     def _produce_sync() -> None:
-        producer = make_producer({"client.id": "crop-rec-publisher"})
+        # message.timeout.ms = our deadline: a message that missed it is
+        # dropped by the client, never sent late after the caller has already
+        # kept it in event_outbox (which would deliver it twice).
+        producer = make_producer({"client.id": "crop-rec-publisher", "message.timeout.ms": int(timeout * 1000)})
         delivery_error: Exception | None = None
 
         def _on_delivery(err: Any, msg: Any) -> None:

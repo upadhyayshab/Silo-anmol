@@ -53,6 +53,14 @@ SCORING_ROWS = [
 ]
 
 
+def _one_crop():
+    """A scored crop: these tests exercise the normal (charged) path; an
+    empty result now refunds the credit instead (see TestNoCropFits)."""
+    from models.recommendationModels import CropRecommendation
+    return [CropRecommendation(crop="Wheat", family="Cereal", horizon="SEASONAL", total=10, max_total=20,
+                               suitability_pct=50, factors=[])]
+
+
 class TestLanguages(TestCase):
     """F10"""
 
@@ -469,7 +477,7 @@ class TestLegacyRecommendLanguage(IsolatedAsyncioTestCase):
         mock_subscription.check_quota = AsyncMock()
         mock_subscription.confirm = AsyncMock(return_value=(True, {}))
         mock_history.create = AsyncMock()
-        mock_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
         payload = PublicRecommendationRequest(
             subscription_id="s", season="RABI", water_methods=["DRIP"], budget_bucket="B1", was_fallow=True,
         )
@@ -487,7 +495,7 @@ class TestLegacyRecommendLanguage(IsolatedAsyncioTestCase):
         mock_subscription.check_quota = AsyncMock()
         mock_subscription.confirm = AsyncMock(return_value=(True, {}))
         mock_history.create = AsyncMock()
-        mock_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=[]))
+        mock_engine.recommend = AsyncMock(return_value=RecommendationResponse(results=_one_crop()))
         payload = PublicRecommendationRequest(
             subscription_id="s", season="RABI", water_methods=["DRIP"], budget_bucket="B1", was_fallow=True,
         )

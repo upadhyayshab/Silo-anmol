@@ -108,6 +108,21 @@ class CropScoringEngine:
             notes.append(note("soil_unavailable", lang))
             return 0
 
+    async def crops_per_season(self, zone: Optional[int], water_methods: list[str]) -> dict[str, int]:
+        """How many crops pass the hard filters (zone, season, water) in each
+        season, for the same place and watering: what to suggest when the
+        chosen season has none."""
+        water_scores = await self._load_water_scores(water_methods)
+        zone_scores = await self._load_zone_scores(zone) if zone is not None else None
+        counts = {}
+        for season in ("KHARIF", "RABI", "ZAID", "LONGTERM"):
+            season_scores = await self._load_season_scores(season)
+            counts[season] = sum(
+                1 for uid, points in season_scores.items()
+                if points and water_scores.get(uid) and (zone_scores is None or zone_scores.get(uid))
+            )
+        return counts
+
     async def recommend(
         self,
         request: RecommendationRequest,
@@ -248,6 +263,7 @@ class CropScoringEngine:
 
         return RecommendationResponse(
             zone_filter_applied=zone_resolved,
+            zone=zone if zone_resolved else None,
             soil_class_detected=soil_class_detected,
             soil_texture_label=soil_texture_label,
             notes=notes,

@@ -88,3 +88,34 @@ class TestEventBrokerServiceKafkaMode(IsolatedAsyncioTestCase):
         service = EventBrokerService()
         with self.assertRaises(NotImplementedError):
             await service.publish("crop_guide_completed", {"event_id": "evt-1"})
+
+
+class TestEventBrokerPublishDeadline(IsolatedAsyncioTestCase):
+    @patch("services.eventBrokerService.get_settings")
+    @patch("services.eventBrokerService.publish_event", new_callable=AsyncMock)
+    async def test_kafka_publish_uses_the_short_configured_deadline(self, mock_publish, mock_get_settings):
+        from services.eventBrokerService import EventBrokerService
+        mock_get_settings.return_value.broker_type = "kafka"
+        mock_get_settings.return_value.kafka_publish_timeout_seconds = 3.0
+
+        service = EventBrokerService()
+        service.outbox_manager = AsyncMock()
+        await service.publish("crop_guide_completed", {"event_id": "evt-1"}, key="k1")
+
+        self.assertEqual(mock_publish.call_args.kwargs["timeout"], 3.0)
+        service.outbox_manager.create.assert_not_awaited()
+
+    @patch("services.eventBrokerService.get_settings")
+    @patch("services.eventBrokerService.publish_event", new_callable=AsyncMock)
+    async def test_missed_deadline_keeps_the_event_in_the_outbox(self, mock_publish, mock_get_settings):
+        from services.eventBrokerService import EventBrokerService
+        mock_get_settings.return_value.broker_type = "kafka"
+        mock_get_settings.return_value.kafka_publish_timeout_seconds = 3.0
+        mock_publish.side_effect = TimeoutError("Timed out flushing producer")
+
+        service = EventBrokerService()
+        service.outbox_manager = AsyncMock()
+        await service.publish("crop_guide_completed", {"event_id": "evt-1"}, key="k1")
+
+        saved = service.outbox_manager.create.call_args.args[0]
+        self.assertEqual((saved.status, saved.event_key, saved.payload), ("PENDING", "k1", {"event_id": "evt-1"}))

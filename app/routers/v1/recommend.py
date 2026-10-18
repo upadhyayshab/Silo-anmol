@@ -12,7 +12,9 @@ from models import (
     RecommendationResponse,
 )
 from services import SubscriptionService
+from services.subscriptionService import paywall_if_refused
 from services.cropCatalog import CropCatalog
+from utils.farmerText import note, season_name
 from utils.languages import normalize_lang
 from utils.scoringEngine import CropScoringEngine
 
@@ -41,7 +43,7 @@ async def post_recommend(
 
     - **Authentication**: Requires valid `x-access-jwt` header with `upid`.
     - **Subscription**: Requires a `subscription_id` with remaining usage; usage is verified before
-      scoring and confirmed after a report is successfully generated (rolled back if generation fails).
+      scoring and confirmed only after crops are returned (a failed or empty run uses no credit).
     - **Location**: `lat` & `lon` automatically resolve Agro-Climatic Zone and USDA Soil Texture.
     - **Language**: Translates crop names to requested language if available (`lang=hi`, `kn`, `ta`, etc.;
       the legacy Hindi code `hn` and locale forms like `hi-IN` are also accepted; any other code,
@@ -88,22 +90,26 @@ async def post_recommend(
     await subscription_service.check_quota(upid, payload.subscription_id)
 
     # Run recommendation with soil auto-detection and language translation
-    try:
-        response = await scoring_engine.recommend(
-            internal_request,
-            lang=lang_code,
-            auto_detect_soil=True,
-        )
-    except Exception:
-        await subscription_service.rollback(upid, payload.subscription_id)
-        raise
+    # verify reserves nothing; only confirm (below, on success) counts the
+    # credit, so a failed or empty run has nothing to roll back.
+    response = await scoring_engine.recommend(
+        internal_request,
+        lang=lang_code,
+        auto_detect_soil=True,
+    )
 
-    # Usage consumed successfully -- confirm and log history. Both are best-effort:
-    # a subscription-service hiccup or a history-write failure shouldn't turn an
-    # already-generated recommendation into an error for the caller.
-    confirm_ok, _ = await subscription_service.confirm(upid, payload.subscription_id)
-    if not confirm_ok:
-        logger.error(f"subscription confirm failed for upid={upid} subscription_id={payload.subscription_id}")
+    if not response.results:
+        # No crop passed the zone/season/water filters: an empty answer must
+        # not cost a credit, so it's never confirmed (same rule as the v2 wizard).
+        season = getattr(payload.season, "value", payload.season)
+        response.notes.append(note("no_crop_fits", lang_code, season=season_name(season, lang_code)))
+        return response
+
+    # Count the credit before saving; refused (another phone used the last
+    # one) -> 480 instead of an unpaid result. The history write below is
+    # best-effort.
+    confirmed, confirm_data = await subscription_service.confirm(upid, payload.subscription_id)
+    paywall_if_refused(confirmed, confirm_data, upid, payload.subscription_id)
 
     try:
         await history_manager.create(RecommendationHistorySchema(

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     agro_internal_base_url: str = os.getenv("AGRO_INTERNAL_BASE_URL", "")
     internal_service_secret: str = os.getenv("INTERNAL_SERVICE_SECRET", "")
     broker_type: str = os.getenv("BROKER_TYPE", "memory")  # memory | kafka | sqs
+    # How long the wizard submit waits for Kafka before keeping the event in
+    # event_outbox instead (the replayer delivers it later). The farmer waits
+    # this long during a Kafka outage, so keep it short.
+    kafka_publish_timeout_seconds: float = float(os.getenv("KAFKA_PUBLISH_TIMEOUT_SECONDS", "3"))
 
     class subservices:  # noqa
         pass

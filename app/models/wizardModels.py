@@ -108,16 +108,27 @@ class WizardContext(BaseModel):
     notes: List[str] = Field(default_factory=list)
 
 
+class SeasonSuggestion(BaseModel):
+    """A season that does have crops for this place and watering."""
+    value: str  # wizard answer value to send back: Kharif | Rabi | Summer | Annual
+    label: str  # in the farmer's language
+    crops_available: int
+
+
 class WizardSubmitResponse(BaseModel):
     recommendations: List[WizardRecommendationItem]
     recommendation_id: str
     farm_id: Optional[str] = None  # the farm this run is for; for a new farmer, the farm Agro is creating
     language: str = "en"
+    # False when no crop fit: the credit was given back and nothing was saved.
+    credit_used: bool = True
+    # Only when no crop fit: other seasons with crops here, most crops first.
+    season_suggestions: List[SeasonSuggestion] = Field(default_factory=list)
     context: Optional[WizardContext] = None
 
 
 __all__ = [
     "WizardQuestionOption", "WizardQuestion", "FarmContext", "WizardQuestionsResponse",
     "WizardAnswersPayload", "WizardSubmitRequest", "WizardRecommendationItem", "WizardContext",
-    "WizardSubmitResponse",
+    "SeasonSuggestion", "WizardSubmitResponse",
 ]
