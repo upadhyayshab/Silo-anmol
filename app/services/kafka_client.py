@@ -52,8 +52,15 @@ async def publish_event(topic: str, payload: str | bytes, key: str | None = None
     def _produce_sync() -> None:
         # message.timeout.ms = our deadline: a message that missed it is
         # dropped by the client, never sent late after the caller has already
-        # kept it in event_outbox (which would deliver it twice).
-        producer = make_producer({"client.id": "crop-rec-publisher", "message.timeout.ms": int(timeout * 1000)})
+        # kept it in event_outbox (which would deliver it twice). The connect
+        # attempt ends there too: librdkafka's default keeps a hung connect
+        # (an unreachable private broker) going for 30 s.
+        deadline_ms = int(timeout * 1000)
+        producer = make_producer({
+            "client.id": "crop-rec-publisher",
+            "message.timeout.ms": deadline_ms,
+            "socket.connection.setup.timeout.ms": max(deadline_ms, 1000),  # librdkafka's minimum
+        })
         delivery_error: Exception | None = None
 
         def _on_delivery(err: Any, msg: Any) -> None:
@@ -64,8 +71,18 @@ async def publish_event(topic: str, payload: str | bytes, key: str | None = None
         val_bytes = payload.encode("utf-8") if isinstance(payload, str) else payload
         key_bytes = key.encode("utf-8") if key is not None else None
 
-        producer.produce(topic=topic, value=val_bytes, key=key_bytes, on_delivery=_on_delivery)
-        remaining = producer.flush(timeout=timeout)
+        try:
+            producer.produce(topic=topic, value=val_bytes, key=key_bytes, on_delivery=_on_delivery)
+            remaining = producer.flush(timeout=timeout)
+            if remaining > 0:
+                # Given up: the caller keeps the event in event_outbox.
+                producer.purge()
+        finally:
+            # The exception raised below sits in a reference cycle with the
+            # executor's future, so this frame (and a producer it still held)
+            # would live until the next GC pass: a client reconnecting in the
+            # background, with its threads, after every failed publish.
+            del producer
         if remaining > 0:
             raise KafkaException(f"Timed out flushing producer ({remaining} message(s) un-flushed)")
         if delivery_error is not None:
