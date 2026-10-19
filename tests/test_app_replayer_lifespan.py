@@ -11,8 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
 
 
 class TestReplayerLifespan(IsolatedAsyncioTestCase):
+    @patch("app._outbox_replay_enabled", return_value=True)  # on ECS with BROKER_TYPE=kafka
     @patch("app.run_replay_loop")
-    async def test_lifespan_starts_and_cancels_replay_task(self, mock_run_replay_loop):
+    async def test_lifespan_starts_and_cancels_replay_task(self, mock_run_replay_loop, _enabled):
         import app as app_module
 
         # run_replay_loop normally never returns; make the mock behave the

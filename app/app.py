@@ -26,14 +26,30 @@ logger = logging.getLogger("app")
 CROPS_FILE = Path(__file__).resolve().parent / "data" / "crops.json"
 
 
+def _on_server() -> bool:
+    # ECS (Fargate platform 1.4+) sets ECS_CONTAINER_METADATA_URI_V4 in every
+    # container; nothing in our task definitions sets FARGATE.
+    return bool(os.getenv("ECS_CONTAINER_METADATA_URI_V4") or os.getenv("FARGATE"))
+
+
+def _outbox_replay_enabled() -> bool:
+    """Replay event_outbox only where Kafka is reachable. A laptop running this
+    service against the shared dev database used to replay dev's rows too: it
+    can't reach the private MSK brokers, so it spent their retries and marked
+    real events FAILED before the dev service could deliver them."""
+    if settings.broker_type != "kafka":
+        return False
+    flag = settings.outbox_replay_enabled.strip().lower()
+    if flag:
+        return flag in ("1", "true", "yes", "on")
+    return _on_server()
+
+
 def _warn_if_memory_broker() -> None:
     """BROKER_TYPE defaults to "memory", which logs CropGuideCompleted events
     and drops them -- no farm is ever created in Agro. That default once went
     to a deployed environment unnoticed; on a server it must be loud."""
-    # ECS (Fargate platform 1.4+) sets ECS_CONTAINER_METADATA_URI_V4 in every
-    # container; nothing in our task definitions sets FARGATE.
-    on_server = os.getenv("ECS_CONTAINER_METADATA_URI_V4") or os.getenv("FARGATE")
-    if settings.broker_type == "memory" and on_server:
+    if settings.broker_type == "memory" and _on_server():
         logger.critical(
             "BROKER_TYPE=memory on a deployed server: CropGuideCompleted events are dropped and "
             "Agro will never create wizard farms. Set BROKER_TYPE=kafka and MSK_BOOTSTRAP_SERVERS."
@@ -68,15 +84,20 @@ async def lifespan(_: FastAPI):
         await conn.run_sync(BaseSchema.metadata.create_all)
     await _seed_crop_reports()
 
-    replay_task = asyncio.create_task(run_replay_loop(outbox_manager))
+    replay_task = None
+    if _outbox_replay_enabled():
+        replay_task = asyncio.create_task(run_replay_loop(outbox_manager))
+    else:
+        logger.info("event_outbox replay is off here (it runs on ECS with BROKER_TYPE=kafka; OUTBOX_REPLAY_ENABLED=1 forces it)")
     try:
         yield
     finally:
-        replay_task.cancel()
-        try:
-            await replay_task
-        except asyncio.CancelledError:
-            pass
+        if replay_task is not None:
+            replay_task.cancel()
+            try:
+                await replay_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(lifespan=lifespan)

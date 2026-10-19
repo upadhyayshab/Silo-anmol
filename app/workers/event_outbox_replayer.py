@@ -25,13 +25,63 @@ this call site.
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 from managers import EventOutboxManager
 from services.kafka_client import publish_event
 
 logger = logging.getLogger("event_outbox_replayer")
 
-MAX_RETRIES = 5
+# A row is retried 1, 2, 4 and 8 minutes after its failures, then every 15
+# minutes, and given up only after GIVE_UP_AFTER. The old rule (5 tries, one a
+# minute) gave up after ~5 minutes: any longer Kafka outage left the farmer's
+# farm never created in Agro, with nothing retrying it.
+RETRY_BASE = timedelta(minutes=1)
+RETRY_CAP = timedelta(minutes=15)
+GIVE_UP_AFTER = timedelta(days=7)
+
+
+def _retry_delay(retry_count: int) -> timedelta:
+    if retry_count <= 0:
+        return timedelta(0)
+    # Exponent capped: over GIVE_UP_AFTER a row reaches ~700 tries, and
+    # timedelta * 2**699 overflows.
+    return min(RETRY_BASE * 2 ** min(retry_count - 1, 10), RETRY_CAP)
+
+
+def _utc(value) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _is_due(row, now: datetime) -> bool:
+    last_try = _utc(row.updated_at)
+    return last_try is None or now >= last_try + _retry_delay(row.retry_count or 0)
+
+
+def _expired(row, now: datetime) -> bool:
+    created = _utc(row.created_at)
+    return created is not None and now - created >= GIVE_UP_AFTER
+
+
+async def _replayable_rows(outbox_manager: EventOutboxManager, session, limit: int, now: datetime) -> list:
+    """PENDING rows, plus FAILED rows still inside GIVE_UP_AFTER: rows the old
+    5-try rule gave up on are delivered after all (Agro drops duplicates by
+    event_id). Oldest first; only rows whose backoff has elapsed."""
+    pending = await outbox_manager.fetch_all(
+        filters={"status": "PENDING"}, sorts=["-created_at"], limit=limit * 4, session=session,
+    )
+    failed = await outbox_manager.fetch_all(
+        filters={"status": "FAILED", "created_at": {"$gte": now - GIVE_UP_AFTER}},
+        sorts=["-created_at"], limit=limit, session=session,
+    )
+    rows, seen = [], set()
+    for row in [*pending.items, *failed.items]:
+        if row.uid not in seen and _is_due(row, now):
+            seen.add(row.uid)
+            rows.append(row)
+    return rows[:limit]
 
 
 async def _claim(outbox_manager: EventOutboxManager, row, session) -> bool:
@@ -55,10 +105,10 @@ async def _claim(outbox_manager: EventOutboxManager, row, session) -> bool:
 
 
 async def replay_pending_events(outbox_manager: EventOutboxManager, session, limit: int = 50) -> int:
-    pending = await outbox_manager.fetch_all(filters={"status": "PENDING"}, limit=limit, session=session)
+    now = datetime.now(timezone.utc)
     replayed = 0
 
-    for row in pending.items:
+    for row in await _replayable_rows(outbox_manager, session, limit, now):
         claimed = await _claim(outbox_manager, row, session)
         if not claimed:
             continue
@@ -80,8 +130,18 @@ async def replay_pending_events(outbox_manager: EventOutboxManager, session, lim
             replayed += 1
         except Exception as exc:
             new_retry_count = row.retry_count + 1
-            new_status = "FAILED" if new_retry_count >= MAX_RETRIES else "PENDING"
-            logger.error(f"Replay failed for outbox row {row.uid} (attempt {new_retry_count}): {exc}")
+            if _expired(row, now):
+                new_status = "FAILED"
+                logger.error(
+                    f"Giving up on outbox row {row.uid} after {new_retry_count} attempts over "
+                    f"{GIVE_UP_AFTER.days} days; the event was never delivered: {exc}"
+                )
+            else:
+                new_status = "PENDING"
+                logger.error(
+                    f"Replay failed for outbox row {row.uid} (attempt {new_retry_count}), "
+                    f"next try in {_retry_delay(new_retry_count)}: {exc}"
+                )
             await outbox_manager.update(
                 uid=row.uid,
                 updates={"status": new_status, "retry_count": new_retry_count, "last_error": str(exc)},

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # event_outbox instead (the replayer delivers it later). The farmer waits
     # this long during a Kafka outage, so keep it short.
     kafka_publish_timeout_seconds: float = float(os.getenv("KAFKA_PUBLISH_TIMEOUT_SECONDS", "3"))
+    # "" = replay event_outbox only on ECS; "1"/"0" forces it on/off (e.g. a
+    # local Kafka test). Never on with BROKER_TYPE other than kafka.
+    outbox_replay_enabled: str = os.getenv("OUTBOX_REPLAY_ENABLED", "")
 
     class subservices:  # noqa
         pass
