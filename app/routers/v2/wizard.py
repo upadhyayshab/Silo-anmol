@@ -1,4 +1,4 @@
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query
 
@@ -14,7 +14,7 @@ from services.cropCatalog import CropCatalog, crop_slug
 from utils.languages import normalize_lang
 from utils.farmerText import note, season_name, suitability_reason
 from utils.matchReasons import match_reasons
-from utils.wizardTranslations import OPTION_LABELS, QUESTION_LABELS
+from utils.wizardTranslations import OPTION_LABELS, QUESTION_DESCRIPTIONS, QUESTION_LABELS
 
 import logging
 import uuid
@@ -118,13 +118,18 @@ ALL_QUESTIONS: list[WizardQuestion] = [
         ],
     ),
     WizardQuestion(
-        id="livestock", type="radio", label="What type of farm do you have?",
+        # Several kinds of livestock can be picked; "none" can't be combined
+        # with the others (_map_livestock).
+        # Labels follow the app design (2026-10-26); values are the stored and
+        # sent answers and must not change.
+        id="livestock", type="multi_select", label="What type of farm do you have?",
+        description="Choose the option that best fits your farm. We'll tailor practical advice to your animals.",
         options=[
-            WizardQuestionOption(label="Cattle farm - Cows & Buffaloes", value="Cattle farm - Cows & Buffaloes"),
-            WizardQuestionOption(label="Cattle farm - Goat, Sheep, & Pig", value="Cattle farm - Goat, Sheep, & Pig"),
-            WizardQuestionOption(label="Poultry farm", value="Poultry farm"),
-            WizardQuestionOption(label="Fisheries", value="Fisheries"),
-            WizardQuestionOption(label="I don't have any livestock", value="I don't have any live stock"),
+            WizardQuestionOption(label="Cows & Buffaloes", value="Cattle farm - Cows & Buffaloes"),
+            WizardQuestionOption(label="Goat, Sheep, & Pig", value="Cattle farm - Goat, Sheep, & Pig"),
+            WizardQuestionOption(label="Cock, Hen, & Duck", value="Poultry farm"),
+            WizardQuestionOption(label="Fish, Prawns, & Crab", value="Fisheries"),
+            WizardQuestionOption(label="I don't have any live stock", value="I don't have any live stock"),
         ],
     ),
     WizardQuestion(id="farm_name", type="text", label="Give your farm a name", required=False),
@@ -148,7 +153,9 @@ def _localized(questions: list[WizardQuestion], lang: str) -> list[WizardQuestio
         if options:
             per_question = option_labels.get(question.id, {})
             options = [o.model_copy(update={"label": per_question.get(o.value, o.label)}) for o in options]
-        localized.append(question.model_copy(update={"label": labels.get(question.id, question.label), "options": options}))
+        description = QUESTION_DESCRIPTIONS.get(lang, {}).get(question.id, question.description)
+        localized.append(question.model_copy(update={
+            "label": labels.get(question.id, question.label), "description": description, "options": options}))
     return localized
 
 
@@ -238,6 +245,44 @@ def _map_budget(budget: str) -> str:
             "(or B1-B4, 20K-40K, etc.)"
         )
     return mapped
+
+
+LIVESTOCK_NONE = "I don't have any live stock"  # the option's value (kept as shipped)
+# Several answers travel as one text value (Agro's farms.livestock and
+# recommendation_history.livestock are single text columns). Not a comma:
+# "Cattle farm - Goat, Sheep, & Pig" contains commas.
+LIVESTOCK_SEPARATOR = "; "
+
+
+def _map_livestock(answer: Optional[Union[str, List[str]]]) -> Optional[str]:
+    """The livestock answer (a list, or one value from older app builds) ->
+    the option values in question order, joined with LIVESTOCK_SEPARATOR.
+    None when not answered. Unknown values, and "no livestock" picked together
+    with any livestock, raise ValueError (-> 400)."""
+    if answer is None:
+        return None
+    picked = [answer] if isinstance(answer, str) else list(answer)
+    question = next(q for q in ALL_QUESTIONS if q.id == "livestock")
+    options = [o.value for o in question.options]
+    # Values are the contract; the English labels ("Cows & Buffaloes", ...)
+    # and the older "livestock" spelling are accepted too and stored as values.
+    by_key = {o.label.strip().lower(): o.value for o in question.options}
+    by_key.update({o.strip().lower(): o for o in options})
+    by_key["i don't have any livestock"] = LIVESTOCK_NONE
+    chosen, unknown = set(), []
+    for value in picked:
+        if not str(value).strip():
+            continue
+        option = by_key.get(str(value).strip().lower())
+        if option is None:
+            unknown.append(value)
+        else:
+            chosen.add(option)
+    if unknown:
+        raise ValueError(f"Unrecognized livestock option(s) {unknown}. Expected one or more of: {', '.join(options)}")
+    if LIVESTOCK_NONE in chosen and len(chosen) > 1:
+        raise ValueError(f"'{LIVESTOCK_NONE}' can't be combined with other livestock options")
+    return LIVESTOCK_SEPARATOR.join(o for o in options if o in chosen) or None
 
 
 def _parse_sowing_date(raw: Optional[str]) -> Optional[date]:
@@ -350,6 +395,7 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
     try:
         season = _map_season(answers.season)
         budget_bucket = _map_budget(answers.budget) if answers.budget else "B3"
+        livestock = _map_livestock(answers.livestock)
         if answers.irrigation:
             irrigation = _map_irrigation(answers.irrigation)
         elif farm:
@@ -442,7 +488,7 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
             notes=response.notes,
             farm_id=farm_id,
             farm_name=answers.farm_name or (farm.get("name") if farm else None),
-            livestock=answers.livestock,
+            livestock=livestock,
             # current_crop_code must describe what's actually standing on the
             # field right now, not the rotation predecessor used for scoring
             # (rotation_crop_name) -- those are different things when there's
@@ -522,7 +568,7 @@ async def _submit(payload: WizardSubmitRequest, lang_code: str, upid: str) -> Wi
     await _publish_crop_guide_completed(
         upid, payload, season, budget_bucket, recommendation_id,
         irrigation=irrigation, location=location, pincode=pincode, sowing_date=sowing_date,
-        new_farm_uid=new_farm_uid,
+        new_farm_uid=new_farm_uid, livestock=livestock,
     )
 
     return result
@@ -573,15 +619,16 @@ async def _no_crop_fits(
 async def _publish_crop_guide_completed(
     upid: str, payload: WizardSubmitRequest, season: str, budget_bucket: str,
     recommendation_id: str, *, irrigation: list[str], location: Optional[list], pincode: Optional[str],
-    sowing_date: Optional[date], new_farm_uid: Optional[str],
+    sowing_date: Optional[date], new_farm_uid: Optional[str], livestock: Optional[str] = None,
 ) -> None:
     """Awaited by the caller; EventBrokerService.publish never raises (it
     falls back to the event_outbox on a Kafka outage), so a broker failure
     never turns a working recommendation into a 500.
 
     Sends checked values, not raw answers: irrigation in the title-case
-    names Agro's picker uses, the validated [lon, lat], and an active crop
-    only together with its name (Agro applies the same rules again)."""
+    names Agro's picker uses, the validated [lon, lat], an active crop
+    only together with its name (Agro applies the same rules again), and
+    livestock as checked option values joined by LIVESTOCK_SEPARATOR."""
     answers = payload.answers
     has_active_crop = (answers.has_active_crop or "").strip().lower() == "yes" and bool(answers.crop)
     event = {
@@ -601,7 +648,7 @@ async def _publish_crop_guide_completed(
             "irrigation_methods": [_EVENT_IRRIGATION[m] for m in irrigation],
             "season": season,
             "budget": budget_bucket,
-            "livestock": answers.livestock,
+            "livestock": livestock,
             "wizard_session_id": payload.wizard_session_id,
             "pincode": pincode,
             "recommendation_id": recommendation_id,

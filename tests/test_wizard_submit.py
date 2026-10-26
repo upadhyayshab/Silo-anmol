@@ -677,7 +677,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
             farmId="farm-9", subscription_id="sub_1",
             answers=WizardAnswersPayload(
                 location=[73.0, 18.0], season="Rabi", irrigation=["Drip"],
-                farm_name="East Plot", livestock="cattle", sowing_date="2026-10-15",
+                farm_name="East Plot", livestock="Cattle farm - Cows & Buffaloes", sowing_date="2026-10-15",
             ),
         )
         await submit_wizard(req, lang="en", auth_payload={"upid": "usr_1"})
@@ -685,7 +685,7 @@ class TestWizardSubmitHistoryAuditColumns(IsolatedAsyncioTestCase):
         history_row = mock_history_manager.create.call_args.args[0]
         self.assertEqual(history_row.farm_id, "farm-9")
         self.assertEqual(history_row.farm_name, "East Plot")
-        self.assertEqual(history_row.livestock, "cattle")
+        self.assertEqual(history_row.livestock, "Cattle farm - Cows & Buffaloes")
         # Regression for review finding Critical #1: sowing_date is a real
         # db.Date() column -- SQLAlchemy does not coerce strings, so this
         # must be a real date object, not the raw ISO string, or the write

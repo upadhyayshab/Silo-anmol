@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -49,7 +49,9 @@ class WizardAnswersPayload(BaseModel):
     previous_crop: Optional[str] = None
     irrigation: Optional[List[str]] = None
     budget: Optional[str] = None
-    livestock: Optional[str] = None
+    # Multi-select: a list of option values; one value is still accepted
+    # (older app builds). Validated in the router (_map_livestock).
+    livestock: Optional[Union[List[str], str]] = None
     farm_name: Optional[str] = None
 
     @field_validator("location")

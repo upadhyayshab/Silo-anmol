@@ -161,10 +161,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "स्प्रिंकलर",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "पशु फार्म - गाय और भैंस",
-            "Cattle farm - Goat, Sheep, & Pig": "पशु फार्म - बकरी, भेड़ और सूअर",
-            "Poultry farm": "मुर्गी पालन फार्म",
-            "Fisheries": "मत्स्य पालन",
+            "Cattle farm - Cows & Buffaloes": "गाय और भैंस",
+            "Cattle farm - Goat, Sheep, & Pig": "बकरी, भेड़ और सूअर",
+            "Poultry farm": "मुर्गा, मुर्गी और बत्तख",
+            "Fisheries": "मछली, झींगा और केकड़ा",
             "I don't have any live stock": "मेरे पास कोई पशुधन नहीं है",
         },
     },
@@ -183,10 +183,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "तुषार",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "गुरांचा फार्म - गाई व म्हशी",
-            "Cattle farm - Goat, Sheep, & Pig": "पशु फार्म - शेळी, मेंढी व डुक्कर",
-            "Poultry farm": "कुक्कुटपालन फार्म",
-            "Fisheries": "मत्स्यपालन",
+            "Cattle farm - Cows & Buffaloes": "गाई व म्हशी",
+            "Cattle farm - Goat, Sheep, & Pig": "शेळी, मेंढी व डुक्कर",
+            "Poultry farm": "कोंबडा, कोंबडी व बदक",
+            "Fisheries": "मासे, कोळंबी व खेकडा",
             "I don't have any live stock": "माझ्याकडे पशुधन नाही",
         },
     },
@@ -208,10 +208,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "ತುಂತುರು ನೀರಾವರಿ",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "ಜಾನುವಾರು ಫಾರ್ಮ್ - ಹಸು ಮತ್ತು ಎಮ್ಮೆ",
-            "Cattle farm - Goat, Sheep, & Pig": "ಜಾನುವಾರು ಫಾರ್ಮ್ - ಮೇಕೆ, ಕುರಿ ಮತ್ತು ಹಂದಿ",
-            "Poultry farm": "ಕೋಳಿ ಸಾಕಣೆ ಫಾರ್ಮ್",
-            "Fisheries": "ಮೀನುಗಾರಿಕೆ",
+            "Cattle farm - Cows & Buffaloes": "ಹಸು ಮತ್ತು ಎಮ್ಮೆ",
+            "Cattle farm - Goat, Sheep, & Pig": "ಮೇಕೆ, ಕುರಿ ಮತ್ತು ಹಂದಿ",
+            "Poultry farm": "ಹುಂಜ, ಕೋಳಿ ಮತ್ತು ಬಾತುಕೋಳಿ",
+            "Fisheries": "ಮೀನು, ಸೀಗಡಿ ಮತ್ತು ಏಡಿ",
             "I don't have any live stock": "ನನ್ನ ಬಳಿ ಜಾನುವಾರು ಇಲ್ಲ",
         },
     },
@@ -233,10 +233,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "தெளிப்பு நீர்",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "கால்நடைப் பண்ணை - பசு மற்றும் எருமை",
-            "Cattle farm - Goat, Sheep, & Pig": "கால்நடைப் பண்ணை - ஆடு, செம்மறி மற்றும் பன்றி",
-            "Poultry farm": "கோழிப் பண்ணை",
-            "Fisheries": "மீன்வளம்",
+            "Cattle farm - Cows & Buffaloes": "பசு மற்றும் எருமை",
+            "Cattle farm - Goat, Sheep, & Pig": "ஆடு, செம்மறி மற்றும் பன்றி",
+            "Poultry farm": "சேவல், கோழி மற்றும் வாத்து",
+            "Fisheries": "மீன், இறால் மற்றும் நண்டு",
             "I don't have any live stock": "என்னிடம் கால்நடைகள் இல்லை",
         },
     },
@@ -258,10 +258,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "తుంపర సేద్యం",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "పశువుల ఫారం - ఆవులు & గేదెలు",
-            "Cattle farm - Goat, Sheep, & Pig": "పశువుల ఫారం - మేకలు, గొర్రెలు & పందులు",
-            "Poultry farm": "కోళ్ల ఫారం",
-            "Fisheries": "మత్స్య పరిశ్రమ",
+            "Cattle farm - Cows & Buffaloes": "ఆవులు & గేదెలు",
+            "Cattle farm - Goat, Sheep, & Pig": "మేకలు, గొర్రెలు & పందులు",
+            "Poultry farm": "కోడిపుంజు, కోడి & బాతు",
+            "Fisheries": "చేపలు, రొయ్యలు & పీతలు",
             "I don't have any live stock": "నా దగ్గర పశువులు లేవు",
         },
     },
@@ -283,10 +283,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "സ്പ്രിങ്ക്ളർ",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "കന്നുകാലി ഫാം - പശുവും എരുമയും",
-            "Cattle farm - Goat, Sheep, & Pig": "കന്നുകാലി ഫാം - ആട്, ചെമ്മരിയാട്, പന്നി",
-            "Poultry farm": "കോഴി ഫാം",
-            "Fisheries": "മത്സ്യകൃഷി",
+            "Cattle farm - Cows & Buffaloes": "പശുവും എരുമയും",
+            "Cattle farm - Goat, Sheep, & Pig": "ആട്, ചെമ്മരിയാട്, പന്നി",
+            "Poultry farm": "പൂവൻകോഴി, പിടക്കോഴി, താറാവ്",
+            "Fisheries": "മത്സ്യം, ചെമ്മീൻ, ഞണ്ട്",
             "I don't have any live stock": "എനിക്ക് കന്നുകാലികളില്ല",
         },
     },
@@ -308,10 +308,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "ફુવારા",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "પશુ ફાર્મ - ગાય અને ભેંસ",
-            "Cattle farm - Goat, Sheep, & Pig": "પશુ ફાર્મ - બકરી, ઘેટાં અને ભૂંડ",
-            "Poultry farm": "મરઘાં ફાર્મ",
-            "Fisheries": "મત્સ્યઉદ્યોગ",
+            "Cattle farm - Cows & Buffaloes": "ગાય અને ભેંસ",
+            "Cattle farm - Goat, Sheep, & Pig": "બકરી, ઘેટાં અને ભૂંડ",
+            "Poultry farm": "કૂકડો, મરઘી અને બતક",
+            "Fisheries": "માછલી, ઝીંગા અને કરચલો",
             "I don't have any live stock": "મારી પાસે પશુધન નથી",
         },
     },
@@ -333,10 +333,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "স্প্রিংকলার সেচ",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "গবাদি খামার - গরু ও মহিষ",
-            "Cattle farm - Goat, Sheep, & Pig": "গবাদি খামার - ছাগল, ভেড়া ও শূকর",
-            "Poultry farm": "হাঁস-মুরগির খামার",
-            "Fisheries": "মৎস্য চাষ",
+            "Cattle farm - Cows & Buffaloes": "গরু ও মহিষ",
+            "Cattle farm - Goat, Sheep, & Pig": "ছাগল, ভেড়া ও শূকর",
+            "Poultry farm": "মোরগ, মুরগি ও হাঁস",
+            "Fisheries": "মাছ, চিংড়ি ও কাঁকড়া",
             "I don't have any live stock": "আমার কোনো গবাদি পশু নেই",
         },
     },
@@ -358,10 +358,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "ଛିଞ୍ଚା ଜଳସେଚନ",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "ଗୋପାଳନ ଫାର୍ମ - ଗାଈ ଓ ମଇଁଷି",
-            "Cattle farm - Goat, Sheep, & Pig": "ପଶୁ ଫାର୍ମ - ଛେଳି, ମେଣ୍ଢା ଓ ଘୁଷୁରି",
-            "Poultry farm": "କୁକୁଡ଼ା ଫାର୍ମ",
-            "Fisheries": "ମତ୍ସ୍ୟ ଚାଷ",
+            "Cattle farm - Cows & Buffaloes": "ଗାଈ ଓ ମଇଁଷି",
+            "Cattle farm - Goat, Sheep, & Pig": "ଛେଳି, ମେଣ୍ଢା ଓ ଘୁଷୁରି",
+            "Poultry farm": "କୁକୁଡ଼ା, କୁକୁଡ଼ି ଓ ବତକ",
+            "Fisheries": "ମାଛ, ଚିଙ୍ଗୁଡ଼ି ଓ କଙ୍କଡ଼ା",
             "I don't have any live stock": "ମୋର କୌଣସି ପଶୁଧନ ନାହିଁ",
         },
     },
@@ -383,10 +383,10 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "ফোঁৱাৰা জলসিঞ্চন",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "গো-পালন ফাৰ্ম - গাই আৰু ম'হ",
-            "Cattle farm - Goat, Sheep, & Pig": "পশু ফাৰ্ম - ছাগলী, ভেড়া আৰু গাহৰি",
-            "Poultry farm": "কুকুৰা ফাৰ্ম",
-            "Fisheries": "মৎস্য পালন",
+            "Cattle farm - Cows & Buffaloes": "গাই আৰু ম'হ",
+            "Cattle farm - Goat, Sheep, & Pig": "ছাগলী, ভেড়া আৰু গাহৰি",
+            "Poultry farm": "কুকুৰা, কুকুৰী আৰু হাঁহ",
+            "Fisheries": "মাছ, মিচা মাছ আৰু কেঁকোৰা",
             "I don't have any live stock": "মোৰ কোনো পশুধন নাই",
         },
     },
@@ -408,13 +408,52 @@ OPTION_LABELS: dict[str, dict[str, dict[str, str]]] = {
             "Sprinkler": "ਫੁਹਾਰਾ ਸਿੰਚਾਈ",
         },
         "livestock": {
-            "Cattle farm - Cows & Buffaloes": "ਪਸ਼ੂ ਫਾਰਮ - ਗਾਂ ਅਤੇ ਮੱਝ",
-            "Cattle farm - Goat, Sheep, & Pig": "ਪਸ਼ੂ ਫਾਰਮ - ਬੱਕਰੀ, ਭੇਡ ਅਤੇ ਸੂਰ",
-            "Poultry farm": "ਮੁਰਗੀ ਫਾਰਮ",
-            "Fisheries": "ਮੱਛੀ ਪਾਲਣ",
+            "Cattle farm - Cows & Buffaloes": "ਗਾਂ ਅਤੇ ਮੱਝ",
+            "Cattle farm - Goat, Sheep, & Pig": "ਬੱਕਰੀ, ਭੇਡ ਅਤੇ ਸੂਰ",
+            "Poultry farm": "ਮੁਰਗਾ, ਮੁਰਗੀ ਅਤੇ ਬੱਤਖ",
+            "Fisheries": "ਮੱਛੀ, ਝੀਂਗਾ ਅਤੇ ਕੇਕੜਾ",
             "I don't have any live stock": "ਮੇਰੇ ਕੋਲ ਕੋਈ ਪਸ਼ੂ ਨਹੀਂ",
         },
     },
 }
 
-__all__ = ["QUESTION_LABELS", "OPTION_LABELS"]
+
+# question id -> description shown under the question (DRAFT translations,
+# native-speaker review pending, like the rest of this file).
+QUESTION_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    "hi": {
+        "livestock": "वह विकल्प चुनें जो आपके फार्म पर सबसे अच्छा लागू हो। हम आपके पशुओं के अनुसार व्यावहारिक सलाह देंगे।",
+    },
+    "mr": {
+        "livestock": "तुमच्या फार्मला सर्वात योग्य पर्याय निवडा. आम्ही तुमच्या जनावरांनुसार उपयुक्त सल्ला देऊ.",
+    },
+    "kn": {
+        "livestock": "ನಿಮ್ಮ ಫಾರ್ಮ್‌ಗೆ ಹೆಚ್ಚು ಹೊಂದುವ ಆಯ್ಕೆಯನ್ನು ಆರಿಸಿ. ನಿಮ್ಮ ಪ್ರಾಣಿಗಳಿಗೆ ತಕ್ಕ ಪ್ರಾಯೋಗಿಕ ಸಲಹೆ ನೀಡುತ್ತೇವೆ.",
+    },
+    "ta": {
+        "livestock": "உங்கள் பண்ணைக்கு மிகவும் பொருந்தும் தேர்வைத் தேர்ந்தெடுக்கவும். உங்கள் கால்நடைகளுக்கு ஏற்ற நடைமுறை ஆலோசனை வழங்குவோம்.",
+    },
+    "te": {
+        "livestock": "మీ ఫారానికి బాగా సరిపోయే ఎంపికను ఎంచుకోండి. మీ జంతువులకు తగిన ఆచరణాత్మక సలహా ఇస్తాము.",
+    },
+    "ml": {
+        "livestock": "നിങ്ങളുടെ ഫാമിന് ഏറ്റവും യോജിച്ച ഓപ്ഷൻ തിരഞ്ഞെടുക്കുക. നിങ്ങളുടെ മൃഗങ്ങൾക്ക് അനുയോജ്യമായ പ്രായോഗിക ഉപദേശം ഞങ്ങൾ നൽകും.",
+    },
+    "gu": {
+        "livestock": "તમારા ફાર્મને સૌથી યોગ્ય વિકલ્પ પસંદ કરો. અમે તમારા પશુઓ મુજબ ઉપયોગી સલાહ આપીશું.",
+    },
+    "bn": {
+        "livestock": "আপনার খামারের সঙ্গে সবচেয়ে মানানসই বিকল্পটি বেছে নিন। আমরা আপনার পশুদের জন্য উপযোগী পরামর্শ দেব।",
+    },
+    "or": {
+        "livestock": "ଆପଣଙ୍କ ଫାର୍ମ ପାଇଁ ସବୁଠାରୁ ଉପଯୁକ୍ତ ବିକଳ୍ପ ବାଛନ୍ତୁ। ଆମେ ଆପଣଙ୍କ ପଶୁଙ୍କ ଅନୁସାରେ ବ୍ୟାବହାରିକ ପରାମର୍ଶ ଦେବୁ।",
+    },
+    "as": {
+        "livestock": "আপোনাৰ ফাৰ্মৰ বাবে আটাইতকৈ উপযুক্ত বিকল্পটো বাছি লওক। আমি আপোনাৰ পশুৰ বাবে ব্যৱহাৰিক পৰামৰ্শ দিম।",
+    },
+    "pa": {
+        "livestock": "ਆਪਣੇ ਫਾਰਮ ਲਈ ਸਭ ਤੋਂ ਢੁਕਵਾਂ ਵਿਕਲਪ ਚੁਣੋ। ਅਸੀਂ ਤੁਹਾਡੇ ਪਸ਼ੂਆਂ ਮੁਤਾਬਕ ਵਿਹਾਰਕ ਸਲਾਹ ਦੇਵਾਂਗੇ।",
+    },
+}
+
+__all__ = ["QUESTION_LABELS", "OPTION_LABELS", "QUESTION_DESCRIPTIONS"]
